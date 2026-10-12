@@ -87,15 +87,12 @@ public class LiveRangeEquivalenceClass {
 
    @Override
    public boolean equals(Object o) {
-      if(this == o) return true;
-      if(o == null || getClass() != o.getClass()) return false;
-      LiveRangeEquivalenceClass that = (LiveRangeEquivalenceClass) o;
-      return variables.equals(that.variables);
+      return this == o;
    }
 
    @Override
    public int hashCode() {
-      return variables.hashCode();
+      return System.identityHashCode(this);
    }
 
    @Override

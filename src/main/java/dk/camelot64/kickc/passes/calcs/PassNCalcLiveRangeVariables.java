@@ -30,6 +30,8 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
          previousStatementsMap.put(nextStmt, getPreviousStatements(nextStmt));
       }
 
+      initializeLiveRanges(liveRanges, previousStatementsMap);
+
       boolean propagating;
       do {
          propagating = calculateLiveRanges(liveRanges, procedureReferencedVars, previousStatementsMap);
@@ -84,15 +86,32 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
     * @param liveRanges The live ranges to propagate.
     * @return true if any live ranges was modified. false if no modification was performed (and the propagation is complete)
     */
+   private void initializeLiveRanges(LiveRangeVariables liveRanges, Map<Statement, Collection<PreviousStatement>> previousStatementsMap) {
+      VariableReferenceInfos referenceInfo = getProgram().getVariableReferenceInfos();
+      for(Statement nextStmt : getProgram().getGraph().getAllStatements()) {
+         Collection<VariableRef> definedNextStmt = referenceInfo.getDefinedVars(nextStmt);
+         initLiveRange(liveRanges, definedNextStmt);
+         Collection<PreviousStatement> previousStmts = previousStatementsMap.get(nextStmt);
+         if(previousStmts != null) {
+            for(PreviousStatement previousStmt : previousStmts) {
+               if(PreviousStatement.Type.NORMAL.equals(previousStmt.getType()) || PreviousStatement.Type.BEFORE_METHOD.equals(previousStmt.getType())) {
+                  initUsedVars(liveRanges, nextStmt, previousStmt);
+               }
+            }
+         }
+      }
+   }
+
    private boolean calculateLiveRanges(LiveRangeVariables liveRanges, Map<ProcedureRef, Collection<VariableRef>> procedureReferencedVars, Map<Statement, Collection<PreviousStatement>> previousStatementsMap) {
       VariableReferenceInfos referenceInfo = getProgram().getVariableReferenceInfos();
       boolean modified = false;
       LiveRangeVariables.LiveRangeVariablesByStatement liveRangeVariablesByStatement = liveRanges.getLiveRangeVariablesByStatement();
-      for (Statement nextStmt : getProgram().getGraph().getAllStatements()) {
+      List<Statement> allStatements = getProgram().getGraph().getAllStatements();
+      for(int i = allStatements.size() - 1; i >= 0; i--) {
+         Statement nextStmt = allStatements.get(i);
          List<VariableRef> aliveNextStmt = liveRangeVariablesByStatement.getAlive(
              nextStmt.getIndex());
          Collection<VariableRef> definedNextStmt = referenceInfo.getDefinedVars(nextStmt);
-         initLiveRange(liveRanges, definedNextStmt);
          Collection<PreviousStatement> previousStmts = previousStatementsMap.get(nextStmt);
          for (PreviousStatement previousStmt : previousStmts) {
             if (PreviousStatement.Type.NORMAL.equals(previousStmt.getType())) {
@@ -103,13 +122,11 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
                          previousStmt.getStatementIdx());
                      modified |= addAlive;
                      if (addAlive && getLog().isVerboseLiveRanges()) {
-                        getLog().append("Propagated alive var " + aliveVar + " to "
-                            + previousStmt.getStatement());
+                         getLog().append("Propagated alive var " + aliveVar + " to "
+                             + previousStmt.getStatement());
                      }
                   }
                }
-               // Add all used variables to the previous statement (taking into account phi from blocks)
-               modified |= initUsedVars(liveRanges, nextStmt, previousStmt);
             } else if (PreviousStatement.Type.LAST_IN_METHOD.equals(previousStmt.getType())) {
                // Add all vars that are referenced in the method
                StatementCalling call = (StatementCalling) nextStmt;
@@ -171,13 +188,8 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
                                    + previousStmt.getStatement());
                         }
                      }
-                  } else {
-                     // Do nothing
-                     // getLog().append("Not propagating "+aliveVar.toString(getProgram()) +" in BEFORE_METHOD case from "+nextStmt.toString(getProgram(), false)+ " to "+previousStmt.getStatement().toString(getProgram(), false));
                   }
                }
-               // Add all used variables to the previous statement (taking into account phi from blocks)
-               modified |= initUsedVars(liveRanges, nextStmt, previousStmt);
             }
          }
       }

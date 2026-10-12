@@ -4,9 +4,12 @@ import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.values.VariableRef;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * A set of live range equivalence classes.
@@ -24,11 +27,11 @@ public class LiveRangeEquivalenceClassSet {
    /**
     * The equivalence classes of the set.
     */
-   private List<LiveRangeEquivalenceClass> equivalenceClasses;
+   private Set<LiveRangeEquivalenceClass> equivalenceClasses;
 
    public LiveRangeEquivalenceClassSet(Program program) {
       this.program = program;
-      this.equivalenceClasses = new ArrayList<>();
+      this.equivalenceClasses = new LinkedHashSet<>();
       this.varClass = new LinkedHashMap<>();
    }
 
@@ -92,8 +95,12 @@ public class LiveRangeEquivalenceClassSet {
       return varClass.get(variable);
    }
 
+   public boolean contains(LiveRangeEquivalenceClass ec) {
+      return equivalenceClasses.contains(ec);
+   }
+
    public List<LiveRangeEquivalenceClass> getEquivalenceClasses() {
-      return equivalenceClasses;
+      return new ArrayList<>(equivalenceClasses);
    }
 
    public int size() {

@@ -443,22 +443,26 @@ public class Pass2AliasElimination extends Pass2SsaOptimization {
    public static class AliasSet {
 
       private List<VariableRef> vars;
+      private Set<VariableRef> varSet;
 
       AliasSet() {
          this.vars = new ArrayList<>();
+         this.varSet = new HashSet<>();
       }
 
       AliasSet(AliasSet aliasSet) {
          this.vars = new ArrayList<>(aliasSet.getVars());
+         this.varSet = new HashSet<>(aliasSet.getVars());
       }
 
       public void add(VariableRef variable) {
          vars.add(variable);
+         varSet.add(variable);
       }
 
       public boolean contains(RValue rValue) {
          if(rValue instanceof VariableRef) {
-            return vars.contains(rValue);
+            return varSet.contains(rValue);
          } else {
             return false;
          }
@@ -480,6 +484,7 @@ public class Pass2AliasElimination extends Pass2SsaOptimization {
 
       public void addAll(AliasSet aliasSet) {
          vars.addAll(aliasSet.getVars());
+         varSet.addAll(aliasSet.getVars());
       }
 
       VariableRef getKeepVar(ProgramScope scope) {

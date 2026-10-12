@@ -24,7 +24,7 @@ public class ControlFlowBlockSuccessorClosure {
     * @return All used variables
     */
    public Collection<VariableRef> getSuccessorClosureReferencedVars(LabelRef labelRef, VariableReferenceInfos varInfos) {
-      ArrayList<VariableRef> variableRefs = new ArrayList<>();
+      java.util.Set<VariableRef> variableRefs = new java.util.LinkedHashSet<>();
       final Collection<LabelRef> successors = blockSuccessorClosure.get(labelRef);
       successors.forEach(labelRef1 -> variableRefs.addAll(varInfos.getReferencedVars(labelRef1)));
       return variableRefs;

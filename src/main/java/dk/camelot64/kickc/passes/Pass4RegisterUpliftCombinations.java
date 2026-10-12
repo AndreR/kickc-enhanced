@@ -28,48 +28,90 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
     * @param scope The scope where the variables are being tested. (Only used for logging)
     * @param program The program to test (used for accessing global data structures)
     */
-   static void chooseBestUpliftCombination(
+   public static class CachedBlockScores {
+      public final Map<Graph.Block, List<AsmChunk>> cachedBlockChunks = new HashMap<>();
+      public final Map<Graph.Block, Integer> blockScores = new HashMap<>();
+      public int totalScore = 0;
+
+      public void init(Program program) {
+         new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing(), true).generate(null, cachedBlockChunks, true);
+         Map<Integer, Double> multipliers = getLoopMultipliers(program);
+         blockScores.clear();
+         totalScore = 0;
+         for(Map.Entry<Graph.Block, List<AsmChunk>> entry : cachedBlockChunks.entrySet()) {
+            int score = calculateBlockScore(entry.getValue(), multipliers);
+            blockScores.put(entry.getKey(), score);
+            totalScore += score;
+         }
+      }
+
+      public int getOutsideScore(Set<Graph.Block> blocksToRegenerate) {
+         int outsideScore = totalScore;
+         for(Graph.Block b : blocksToRegenerate) {
+            Integer s = blockScores.get(b);
+            if(s != null) {
+               outsideScore -= s;
+            }
+         }
+         return outsideScore;
+      }
+
+      public void updateBlocks(Set<Graph.Block> blocksToRegenerate, Program program) {
+         new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing(), true).generate(blocksToRegenerate, cachedBlockChunks, true);
+         Map<Integer, Double> multipliers = getLoopMultipliers(program);
+         for(Graph.Block b : blocksToRegenerate) {
+            Integer oldS = blockScores.get(b);
+            if(oldS != null) {
+               totalScore -= oldS;
+            }
+            int newS = calculateBlockScore(cachedBlockChunks.get(b), multipliers);
+            blockScores.put(b, newS);
+            totalScore += newS;
+         }
+      }
+
+      private static int calculateBlockScore(List<AsmChunk> chunks, Map<Integer, Double> multipliers) {
+         int score = 0;
+         if(chunks != null) {
+            for(AsmChunk chunk : chunks) {
+               double cycles = chunk.getCycles();
+               if(cycles > 0) {
+                  Integer statementIdx = chunk.getStatementIdx();
+                  Double mult = statementIdx == null ? 10.0 : multipliers.get(statementIdx);
+                  score += (int) (cycles * (mult == null ? 10.0 : mult));
+               }
+            }
+         }
+         return score;
+      }
+   }
+
+   public static void chooseBestUpliftCombination(
          RegisterCombinationIterator combinationIterator, int maxCombinations,
          Set<String> unknownFragments,
          ScopeRef scope,
          Program program
    ) {
-      chooseBestUpliftCombination(combinationIterator, maxCombinations, unknownFragments, scope, program, null);
+      chooseBestUpliftCombination(combinationIterator, maxCombinations, unknownFragments, scope, program, (CachedBlockScores) null);
    }
 
-   static void chooseBestUpliftCombination(
+   public static void chooseBestUpliftCombination(
          RegisterCombinationIterator combinationIterator, int maxCombinations,
          Set<String> unknownFragments,
          ScopeRef scope,
          Program program,
-         Map<Graph.Block, List<AsmChunk>> cachedBlockChunks
+         CachedBlockScores cache
    ) {
       int bestScore = Integer.MAX_VALUE;
       RegisterCombination bestCombination = null;
       int countCombinations = 0;
 
-      if(cachedBlockChunks == null) {
-         cachedBlockChunks = new HashMap<>();
-         new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing(), true).generate(null, cachedBlockChunks, true);
+      if(cache == null) {
+         cache = new CachedBlockScores();
+         cache.init(program);
       }
       Set<Graph.Block> blocksToRegenerate = getBlocksToRegenerate(program, scope, combinationIterator.getEquivalenceClasses());
-
-      int outsideScore = 0;
-      if(cachedBlockChunks != null) {
-         Map<Integer, Double> multipliers = getLoopMultipliers(program);
-         for(Map.Entry<Graph.Block, List<AsmChunk>> entry : cachedBlockChunks.entrySet()) {
-            if(!blocksToRegenerate.contains(entry.getKey())) {
-               for(AsmChunk chunk : entry.getValue()) {
-                  double cycles = chunk.getCycles();
-                  if(cycles > 0) {
-                     Integer statementIdx = chunk.getStatementIdx();
-                     Double mult = statementIdx == null ? 10.0 : multipliers.get(statementIdx);
-                     outsideScore += cycles * (mult == null ? 10.0 : mult);
-                  }
-               }
-            }
-         }
-      }
+      int outsideScore = cache.getOutsideScore(blocksToRegenerate);
 
       while(combinationIterator.hasNext() && countCombinations < maxCombinations) {
          countCombinations++;
@@ -77,7 +119,7 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
             program.getLog().append("Uplift attempts [" + scope + "] " + countCombinations + "/" + combinationIterator.getNumIterations() + " (limiting to " + maxCombinations + ")");
          }
          RegisterCombination combination = combinationIterator.next();
-         if(!generateCombinationAsm(combination, program, unknownFragments, scope, blocksToRegenerate, cachedBlockChunks)) {
+         if(!generateCombinationAsm(combination, program, unknownFragments, scope, blocksToRegenerate, cache.cachedBlockChunks)) {
             continue;
          }
          // If no clobber - Find value of the resulting allocation
@@ -99,7 +141,7 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          bestCombination.store(program.getLiveRangeEquivalenceClassSet());
          bestCombination.allocate(program);
          program.getLog().append("Uplifting [" + scope + "] best " + bestScore + " combination " + bestCombination.toString());
-         new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing(), true).generate(blocksToRegenerate, cachedBlockChunks, true);
+         cache.updateBlocks(blocksToRegenerate, program);
       }
       if(combinationIterator.hasNext()) {
          program.getLog().append("Limited combination testing to " + countCombinations + " combinations of " + combinationIterator.getNumIterations() + " possible.");
@@ -396,11 +438,11 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       return false;
    }
 
-   public void performUplift(int maxCombinations) {
+   public CachedBlockScores performUplift(int maxCombinations) {
       // Test uplift combinations to find the best one.
       Set<String> unknownFragments = new LinkedHashSet<>();
-      Map<Graph.Block, List<AsmChunk>> cachedBlockChunks = new HashMap<>();
-      new Pass4CodeGeneration(getProgram(), false, getProgram().isWarnFragmentMissing(), true).generate(null, cachedBlockChunks, true);
+      CachedBlockScores cache = new CachedBlockScores();
+      cache.init(getProgram());
 
       List<RegisterUpliftScope> registerUpliftScopes = getProgram().getRegisterUpliftProgram().getRegisterUpliftScopes();
       for(RegisterUpliftScope upliftScope : registerUpliftScopes) {
@@ -411,7 +453,7 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
                unknownFragments,
                upliftScope.getScopeRef(),
                getProgram(),
-               cachedBlockChunks);
+               cache);
       }
 
       if(unknownFragments.size() > 0) {
@@ -420,6 +462,7 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
             getLog().append("  " + unknownFragment);
          }
       }
+      return cache;
    }
 
 }

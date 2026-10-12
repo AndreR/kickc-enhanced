@@ -743,12 +743,12 @@ public class Compiler {
 
          // Attempt uplifting registers through a lot of combinations
          tStep = System.currentTimeMillis();
-         new Pass4RegisterUpliftCombinations(program).performUplift(upliftCombinations);
+         Pass4RegisterUpliftCombinations.CachedBlockScores cache = new Pass4RegisterUpliftCombinations(program).performUplift(upliftCombinations);
          System.out.println(String.format("   [PASS4] Uplift Combinations:          %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
 
          // Attempt uplifting registers one at a time to catch remaining potential not realized by combination search
          tStep = System.currentTimeMillis();
-         new Pass4RegisterUpliftRemains(program).performUplift(upliftCombinations);
+         new Pass4RegisterUpliftRemains(program).performUplift(upliftCombinations, cache);
          System.out.println(String.format("   [PASS4] Uplift Remains:               %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
       }
 

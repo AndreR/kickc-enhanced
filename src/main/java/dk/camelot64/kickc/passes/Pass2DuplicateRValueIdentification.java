@@ -43,6 +43,20 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
          for(Statement statement : block.getStatements()) {
             if(statement instanceof StatementAssignment) {
                StatementAssignment thisAssignment = (StatementAssignment) statement;
+               Operator op = thisAssignment.getOperator();
+               if(op == null || op instanceof OperatorCast) continue;
+               if(Operators.LE.equals(op) || Operators.LT.equals(op) || Operators.GE.equals(op) || Operators.GT.equals(op)
+                     || Operators.EQ.equals(op) || Operators.NEQ.equals(op) || Operators.LOGIC_NOT.equals(op)
+                     || Operators.LOGIC_AND.equals(op) || Operators.LOGIC_OR.equals(op)
+                     || Operators.BYTE0.equals(op) || Operators.BYTE1.equals(op) || Operators.BYTE2.equals(op) || Operators.BYTE3.equals(op)
+                     || Operators.WORD0.equals(op) || Operators.WORD1.equals(op)) {
+                  continue;
+               }
+               RValue rVal1 = thisAssignment.getrValue1();
+               RValue rVal2 = thisAssignment.getrValue2();
+               if((rVal1 == null || rVal1 instanceof ConstantValue) && (rVal2 == null || rVal2 instanceof ConstantValue)) {
+                  continue;
+               }
                AssignmentWithRValue thisRValue = new AssignmentWithRValue(thisAssignment, block);
                if(!thisRValue.isConstant() && !thisRValue.isTrivial() && !thisRValue.isVolatile() && !thisRValue.isLoadStore()) {
                   boolean duplicate = false;

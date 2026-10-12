@@ -232,8 +232,7 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
     */
    public static boolean attemptCoalesce(LiveRangeEquivalenceClassCoalesceCandidate candidate, Collection<ScopeRef> threadHeads, Set<String> unknownFragments, Program program) {
       LiveRangeEquivalenceClassSet liveRangeEquivalenceClassSet = program.getLiveRangeEquivalenceClassSet();
-      List<LiveRangeEquivalenceClass> equivalenceClasses = liveRangeEquivalenceClassSet.getEquivalenceClasses();
-      if(equivalenceClasses.contains(candidate.getEc1()) && equivalenceClasses.contains(candidate.getEc2())) {
+      if(liveRangeEquivalenceClassSet.contains(candidate.getEc1()) && liveRangeEquivalenceClassSet.contains(candidate.getEc2())) {
          // Both equivalence classes still exist
          if(Pass4MemoryCoalesce.canCoalesce(candidate.getEc1(), candidate.getEc2(), threadHeads, unknownFragments, program)) {
             String scoreString = (candidate.getScore() == null) ? "" : (" - score: " + candidate.getScore());
