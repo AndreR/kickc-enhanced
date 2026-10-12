@@ -87,12 +87,20 @@ public class LiveRange {
     * @return true if there is an overlap
     */
    public boolean overlaps(LiveRange other) {
-      if(this.getMaxIndex() == -1 || other.getMaxIndex() == -1) {
+      if(this.intervals.isEmpty() || other.intervals.isEmpty()) {
          return false;
       }
-      int maxIdx = getMaxIndex();
-      for(int i = 0; i <= maxIdx; i++) {
-         if(contains(i) && other.contains(i)) {
+      int i = 0, j = 0;
+      List<LiveInterval> a = this.intervals;
+      List<LiveInterval> b = other.intervals;
+      while(i < a.size() && j < b.size()) {
+         LiveInterval ia = a.get(i);
+         LiveInterval ib = b.get(j);
+         if(ia.lastStatementIdx < ib.firstStatementIdx) {
+            i++;
+         } else if(ib.lastStatementIdx < ia.firstStatementIdx) {
+            j++;
+         } else {
             return true;
          }
       }
@@ -105,9 +113,8 @@ public class LiveRange {
     * @param other The live range to add
     */
    public void add(LiveRange other) {
-      int otherMaxIndex = other.getMaxIndex();
-      for(int i = 0; i <= otherMaxIndex; i++) {
-         if(other.contains(i)) {
+      for(LiveInterval interval : other.intervals) {
+         for(int i = interval.firstStatementIdx; i <= interval.lastStatementIdx; i++) {
             add(i);
          }
       }

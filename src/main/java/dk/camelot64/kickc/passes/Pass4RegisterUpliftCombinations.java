@@ -54,6 +54,23 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       }
       Set<Graph.Block> blocksToRegenerate = getBlocksToRegenerate(program, scope, combinationIterator.getEquivalenceClasses());
 
+      int outsideScore = 0;
+      if(cachedBlockChunks != null) {
+         Map<Integer, Double> multipliers = getLoopMultipliers(program);
+         for(Map.Entry<Graph.Block, List<AsmChunk>> entry : cachedBlockChunks.entrySet()) {
+            if(!blocksToRegenerate.contains(entry.getKey())) {
+               for(AsmChunk chunk : entry.getValue()) {
+                  double cycles = chunk.getCycles();
+                  if(cycles > 0) {
+                     Integer statementIdx = chunk.getStatementIdx();
+                     Double mult = statementIdx == null ? 10.0 : multipliers.get(statementIdx);
+                     outsideScore += cycles * (mult == null ? 10.0 : mult);
+                  }
+               }
+            }
+         }
+      }
+
       while(combinationIterator.hasNext() && countCombinations < maxCombinations) {
          countCombinations++;
          if(countCombinations % 10000 == 0) {
@@ -64,7 +81,7 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
             continue;
          }
          // If no clobber - Find value of the resulting allocation
-         int combinationScore = getAsmScore(program);
+         int combinationScore = outsideScore + getAsmScore(program);
          if(program.getLog().isVerboseUplift()) {
             StringBuilder msg = new StringBuilder();
             msg.append("Uplift attempt [" + scope + "] ");

@@ -126,7 +126,19 @@ public class Pass4CodeGeneration {
             addConstantsAndLabels(asm, currentScope);
         }
 
-        for (Graph.Block block : getGraph().getAllBlocks()) {
+        Collection<Graph.Block> targetBlocks;
+        if(trialMode && blocksToRegenerate != null) {
+            targetBlocks = new ArrayList<>();
+            for(Graph.Block b : getGraph().getAllBlocks()) {
+                if(blocksToRegenerate.contains(b)) {
+                    targetBlocks.add(b);
+                }
+            }
+        } else {
+            targetBlocks = getGraph().getAllBlocks();
+        }
+
+        for (Graph.Block block : targetBlocks) {
             if (!block.getScope().equals(currentScope)) {
                 // The current block is in a different scope. End the old scope.
                 if(!trialMode) {
@@ -152,14 +164,6 @@ public class Pass4CodeGeneration {
                     // Add all ZP labels for the scope
                     addConstantsAndLabels(asm, currentScope);
                 }
-            }
-
-            if(trialMode && cachedBlockChunks != null && blocksToRegenerate != null && !blocksToRegenerate.contains(block)) {
-                List<AsmChunk> cached = cachedBlockChunks.get(block);
-                if(cached != null) {
-                    asm.addChunks(cached);
-                }
-                continue;
             }
 
             int chunkStartIndex = asm.getChunkList().size();

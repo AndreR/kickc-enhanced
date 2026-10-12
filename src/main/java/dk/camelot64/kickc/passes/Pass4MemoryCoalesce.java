@@ -10,6 +10,7 @@ import dk.camelot64.kickc.model.values.VariableRef;
 import dk.camelot64.kickc.passes.utils.ProcedureUtils;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Set;
@@ -191,7 +192,8 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
       // Try out the coalesce to test if it works
       RegisterCombination combination = new RegisterCombination();
       combination.setRegister(ec2, register1);
-      return Pass4RegisterUpliftCombinations.generateCombinationAsm(combination, program, unknownFragments, ScopeRef.ROOT);
+      Set<Graph.Block> blocksToRegenerate = Pass4RegisterUpliftCombinations.getBlocksToRegenerate(program, null, Arrays.asList(ec1, ec2));
+      return Pass4RegisterUpliftCombinations.generateCombinationAsm(combination, program, unknownFragments, ScopeRef.ROOT, blocksToRegenerate, null);
    }
 
    /**

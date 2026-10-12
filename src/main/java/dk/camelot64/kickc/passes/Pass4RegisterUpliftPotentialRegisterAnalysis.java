@@ -156,32 +156,46 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
 
       Set<String> unknownFragments = new LinkedHashSet<>();
 
-      while(combinations.hasNext()) {
-         RegisterCombination combination = combinations.next();
-         // Reset register allocation to original zero page allocation
-         new Pass4RegistersFinalize(getProgram()).allocate(false, false);
-         // Apply the combination
-         combination.allocate(getProgram());
-         // Generate ASM
-         AsmProgram asm = new AsmProgram(getProgram().getTargetCpu());
-         asm.startChunk(block.getScope(), statement.getIndex(), statement.toString(getProgram(), false));
-         try {
-            (new Pass4CodeGeneration(getProgram(), false, false)).generateStatementAsm(asm, block, statement, false);
-         } catch(AsmFragmentTemplateSynthesizer.UnknownFragmentException e) {
-            unknownFragments.add(e.getFragmentSignature());
-            StringBuilder msg = new StringBuilder();
-            msg.append("Potential register analysis " + statement);
-            msg.append(" missing fragment " + e.getFragmentSignature());
-            msg.append(" allocation: ").append(combination.toString());
-            getLog().append(msg.toString());
-            continue;
+      Map<LiveRangeEquivalenceClass, Registers.Register> oldRegisters = new HashMap<>();
+      for(LiveRangeEquivalenceClass ec : combinations.getEquivalenceClasses()) {
+         oldRegisters.put(ec, ec.getRegister());
+      }
+
+      try {
+         while(combinations.hasNext()) {
+            RegisterCombination combination = combinations.next();
+            // Apply the combination
+            combination.allocate(getProgram());
+            // Generate ASM
+            AsmProgram asm = new AsmProgram(getProgram().getTargetCpu());
+            asm.startChunk(block.getScope(), statement.getIndex(), statement.toString(getProgram(), false));
+            try {
+               (new Pass4CodeGeneration(getProgram(), false, false)).generateStatementAsm(asm, block, statement, false);
+            } catch(AsmFragmentTemplateSynthesizer.UnknownFragmentException e) {
+               unknownFragments.add(e.getFragmentSignature());
+               StringBuilder msg = new StringBuilder();
+               msg.append("Potential register analysis " + statement);
+               msg.append(" missing fragment " + e.getFragmentSignature());
+               msg.append(" allocation: ").append(combination.toString());
+               getLog().append(msg.toString());
+               continue;
+            }
+            CpuClobber clobber = asm.getClobber();
+            Collection<Registers.Register> clobberRegisters = Pass4AssertNoCpuClobber.getClobberRegisters(clobber);
+            alwaysClobbered.removeIf(alwaysClobberRegister -> !clobberRegisters.contains(alwaysClobberRegister));
+            if(alwaysClobbered.isEmpty()) {
+               // No register is always clobbered - abort combination search
+               break;
+            }
          }
-         CpuClobber clobber = asm.getClobber();
-         Collection<Registers.Register> clobberRegisters = Pass4AssertNoCpuClobber.getClobberRegisters(clobber);
-         alwaysClobbered.removeIf(alwaysClobberRegister -> !clobberRegisters.contains(alwaysClobberRegister));
-         if(alwaysClobbered.isEmpty()) {
-            // No register is always clobbered - abort combination search
-            break;
+      } finally {
+         for(Map.Entry<LiveRangeEquivalenceClass, Registers.Register> entry : oldRegisters.entrySet()) {
+            LiveRangeEquivalenceClass ec = entry.getKey();
+            Registers.Register oldReg = entry.getValue();
+            ec.setRegister(oldReg);
+            for(VariableRef varRef : ec.getVariables()) {
+               getProgram().getScope().getVariable(varRef).setAllocation(oldReg);
+            }
          }
       }
 
