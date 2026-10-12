@@ -113,11 +113,48 @@ public class LiveRange {
     * @param other The live range to add
     */
    public void add(LiveRange other) {
-      for(LiveInterval interval : other.intervals) {
-         for(int i = interval.firstStatementIdx; i <= interval.lastStatementIdx; i++) {
-            add(i);
+      if(other == null || other.intervals.isEmpty()) {
+         return;
+      }
+      if(this.intervals.isEmpty()) {
+         for(LiveInterval interval : other.intervals) {
+            this.intervals.add(new LiveInterval(interval.firstStatementIdx, interval.lastStatementIdx));
+         }
+         return;
+      }
+      List<LiveInterval> result = new ArrayList<>(this.intervals.size() + other.intervals.size());
+      int i = 0, j = 0;
+      List<LiveInterval> a = this.intervals;
+      List<LiveInterval> b = other.intervals;
+      LiveInterval current = null;
+      while(i < a.size() || j < b.size()) {
+         LiveInterval next;
+         if(i < a.size() && j < b.size()) {
+            if(a.get(i).firstStatementIdx <= b.get(j).firstStatementIdx) {
+               next = a.get(i++);
+            } else {
+               next = b.get(j++);
+            }
+         } else if(i < a.size()) {
+            next = a.get(i++);
+         } else {
+            next = b.get(j++);
+         }
+         if(current == null) {
+            current = new LiveInterval(next.firstStatementIdx, next.lastStatementIdx);
+         } else if(next.firstStatementIdx <= current.lastStatementIdx + 1) {
+            if(next.lastStatementIdx > current.lastStatementIdx) {
+               current.lastStatementIdx = next.lastStatementIdx;
+            }
+         } else {
+            result.add(current);
+            current = new LiveInterval(next.firstStatementIdx, next.lastStatementIdx);
          }
       }
+      if(current != null) {
+         result.add(current);
+      }
+      this.intervals = result;
    }
 
    /**

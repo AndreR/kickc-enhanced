@@ -110,20 +110,36 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          cache = new CachedBlockScores();
          cache.init(program);
       }
+      long tBlk = System.nanoTime();
       Set<Graph.Block> blocksToRegenerate = getBlocksToRegenerate(program, scope, combinationIterator.getEquivalenceClasses());
+      long tBlkEnd = System.nanoTime();
       int outsideScore = cache.getOutsideScore(blocksToRegenerate);
+      long tOutEnd = System.nanoTime();
+      timeBlocksNs += (tBlkEnd - tBlk);
+      timeOutsideNs += (tOutEnd - tBlkEnd);
 
-      while(combinationIterator.hasNext() && countCombinations < maxCombinations) {
+      while(true) {
+         long tIt = System.nanoTime();
+         boolean hasNext = combinationIterator.hasNext();
+         timeIteratorNs += (System.nanoTime() - tIt);
+         if(!hasNext || countCombinations >= maxCombinations) break;
+
          countCombinations++;
          if(countCombinations % 10000 == 0) {
             program.getLog().append("Uplift attempts [" + scope + "] " + countCombinations + "/" + combinationIterator.getNumIterations() + " (limiting to " + maxCombinations + ")");
          }
+         tIt = System.nanoTime();
          RegisterCombination combination = combinationIterator.next();
+         timeIteratorNs += (System.nanoTime() - tIt);
+
          if(!generateCombinationAsm(combination, program, unknownFragments, scope, blocksToRegenerate, cache.cachedBlockChunks)) {
             continue;
          }
+         long tSc = System.nanoTime();
          // If no clobber - Find value of the resulting allocation
          int combinationScore = outsideScore + getAsmScore(program);
+         timeScoreNs += (System.nanoTime() - tSc);
+
          if(program.getLog().isVerboseUplift()) {
             StringBuilder msg = new StringBuilder();
             msg.append("Uplift attempt [" + scope + "] ");
@@ -141,7 +157,9 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          bestCombination.store(program.getLiveRangeEquivalenceClassSet());
          bestCombination.allocate(program);
          program.getLog().append("Uplifting [" + scope + "] best " + bestScore + " combination " + bestCombination.toString());
+         long tUp = System.nanoTime();
          cache.updateBlocks(blocksToRegenerate, program);
+         timeUpdateNs += (System.nanoTime() - tUp);
       }
       if(combinationIterator.hasNext()) {
          program.getLog().append("Limited combination testing to " + countCombinations + " combinations of " + combinationIterator.getNumIterations() + " possible.");
@@ -171,6 +189,16 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       return generateCombinationAsm(combination, program, unknownFragments, scope, null, null);
    }
 
+   public static long timeOverlapNs = 0;
+   public static long timeCodeGenNs = 0;
+   public static long timeClobberNs = 0;
+   public static long countAttempts = 0;
+   public static long timeBlocksNs = 0;
+   public static long timeIteratorNs = 0;
+   public static long timeScoreNs = 0;
+   public static long timeUpdateNs = 0;
+   public static long timeOutsideNs = 0;
+
    public static boolean generateCombinationAsm(
          RegisterCombination combination,
          Program program,
@@ -178,6 +206,7 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          ScopeRef scope,
          Set<Graph.Block> blocksToRegenerate,
          Map<Graph.Block, List<AsmChunk>> cachedBlockChunks) {
+      countAttempts++;
       // Save original registers of the combination
       Map<LiveRangeEquivalenceClass, Registers.Register> oldRegisters = new HashMap<>();
       for(LiveRangeEquivalenceClass ec : combination.getAllocation().keySet()) {
@@ -186,8 +215,10 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       // Apply the uplift combination
       combination.allocate(program);
       try {
+         long tA = System.nanoTime();
          // Check the register allocation for whether any register is being allocated to two variables with overlapping live ranges
          if(isAllocationOverlapping(program, combination)) {
+            timeOverlapNs += (System.nanoTime() - tA);
             if(program.getLog().isVerboseUplift()) {
                StringBuilder msg = new StringBuilder();
                msg.append("Uplift attempt [" + (scope == null ? "" : scope) + "] ");
@@ -198,13 +229,16 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
 
             return false;
          }
+         timeOverlapNs += (System.nanoTime() - tA);
          // Generate ASM
          if(blocksToRegenerate == null) {
             blocksToRegenerate = getBlocksToRegenerate(program, scope, combination.getAllocation().keySet());
          }
+         long tB = System.nanoTime();
          try {
             new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing(), true).generate(blocksToRegenerate, cachedBlockChunks, false);
          } catch(AsmFragmentTemplateSynthesizer.UnknownFragmentException e) {
+            timeCodeGenNs += (System.nanoTime() - tB);
             unknownFragments.add(e.getFragmentSignature());
             if(program.getLog().isVerboseUplift()) {
                StringBuilder msg = new StringBuilder();
@@ -215,7 +249,10 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
             }
             return false;
          }
+         timeCodeGenNs += (System.nanoTime() - tB);
+         long tC = System.nanoTime();
          boolean hasClobberProblem = new Pass4AssertNoCpuClobber(program).hasClobberProblem(false);
+         timeClobberNs += (System.nanoTime() - tC);
          if(hasClobberProblem) {
             if(program.getLog().isVerboseUplift()) {
                StringBuilder msg = new StringBuilder();
@@ -304,16 +341,73 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       return map;
    }
 
+   private static Map<ScopeRef, List<Graph.Block>> blocksByScopeCache = null;
+   private static Program blocksByScopeProgram = null;
+
+   private static synchronized Map<ScopeRef, List<Graph.Block>> getBlocksByScope(Program program) {
+      if(blocksByScopeProgram == program && blocksByScopeCache != null) {
+         return blocksByScopeCache;
+      }
+      Map<ScopeRef, List<Graph.Block>> map = new HashMap<>();
+      for(Graph.Block b : program.getGraph().getAllBlocks()) {
+         if(b.getScope() != null) {
+            map.computeIfAbsent(b.getScope(), k -> new ArrayList<>()).add(b);
+         }
+      }
+      blocksByScopeProgram = program;
+      blocksByScopeCache = map;
+      return map;
+   }
+
+   private static Map<dk.camelot64.kickc.model.values.LabelRef, List<Graph.Block>> predecessorsCache = null;
+   private static Program predecessorsProgram = null;
+
+   private static synchronized Map<dk.camelot64.kickc.model.values.LabelRef, List<Graph.Block>> getPredecessorsMap(Program program) {
+      if(predecessorsProgram == program && predecessorsCache != null) {
+         return predecessorsCache;
+      }
+      Map<dk.camelot64.kickc.model.values.LabelRef, List<Graph.Block>> map = new HashMap<>();
+      for(Graph.Block other : program.getGraph().getAllBlocks()) {
+         if(other.getDefaultSuccessor() != null) {
+            map.computeIfAbsent(other.getDefaultSuccessor(), k -> new ArrayList<>()).add(other);
+         }
+         if(other.getConditionalSuccessor() != null) {
+            map.computeIfAbsent(other.getConditionalSuccessor(), k -> new ArrayList<>()).add(other);
+         }
+         if(other.getCallSuccessor() != null) {
+            map.computeIfAbsent(other.getCallSuccessor(), k -> new ArrayList<>()).add(other);
+         }
+      }
+      predecessorsProgram = program;
+      predecessorsCache = map;
+      return map;
+   }
+
+   private static Map<dk.camelot64.kickc.model.values.LabelRef, Graph.Block> blocksByLabelCache = null;
+   private static Program blocksByLabelProgram = null;
+
+   private static synchronized Map<dk.camelot64.kickc.model.values.LabelRef, Graph.Block> getBlocksByLabel(Program program) {
+      if(blocksByLabelProgram == program && blocksByLabelCache != null) {
+         return blocksByLabelCache;
+      }
+      Map<dk.camelot64.kickc.model.values.LabelRef, Graph.Block> map = new HashMap<>();
+      for(Graph.Block b : program.getGraph().getAllBlocks()) {
+         map.put(b.getLabel(), b);
+      }
+      blocksByLabelProgram = program;
+      blocksByLabelCache = map;
+      return map;
+   }
+
    public static Set<Graph.Block> getBlocksToRegenerate(
          Program program,
          ScopeRef scope,
          Collection<LiveRangeEquivalenceClass> equivalenceClasses) {
       Set<Graph.Block> blocks = new HashSet<>();
       if(scope != null) {
-         for(Graph.Block block : program.getGraph().getAllBlocks()) {
-            if(scope.equals(block.getScope())) {
-               blocks.add(block);
-            }
+         List<Graph.Block> scopeBlocks = getBlocksByScope(program).get(scope);
+         if(scopeBlocks != null) {
+            blocks.addAll(scopeBlocks);
          }
       }
       Map<VariableRef, List<Statement>> varStatements = getVarStatements(program);
@@ -332,11 +426,16 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
             }
          }
       }
+      Map<dk.camelot64.kickc.model.values.LabelRef, List<Graph.Block>> predMap = getPredecessorsMap(program);
+      Map<dk.camelot64.kickc.model.values.LabelRef, Graph.Block> blockMap = getBlocksByLabel(program);
       Set<Graph.Block> neighbors = new HashSet<>();
       for(Graph.Block b : blocks) {
-         neighbors.addAll(program.getGraph().getPredecessors(b));
+         List<Graph.Block> preds = predMap.get(b.getLabel());
+         if(preds != null) {
+            neighbors.addAll(preds);
+         }
          for(dk.camelot64.kickc.model.values.LabelRef succ : b.getSuccessors()) {
-            Graph.Block succBlock = program.getGraph().getBlock(succ);
+            Graph.Block succBlock = blockMap.get(succ);
             if(succBlock != null) {
                neighbors.add(succBlock);
             }
@@ -462,6 +561,8 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
             getLog().append("  " + unknownFragment);
          }
       }
+      System.out.printf("      [Uplift Breakdown] %d attempts: blks=%.2fs, outScore=%.2fs, iter=%.2fs, overlap=%.2fs, codegen=%.2fs, clobber=%.2fs, score=%.2fs, update=%.2fs%n",
+            countAttempts, timeBlocksNs/1e9, timeOutsideNs/1e9, timeIteratorNs/1e9, timeOverlapNs/1e9, timeCodeGenNs/1e9, timeClobberNs/1e9, timeScoreNs/1e9, timeUpdateNs/1e9);
       return cache;
    }
 

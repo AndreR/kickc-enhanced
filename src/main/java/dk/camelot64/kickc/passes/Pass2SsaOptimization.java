@@ -48,6 +48,9 @@ public abstract class Pass2SsaOptimization extends Pass1Base implements PassStep
     * @param aliases Variables that have alias values.
     */
    public void replaceVariables(final Map<? extends SymbolRef, ? extends RValue> aliases) {
+      if(aliases == null || aliases.isEmpty()) {
+         return;
+      }
       ProgramValueIterator.execute(getProgram(), new AliasReplacer(aliases));
    }
 
@@ -111,17 +114,21 @@ public abstract class Pass2SsaOptimization extends Pass1Base implements PassStep
     * @param variables The variables to eliminate
     */
    public static void removeAssignments(Graph graph, Collection<? extends LValue> variables) {
+      if(variables == null || variables.isEmpty()) {
+         return;
+      }
+      Set<? extends LValue> varSet = (variables instanceof Set) ? (Set<? extends LValue>) variables : new HashSet<>(variables);
       for(var block : graph.getAllBlocks()) {
          for(Iterator<Statement> iterator = block.getStatements().iterator(); iterator.hasNext(); ) {
             Statement statement = iterator.next();
             if(statement instanceof StatementAssignment) {
                StatementAssignment assignment = (StatementAssignment) statement;
-               if(variables.contains(assignment.getlValue())) {
+               if(varSet.contains(assignment.getlValue())) {
                   iterator.remove();
                }
             } else if(statement instanceof StatementPhiBlock) {
                StatementPhiBlock phiBlock = (StatementPhiBlock) statement;
-               phiBlock.getPhiVariables().removeIf(phiVariable -> variables.contains(phiVariable.getVariable()));
+               phiBlock.getPhiVariables().removeIf(phiVariable -> varSet.contains(phiVariable.getVariable()));
                if(phiBlock.getPhiVariables().size() == 0) {
                   iterator.remove();
                }
@@ -131,6 +138,9 @@ public abstract class Pass2SsaOptimization extends Pass1Base implements PassStep
    }
 
    public static void deleteSymbols(ProgramScope programScope, Collection<? extends SymbolRef> symbols) {
+      if(symbols == null || symbols.isEmpty()) {
+         return;
+      }
       for(SymbolRef symbolRef : symbols) {
          Symbol symbol = programScope.getSymbol(symbolRef);
          symbol.getScope().remove(symbol);

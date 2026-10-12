@@ -49,19 +49,20 @@ public class Pass2ConstantInlining extends Pass2SsaOptimization {
          }
       }
 
+      if(!inline.isEmpty()) {
          // Perform alias replacement within the constant values inside the aliases
-      replaceInValues(inline);
-      // Replace all usages of the constants in the control flow graph or symbol table
-      replaceVariables(inline);
-      // Remove parameters
-      final Set<ConstantRef> inlineRefs = inline.keySet();
-      removeParameters(inlineRefs);
-      // Remove from symbol table
-      deleteSymbols(getProgramScope(), inlineRefs);
+         replaceInValues(inline);
+         // Replace all usages of the constants in the control flow graph or symbol table
+         replaceVariables(inline);
+         // Remove parameters
+         final Set<ConstantRef> inlineRefs = inline.keySet();
+         removeParameters(inlineRefs);
+         // Remove from symbol table
+         deleteSymbols(getProgramScope(), inlineRefs);
 
-
-      for(ConstantRef constantRef : inlineRefs) {
-         getLog().append("Constant inlined " + constantRef.toString() + " = " + inline.get(constantRef).toString(getProgram()));
+         for(ConstantRef constantRef : inlineRefs) {
+            getLog().append("Constant inlined " + constantRef.toString() + " = " + inline.get(constantRef).toString(getProgram()));
+         }
       }
 
       return inline.size() > 0;
@@ -158,13 +159,24 @@ public class Pass2ConstantInlining extends Pass2SsaOptimization {
       Map<ConstantRef, ConstantValue> aliases = new HashMap<>();
 
       Collection<Variable> allConstants = getProgram().getScope().getAllConstants(true);
+      Map<Scope, Map<String, List<Symbol>>> scopeBaseSymbols = new HashMap<>();
       for(Variable constant : allConstants) {
          if(constant.getRef().isVersion()) {
-            // Constant is a version - find the other versions
+            Scope scope = constant.getScope();
+            Map<String, List<Symbol>> baseMap = scopeBaseSymbols.get(scope);
+            if(baseMap == null) {
+               baseMap = new HashMap<>();
+               for(Symbol symbol : scope.getAllSymbols()) {
+                  if(symbol.getRef().isVersion()) {
+                     baseMap.computeIfAbsent(symbol.getRef().getFullNameUnversioned(), k -> new ArrayList<>()).add(symbol);
+                  }
+               }
+               scopeBaseSymbols.put(scope, baseMap);
+            }
             String baseName = constant.getRef().getFullNameUnversioned();
-            Collection<Symbol> scopeSymbols = constant.getScope().getAllSymbols();
-            for(Symbol symbol : scopeSymbols) {
-               if(symbol.getRef().isVersion() && symbol.getRef().getFullNameUnversioned().equals(baseName)) {
+            List<Symbol> siblings = baseMap.get(baseName);
+            if(siblings != null) {
+               for(Symbol symbol : siblings) {
                   ConstantValue value = constant.getInitValue();
                   if(symbol instanceof Variable && ((Variable) symbol).isVariable()) {
                      aliases.put(constant.getConstantRef(), value);
