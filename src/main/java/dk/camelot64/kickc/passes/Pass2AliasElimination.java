@@ -26,33 +26,47 @@ public class Pass2AliasElimination extends Pass2SsaOptimization {
     */
    @Override
    public boolean step() {
-      final Aliases aliases = findAliases(getProgram());
+      VarAssignments.Index varAssignmentsIndex = new VarAssignments.Index(getGraph());
+      final Aliases aliases = findAliases(getProgram(), varAssignmentsIndex);
+      if(aliases.isEmpty()) {
+         return false;
+      }
 
-      fixAliasSources(aliases);
+      fixAliasSources(aliases, varAssignmentsIndex);
       removeAliasAssignments(aliases);
       replaceVariables(aliases.getReplacements(getProgramScope()));
       for(AliasSet aliasSet : aliases.getAliasSets()) {
          getLog().append("Alias " + aliasSet.toString(getProgram()));
       }
       deleteSymbols(getProgramScope(), aliases.getSymbolsToRemove(getProgramScope()));
-      return (aliases.size() > 0);
+      return true;
    }
 
 
-   private static Aliases findAliases(Program program) {
-      Aliases candidates = findAliasesCandidates(program);
+   private static Aliases findAliases(Program program, VarAssignments.Index varAssignmentsIndex) {
+      Aliases candidates = findAliasesCandidates(program, varAssignmentsIndex);
+      if(candidates.isEmpty()) {
+         return candidates;
+      }
       cleanupCandidates(candidates, program);
       cleanupCandidateVolatiles(candidates, program);
+      candidates.rebuildIndex();
       return candidates;
    }
 
    // Remove all candidates that are used after assignment in phi blocks
    private static void cleanupCandidates(Aliases candidates, Program program) {
+      if(candidates.isEmpty()) {
+         return;
+      }
       List<StatementPhiBlock> phiBlocks = new ArrayList<>();
       for(var block : program.getGraph().getAllBlocks()) {
-         if(block.hasPhiBlock()) {
+         if(block.hasPhiBlock() && block.getPhiBlock().getPhiVariables().size() > 1) {
             phiBlocks.add(block.getPhiBlock());
          }
+      }
+      if(phiBlocks.isEmpty()) {
+         return;
       }
       ListIterator<AliasSet> aliasSetListIterator = candidates.getAliasSets().listIterator();
       while(aliasSetListIterator.hasNext()) {
@@ -122,9 +136,8 @@ public class Pass2AliasElimination extends Pass2SsaOptimization {
     *
     * @return A bunch of alias sets
     */
-   private static Aliases findAliasesCandidates(final Program program) {
+   private static Aliases findAliasesCandidates(final Program program, VarAssignments.Index varAssignmentsIndex) {
       Aliases aliases = new Aliases();
-      VarAssignments.Index varAssignmentsIndex = new VarAssignments.Index(program.getGraph());
       for(var block : program.getGraph().getAllBlocks()) {
          for(Statement statement : block.getStatements()) {
             if(statement instanceof StatementAssignment) {
@@ -247,8 +260,7 @@ public class Pass2AliasElimination extends Pass2SsaOptimization {
     *
     * @param aliases The aliases
     */
-   private void fixAliasSources(Aliases aliases) {
-      VarAssignments.Index varAssignmentsIndex = new VarAssignments.Index(getGraph());
+   private void fixAliasSources(Aliases aliases, VarAssignments.Index varAssignmentsIndex) {
       for(AliasSet aliasSet : aliases.getAliasSets()) {
          // Find the best statement source among the aliases
          StatementSource bestSource = null;
@@ -336,17 +348,36 @@ public class Pass2AliasElimination extends Pass2SsaOptimization {
    public static class Aliases {
 
       private List<AliasSet> aliases;
+      private Map<VariableRef, AliasSet> varToSet;
 
       public Aliases() {
          this.aliases = new ArrayList<>();
+         this.varToSet = new HashMap<>();
       }
 
       public Aliases(Aliases aliases) {
          this.aliases = new ArrayList<>();
+         this.varToSet = new HashMap<>();
          for(AliasSet aliasSet : aliases.getAliasSets()) {
             AliasSet copySet = new AliasSet(aliasSet);
             this.aliases.add(copySet);
+            for(VariableRef var : copySet.getVars()) {
+               this.varToSet.put(var, copySet);
+            }
          }
+      }
+
+      public void rebuildIndex() {
+         varToSet.clear();
+         for(AliasSet aliasSet : aliases) {
+            for(VariableRef var : aliasSet.getVars()) {
+               varToSet.put(var, aliasSet);
+            }
+         }
+      }
+
+      public boolean isEmpty() {
+         return aliases.isEmpty();
       }
 
       List<VariableRef> getSymbolsToRemove(ProgramScope scope) {
@@ -381,30 +412,33 @@ public class Pass2AliasElimination extends Pass2SsaOptimization {
             if(aliasSet2 != null) {
                if(aliasSet1 != aliasSet2) {
                   aliasSet1.addAll(aliasSet2);
+                  for(VariableRef var : aliasSet2.getVars()) {
+                     varToSet.put(var, aliasSet1);
+                  }
                   aliases.remove(aliasSet2);
                }
             } else {
                aliasSet1.add(var2);
+               varToSet.put(var2, aliasSet1);
             }
          } else {
             if(aliasSet2 != null) {
                aliasSet2.add(var1);
+               varToSet.put(var1, aliasSet2);
             } else {
                AliasSet newSet = new AliasSet();
                newSet.add(var1);
                newSet.add(var2);
                aliases.add(newSet);
+               varToSet.put(var1, newSet);
+               varToSet.put(var2, newSet);
             }
          }
       }
 
       AliasSet findAliasSet(LValue lValue) {
          if(lValue instanceof VariableRef) {
-            for(AliasSet alias : aliases) {
-               if(alias.contains(lValue)) {
-                  return alias;
-               }
-            }
+            return varToSet.get((VariableRef) lValue);
          }
          return null;
       }
