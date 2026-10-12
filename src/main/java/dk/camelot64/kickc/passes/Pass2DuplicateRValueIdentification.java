@@ -27,6 +27,8 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
       super(program);
    }
 
+   private static record RValueKey(RValue rValue1, Operator operator, RValue rValue2) {}
+
    @Override
    public boolean step() {
       boolean modified = false;
@@ -34,8 +36,8 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
       // Dominators are used for determining if one statement is guaranteed to be executed before another statement
       DominatorsGraph dominators = getProgram().getDominators();
 
-      // All RValues in the program
-      Set<AssignmentWithRValue> rValues = new HashSet<>();
+      // All RValues in the program indexed by their signature
+      Map<RValueKey, List<AssignmentWithRValue>> rValues = new HashMap<>();
 
       for(var block : getGraph().getAllBlocks()) {
          for(Statement statement : block.getStatements()) {
@@ -44,29 +46,33 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
                AssignmentWithRValue thisRValue = new AssignmentWithRValue(thisAssignment, block);
                if(!thisRValue.isConstant() && !thisRValue.isTrivial() && !thisRValue.isVolatile() && !thisRValue.isLoadStore()) {
                   boolean duplicate = false;
-                  for(AssignmentWithRValue otherRValue : rValues) {
-                     if(otherRValue.isSameRValue(thisRValue)) {
-                        // Check if any of the statements is guaranteed to be executed before the other statement
-                        DominatorsBlock thisDominators = dominators.getDominators(thisRValue.block.getLabel());
-                        DominatorsBlock otherDominators = dominators.getDominators(otherRValue.block.getLabel());
-                        if(otherRValue.block.getLabel().equals(thisRValue.block.getLabel())) {
-                           // The two assignments are in the same block
-                           // Since we are visiting statements sequentially the other  other assignment is guaranteed to be executed before this assignment
-                           duplicate |= deduplicateRValue(otherRValue, thisRValue);
-                        } else if(thisDominators.contains(otherRValue.block.getLabel())) {
-                           // The other assignment is guaranteed to be executed before this assignment
-                           if(scopeMatch(thisRValue, otherRValue))
+                  RValueKey key = new RValueKey(thisRValue.rValue1, thisRValue.operator, thisRValue.rValue2);
+                  List<AssignmentWithRValue> candidates = rValues.get(key);
+                  if(candidates != null) {
+                     for(AssignmentWithRValue otherRValue : candidates) {
+                        if(otherRValue.isSameRValue(thisRValue)) {
+                           // Check if any of the statements is guaranteed to be executed before the other statement
+                           DominatorsBlock thisDominators = dominators.getDominators(thisRValue.block.getLabel());
+                           DominatorsBlock otherDominators = dominators.getDominators(otherRValue.block.getLabel());
+                           if(otherRValue.block.getLabel().equals(thisRValue.block.getLabel())) {
+                              // The two assignments are in the same block
+                              // Since we are visiting statements sequentially the other  other assignment is guaranteed to be executed before this assignment
                               duplicate |= deduplicateRValue(otherRValue, thisRValue);
-                        } else if(otherDominators.contains(thisRValue.block.getLabel())) {
-                           // This assignment is guaranteed to be executed before the other assignment
-                           if(scopeMatch(thisRValue, otherRValue))
-                              duplicate |= deduplicateRValue(thisRValue, otherRValue);
+                           } else if(thisDominators.contains(otherRValue.block.getLabel())) {
+                              // The other assignment is guaranteed to be executed before this assignment
+                              if(scopeMatch(thisRValue, otherRValue))
+                                 duplicate |= deduplicateRValue(otherRValue, thisRValue);
+                           } else if(otherDominators.contains(thisRValue.block.getLabel())) {
+                              // This assignment is guaranteed to be executed before the other assignment
+                              if(scopeMatch(thisRValue, otherRValue))
+                                 duplicate |= deduplicateRValue(thisRValue, otherRValue);
+                           }
                         }
                      }
                   }
                   // If not a duplicate itself - add it to the candidate pool
                   if(!duplicate)
-                     rValues.add(thisRValue);
+                     rValues.computeIfAbsent(key, k -> new ArrayList<>()).add(thisRValue);
                   // Determine if anything is modified
                   modified |= duplicate;
                }

@@ -157,6 +157,9 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
             return false;
          }
          // Generate ASM
+         if(blocksToRegenerate == null) {
+            blocksToRegenerate = getBlocksToRegenerate(program, scope, combination.getAllocation().keySet());
+         }
          try {
             new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing(), true).generate(blocksToRegenerate, cachedBlockChunks, false);
          } catch(AsmFragmentTemplateSynthesizer.UnknownFragmentException e) {

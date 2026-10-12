@@ -126,17 +126,9 @@ public class Pass4CodeGeneration {
             addConstantsAndLabels(asm, currentScope);
         }
 
-        Collection<Graph.Block> targetBlocks;
-        if(trialMode && blocksToRegenerate != null) {
-            targetBlocks = new ArrayList<>();
-            for(Graph.Block b : getGraph().getAllBlocks()) {
-                if(blocksToRegenerate.contains(b)) {
-                    targetBlocks.add(b);
-                }
-            }
-        } else {
-            targetBlocks = getGraph().getAllBlocks();
-        }
+        Collection<Graph.Block> targetBlocks = (trialMode && blocksToRegenerate != null)
+            ? blocksToRegenerate
+            : getGraph().getAllBlocks();
 
         for (Graph.Block block : targetBlocks) {
             if (!block.getScope().equals(currentScope)) {

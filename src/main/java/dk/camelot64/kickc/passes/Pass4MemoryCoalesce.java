@@ -192,8 +192,7 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
       // Try out the coalesce to test if it works
       RegisterCombination combination = new RegisterCombination();
       combination.setRegister(ec2, register1);
-      Set<Graph.Block> blocksToRegenerate = Pass4RegisterUpliftCombinations.getBlocksToRegenerate(program, null, Arrays.asList(ec1, ec2));
-      return Pass4RegisterUpliftCombinations.generateCombinationAsm(combination, program, unknownFragments, ScopeRef.ROOT, blocksToRegenerate, null);
+      return Pass4RegisterUpliftCombinations.generateCombinationAsm(combination, program, unknownFragments, ScopeRef.ROOT);
    }
 
    /**
