@@ -103,21 +103,38 @@ public class Pass4MemoryCoalesceAssignment extends Pass2Base {
       public CoalesceLiveRangeEquivalenceClassScores(Program program, CoalesceVarScores varScores) {
          this.scores = new LinkedHashMap<>();
          LiveRangeEquivalenceClassSet liveRangeEquivalenceClassSet = program.getLiveRangeEquivalenceClassSet();
-         for(LiveRangeEquivalenceClass thisEquivalenceClass : liveRangeEquivalenceClassSet.getEquivalenceClasses()) {
-            for(LiveRangeEquivalenceClass otherEquivalenceClass : liveRangeEquivalenceClassSet.getEquivalenceClasses()) {
-               if(!thisEquivalenceClass.equals(otherEquivalenceClass)) {
-                  incScore(thisEquivalenceClass, otherEquivalenceClass, varScores);
-               }
+         List<LiveRangeEquivalenceClass> allEcs = liveRangeEquivalenceClassSet.getEquivalenceClasses();
+
+         Map<VariableRef, LiveRangeEquivalenceClass> varToEc = new HashMap<>();
+         for(LiveRangeEquivalenceClass ec : allEcs) {
+            for(VariableRef var : ec.getVariables()) {
+               varToEc.put(var, ec);
             }
          }
-      }
 
-      private void incScore(LiveRangeEquivalenceClass ec1, LiveRangeEquivalenceClass ec2, CoalesceVarScores varScores) {
-         for(VariableRef var1 : ec1.getVariables()) {
-            for(VariableRef var2 : ec2.getVariables()) {
-               Integer varScore = varScores.getScore(var1, var2);
-               if(varScore > 0) {
-                  setScore(ec1, ec2, getScore(ec1, ec2) + varScore);
+         Map<LiveRangeEquivalenceClass, Map<LiveRangeEquivalenceClass, Integer>> rawScores = new HashMap<>();
+         for(Map.Entry<VariableRef, Map<VariableRef, Integer>> entry1 : varScores.scores.entrySet()) {
+            VariableRef var1 = entry1.getKey();
+            LiveRangeEquivalenceClass ec1 = varToEc.get(var1);
+            if(ec1 == null) continue;
+            for(Map.Entry<VariableRef, Integer> entry2 : entry1.getValue().entrySet()) {
+               VariableRef var2 = entry2.getKey();
+               Integer score = entry2.getValue();
+               if(score == null || score <= 0) continue;
+               LiveRangeEquivalenceClass ec2 = varToEc.get(var2);
+               if(ec2 == null || ec1.equals(ec2)) continue;
+               rawScores.computeIfAbsent(ec1, k -> new HashMap<>())
+                     .merge(ec2, score, Integer::sum);
+            }
+         }
+
+         for(LiveRangeEquivalenceClass ec1 : allEcs) {
+            Map<LiveRangeEquivalenceClass, Integer> ec1Raw = rawScores.get(ec1);
+            if(ec1Raw == null) continue;
+            for(LiveRangeEquivalenceClass ec2 : allEcs) {
+               Integer score = ec1Raw.get(ec2);
+               if(score != null && score > 0) {
+                  setScore(ec1, ec2, score);
                }
             }
          }
