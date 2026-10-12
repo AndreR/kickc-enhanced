@@ -189,36 +189,38 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
       }
 
       private boolean isLoadStore() {
-         AtomicBoolean isLoadStore = new AtomicBoolean(false);
-         ProgramValueHandler loadStoreIdentificator = (programValue, currentStmt, stmtIt, currentBlock) -> {
-            Value value = programValue.get();
-            if(value instanceof VariableRef) {
-               Variable var = getProgramScope().getVar((VariableRef) value);
-               if(var.isKindLoadStore())
-                  isLoadStore.set(true);
-            }
-         };
-         ProgramValueIterator.execute(new ProgramValue.GenericValue(rValue1), loadStoreIdentificator, assignment, null, block);
-         ProgramValueIterator.execute(new ProgramValue.GenericValue(rValue2), loadStoreIdentificator, assignment, null, block);
-         return isLoadStore.get();
+         return isKindLoadStore(rValue1) || isKindLoadStore(rValue2);
+      }
+
+      private boolean isKindLoadStore(Value val) {
+         if(val == null) return false;
+         if(val instanceof VariableRef) {
+            Variable var = getProgramScope().getVar((VariableRef) val);
+            return var != null && var.isKindLoadStore();
+         }
+         if(val instanceof CastValue) {
+            return isKindLoadStore(((CastValue) val).getValue());
+         }
+         return false;
       }
 
       private boolean isVolatile() {
-         AtomicBoolean isVol = new AtomicBoolean(false);
-         ProgramValueHandler identifyVolatiles = (programValue, currentStmt, stmtIt, currentBlock) -> {
-            if(programValue.get() instanceof PointerDereference)
-               isVol.set(true);
-            if(programValue.get() instanceof VariableRef) {
-               Variable variable = getProgramScope().getVariable((VariableRef) programValue.get());
-               if(variable.isVolatile())
-                  isVol.set(true);
-            }
-         };
-         ProgramValueIterator.execute(new ProgramValue.RValue1(assignment), identifyVolatiles, assignment, null, null);
-         ProgramValueIterator.execute(new ProgramValue.RValue2(assignment), identifyVolatiles, assignment, null, null);
          if(Operators.DEREF.equals(operator) || Operators.DEREF_IDX.equals(operator))
-            isVol.set(true);
-         return isVol.get();
+            return true;
+         return isVolatileVal(rValue1) || isVolatileVal(rValue2);
+      }
+
+      private boolean isVolatileVal(Value val) {
+         if(val == null) return false;
+         if(val instanceof PointerDereference) return true;
+         if(val instanceof VariableRef) {
+            Variable variable = getProgramScope().getVariable((VariableRef) val);
+            return variable != null && variable.isVolatile();
+         }
+         if(val instanceof CastValue) {
+            return isVolatileVal(((CastValue) val).getValue());
+         }
+         return false;
       }
 
       private boolean isTrivial() {
@@ -240,14 +242,22 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
          if(operator.equals(Operators.WORD0)) return true;
          if(operator.equals(Operators.WORD1)) return true;
          if(operator.equals(Operators.PLUS) && rValue2 instanceof ConstantValue) {
-            final SymbolType type1 = SymbolTypeInference.inferType(getProgramScope(), rValue1);
-            return type1.getSizeBytes() == 1;
+            final SymbolType type1 = inferValueType(rValue1);
+            return type1 != null && type1.getSizeBytes() == 1;
          }
          if(operator.equals(Operators.PLUS) && rValue1 instanceof ConstantValue) {
-            final SymbolType type2 = SymbolTypeInference.inferType(getProgramScope(), rValue2);
-            return type2.getSizeBytes() == 1;
+            final SymbolType type2 = inferValueType(rValue2);
+            return type2 != null && type2.getSizeBytes() == 1;
          }
          return false;
+      }
+
+      private SymbolType inferValueType(RValue rValue) {
+         if(rValue instanceof VariableRef) {
+            Variable var = getProgramScope().getVariable((VariableRef) rValue);
+            if(var != null) return var.getType();
+         }
+         return SymbolTypeInference.inferType(getProgramScope(), rValue);
       }
 
 
