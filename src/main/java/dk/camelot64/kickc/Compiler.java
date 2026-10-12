@@ -802,11 +802,15 @@ public class Compiler {
    }
 
    private void pass5GenerateAndOptimizeAsm() {
+      long t0 = System.currentTimeMillis();
+      if(getLog().isSysOut() || getLog().isVerboseAsmOptimize()) {
+         getLog().append("\nASSEMBLER BEFORE OPTIMIZATION");
+         getLog().append(program.getAsm().toString(new AsmProgram.AsmPrintState(true), program));
+         getLog().append("ASSEMBLER OPTIMIZATIONS");
+      }
+      long tLogBefore = System.currentTimeMillis() - t0;
 
-      getLog().append("\nASSEMBLER BEFORE OPTIMIZATION");
-      getLog().append(program.getAsm().toString(new AsmProgram.AsmPrintState(true), program));
-
-      getLog().append("ASSEMBLER OPTIMIZATIONS");
+      long tOptStart = System.currentTimeMillis();
       List<Pass5AsmOptimization> pass5Optimizations = new ArrayList<>();
       pass5Optimizations.add(new Pass5NextJumpElimination(program));
       pass5Optimizations.add(new Pass5UnnecesaryLoadElimination(program));
@@ -822,30 +826,37 @@ public class Compiler {
          for(Pass5AsmOptimization optimization : pass5Optimizations) {
             boolean stepOptimized = optimization.optimize();
             if(stepOptimized) {
-               getLog().append("Succesful ASM optimization " + optimization.getClass().getSimpleName());
-               asmOptimized = true;
-               if(getLog().isVerboseAsmOptimize()) {
+               if(getLog().isSysOut() || getLog().isVerboseAsmOptimize()) {
+                  getLog().append("Succesful ASM optimization " + optimization.getClass().getSimpleName());
                   getLog().append("ASSEMBLER");
                   getLog().append(program.getAsm().toString());
                }
+               asmOptimized = true;
             }
          }
       }
+      long tOptElapsed = System.currentTimeMillis() - tOptStart;
 
+      long tReindexStart = System.currentTimeMillis();
       new Pass5ReindexAsmLines(program).optimize();
+      long tReindexElapsed = System.currentTimeMillis() - tReindexStart;
+
+      long tBranchStart = System.currentTimeMillis();
       if(disableLongBranchFix) {
-         getLog().append("LONG BRANCH FIX DISABLED.");
+         if(getLog().isSysOut()) getLog().append("LONG BRANCH FIX DISABLED.");
       } else {
          new Pass5FixLongBranches(program).optimize();
       }
+      long tBranchElapsed = System.currentTimeMillis() - tBranchStart;
 
-      getLog().append("\nFINAL SYMBOL TABLE");
-      getLog().append(program.getScope().toStringVars(program, false));
-
-      getLog().append("\nFINAL ASSEMBLER");
-      getLog().append("Score: " + Pass4RegisterUpliftCombinations.getAsmScore(program) + "\n");
-      getLog().append(program.getAsm().toString(new AsmProgram.AsmPrintState(false, true, true, false), program));
-
+      long tLogAfterStart = System.currentTimeMillis();
+      if(getLog().isSysOut() || getLog().isVerboseAsmOptimize()) {
+         getLog().append("\nFINAL SYMBOL TABLE");
+         getLog().append(program.getScope().toStringVars(program, false));
+         getLog().append("\nFINAL ASSEMBLER");
+         getLog().append("Score: " + Pass4RegisterUpliftCombinations.getAsmScore(program) + "\n");
+         getLog().append(program.getAsm().toString(new AsmProgram.AsmPrintState(false, true, true, false), program));
+      }
    }
 
 }
