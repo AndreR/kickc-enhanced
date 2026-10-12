@@ -12,7 +12,10 @@ import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.values.SymbolVariableRef;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Utility for finding all assignments for a variable.
@@ -25,6 +28,41 @@ public class VarAssignments {
     * @param variable The variable to find the assignment for
     * @return All assignments of values to the variable
     */
+   public static class Index {
+      private final Map<SymbolVariableRef, List<VarAssignment>> map = new LinkedHashMap<>();
+
+      public Index(Graph graph) {
+         for(var block : graph.getAllBlocks()) {
+            for(Statement statement : block.getStatements()) {
+               if(statement instanceof StatementLValue) {
+                  StatementLValue assignment = (StatementLValue) statement;
+                  if(assignment.getlValue() instanceof SymbolVariableRef) {
+                     map.computeIfAbsent((SymbolVariableRef) assignment.getlValue(), k -> new ArrayList<>())
+                           .add(new VarAssignment(VarAssignment.Type.STATEMENT_LVALUE, block, assignment, null, null, null));
+                  }
+               } else if(statement instanceof StatementPhiBlock) {
+                  for(StatementPhiBlock.PhiVariable phiVariable : ((StatementPhiBlock) statement).getPhiVariables()) {
+                     map.computeIfAbsent(phiVariable.getVariable(), k -> new ArrayList<>())
+                           .add(new VarAssignment(VarAssignment.Type.STATEMENT_PHI, block, null, (StatementPhiBlock) statement, phiVariable, null));
+                  }
+               }
+            }
+         }
+      }
+
+      public List<VarAssignment> get(SymbolVariableRef variable, ProgramScope programScope) {
+         List<VarAssignment> list = map.get(variable);
+         Variable varDef = programScope.getVariable(variable);
+         if(varDef != null && varDef.getInitValue() != null) {
+            List<VarAssignment> res = new ArrayList<>();
+            res.add(new VarAssignment(VarAssignment.Type.INIT_VALUE, null, null, null, null, varDef));
+            if(list != null) res.addAll(list);
+            return res;
+         }
+         return list != null ? list : Collections.emptyList();
+      }
+   }
+
    public static List<VarAssignment> get(SymbolVariableRef variable, Graph graph, ProgramScope programScope) {
       ArrayList<VarAssignment> varAssignments = new ArrayList<>();
       Variable varDef = programScope.getVariable(variable);

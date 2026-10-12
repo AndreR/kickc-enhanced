@@ -21,6 +21,8 @@ public class Pass4RegisterUpliftRemains extends Pass2Base {
       Collections.sort(equivalenceClasses, (o1, o2) -> Double.compare(registerWeights.getTotalWeight(o2), registerWeights.getTotalWeight(o1)));
 
       Set<String> unknownFragments = new LinkedHashSet<>();
+      Map<Graph.Block, List<dk.camelot64.kickc.asm.AsmChunk>> cachedBlockChunks = new HashMap<>();
+      new Pass4CodeGeneration(getProgram(), false, getProgram().isWarnFragmentMissing(), true).generate(null, cachedBlockChunks, true);
 
       for(LiveRangeEquivalenceClass equivalenceClass : equivalenceClasses) {
          Registers.Register register = equivalenceClass.getRegister();
@@ -29,7 +31,7 @@ public class Pass4RegisterUpliftRemains extends Pass2Base {
             RegisterCombinationIterator combinationIterator = new RegisterCombinationIterator(Arrays.asList(equivalenceClass), getProgram().getRegisterPotentials());
             VariableRef variableRef = equivalenceClass.getVariables().get(0);
             Scope testedScope = getProgram().getSymbolInfos().getVariable(variableRef).getScope();
-            Pass4RegisterUpliftCombinations.chooseBestUpliftCombination(combinationIterator, maxCombinations, unknownFragments, testedScope.getRef(), getProgram());
+            Pass4RegisterUpliftCombinations.chooseBestUpliftCombination(combinationIterator, maxCombinations, unknownFragments, testedScope.getRef(), getProgram(), cachedBlockChunks);
          }
       }
 

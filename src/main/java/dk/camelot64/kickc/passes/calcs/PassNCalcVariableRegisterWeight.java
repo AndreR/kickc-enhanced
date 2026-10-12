@@ -34,6 +34,7 @@ public class PassNCalcVariableRegisterWeight extends PassNCalcBase<VariableRegis
       LiveRangeVariables liveRangeVariables = getProgram().getLiveRangeVariables();
       VariableRegisterWeights variableRegisterWeights = new VariableRegisterWeights();
       final StatementInfos statementInfos = getProgram().getStatementInfos();
+      java.util.Map<LabelRef, Integer> depthMemo = new java.util.HashMap<>();
 
       for(var block : getProgram().getGraph().getAllBlocks()) {
          for(Statement statement : block.getStatements()) {
@@ -43,43 +44,43 @@ public class PassNCalcVariableRegisterWeight extends PassNCalcBase<VariableRegis
                   VariableRef philVariable = phiVariable.getVariable();
                   for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
                      if(phiRValue.getrValue() instanceof VariableRef) {
-                        addWeight(philVariable, phiRValue.getPredecessor(), liveRangeVariables, loopSet, callGraph, statementInfos, variableRegisterWeights);
+                        addWeight(philVariable, phiRValue.getPredecessor(), liveRangeVariables, loopSet, callGraph, statementInfos, variableRegisterWeights, depthMemo);
                      }
                   }
                   // Add weights for each usage of a variable
                   for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
-                     addUsageWeightRValue(phiRValue.getrValue(), phiRValue.getPredecessor(), variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables);
+                     addUsageWeightRValue(phiRValue.getrValue(), phiRValue.getPredecessor(), variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables, depthMemo);
                   }
                }
             } else if(statement instanceof StatementAssignment) {
                // Add weights for the definition of the variable
-               addUsageWeightRValue(((StatementAssignment) statement).getlValue(), block.getLabel(), variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables);
+               addUsageWeightRValue(((StatementAssignment) statement).getlValue(), block.getLabel(), variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables, depthMemo);
                // Add weights for each usage of variables
-               addUsageWeightRValue(((StatementAssignment) statement).getrValue1(), block.getLabel(), variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables);
-               addUsageWeightRValue(((StatementAssignment) statement).getrValue2(), block.getLabel(), variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables);
+               addUsageWeightRValue(((StatementAssignment) statement).getrValue1(), block.getLabel(), variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables, depthMemo);
+               addUsageWeightRValue(((StatementAssignment) statement).getrValue2(), block.getLabel(), variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables, depthMemo);
             } else if(statement instanceof StatementConditionalJump) {
                // Add weights for each usage of variables
-               addUsageWeightRValue(((StatementConditionalJump) statement).getrValue1(), block.getLabel(), variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables);
-               addUsageWeightRValue(((StatementConditionalJump) statement).getrValue2(), block.getLabel(), variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables);
+               addUsageWeightRValue(((StatementConditionalJump) statement).getrValue1(), block.getLabel(), variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables, depthMemo);
+               addUsageWeightRValue(((StatementConditionalJump) statement).getrValue2(), block.getLabel(), variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables, depthMemo);
             }
          }
       }
       return variableRegisterWeights;
    }
 
-   private static void addUsageWeightRValue(Value rValue, LabelRef block, VariableRegisterWeights variableRegisterWeights, NaturalLoopSet loopSet, CallGraph callGraph, StatementInfos statementInfos, LiveRangeVariables liveRangeVariables) {
+   private static void addUsageWeightRValue(Value rValue, LabelRef block, VariableRegisterWeights variableRegisterWeights, NaturalLoopSet loopSet, CallGraph callGraph, StatementInfos statementInfos, LiveRangeVariables liveRangeVariables, java.util.Map<LabelRef, Integer> depthMemo) {
       if(rValue instanceof VariableRef) {
-         addWeight((VariableRef) rValue, block, liveRangeVariables, loopSet, callGraph, statementInfos, variableRegisterWeights);
+         addWeight((VariableRef) rValue, block, liveRangeVariables, loopSet, callGraph, statementInfos, variableRegisterWeights, depthMemo);
       } else if(rValue instanceof PointerDereferenceSimple) {
-         addUsageWeightRValue(((PointerDereferenceSimple) rValue).getPointer(), block, variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables);
+         addUsageWeightRValue(((PointerDereferenceSimple) rValue).getPointer(), block, variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables, depthMemo);
       } else if(rValue instanceof PointerDereferenceIndexed) {
-         addUsageWeightRValue(((PointerDereferenceIndexed) rValue).getPointer(), block, variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables);
-         addUsageWeightRValue(((PointerDereferenceIndexed) rValue).getIndex(), block, variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables);
+         addUsageWeightRValue(((PointerDereferenceIndexed) rValue).getPointer(), block, variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables, depthMemo);
+         addUsageWeightRValue(((PointerDereferenceIndexed) rValue).getIndex(), block, variableRegisterWeights, loopSet, callGraph, statementInfos, liveRangeVariables, depthMemo);
       }
    }
 
-   private static double addWeight(VariableRef variable, LabelRef block, LiveRangeVariables liveRangeVariables, NaturalLoopSet loopSet, CallGraph callGraph, StatementInfos statementInfos, VariableRegisterWeights variableRegisterWeights) {
-      int loopCallDepth = getLoopCallDepth(block, loopSet, callGraph, statementInfos);
+   private static double addWeight(VariableRef variable, LabelRef block, LiveRangeVariables liveRangeVariables, NaturalLoopSet loopSet, CallGraph callGraph, StatementInfos statementInfos, VariableRegisterWeights variableRegisterWeights, java.util.Map<LabelRef, Integer> depthMemo) {
+      int loopCallDepth = getLoopCallDepth(block, loopSet, callGraph, statementInfos, depthMemo, new java.util.HashSet<>());
       double w = 1.0 + Math.pow(10.0, loopCallDepth);
       LiveRange liveRange = liveRangeVariables.getLiveRange(variable);
       double s = liveRange == null ? 0.0 : liveRange.size();
@@ -98,7 +99,11 @@ public class PassNCalcVariableRegisterWeight extends PassNCalcBase<VariableRegis
     * @param callGraph The call graph
     * @return The combined loop/call depth
     */
-   private static int getLoopCallDepth(LabelRef block, NaturalLoopSet loopSet, CallGraph callGraph, StatementInfos statementInfos) {
+   private static int getLoopCallDepth(LabelRef block, NaturalLoopSet loopSet, CallGraph callGraph, StatementInfos statementInfos, java.util.Map<LabelRef, Integer> memo, java.util.Set<LabelRef> visiting) {
+      Integer cached = memo.get(block);
+      if(cached != null) {
+         return cached;
+      }
       final String procedureName = block.getFullName().contains("::") ? block.getScopeNames() : block.getFullName();
       final ProcedureRef procedureRef = new ProcedureRef(procedureName);
       final Collection<CallGraph.CallBlock.Call> callers = callGraph.getCallers(procedureRef);
@@ -109,13 +114,15 @@ public class PassNCalcVariableRegisterWeight extends PassNCalcBase<VariableRegis
          } else {
             final Integer callStatementIdx = caller.getCallStatementIdx();
             final Graph.Block callBlock = statementInfos.getBlock(callStatementIdx);
-            int callDepth = getLoopCallDepth(callBlock.getLabel(), loopSet, callGraph, statementInfos) + 1;
+            int callDepth = getLoopCallDepth(callBlock.getLabel(), loopSet, callGraph, statementInfos, memo, visiting) + 1;
             if(callDepth > maxCallDepth)
                maxCallDepth = callDepth;
          }
       }
       int loopDepth = loopSet.getMaxLoopDepth(block);
-      return maxCallDepth + loopDepth;
+      int result = maxCallDepth + loopDepth;
+      memo.put(block, result);
+      return result;
    }
 
 

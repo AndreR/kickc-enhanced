@@ -24,9 +24,15 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
    public LiveRangeVariables calculate() {
       final Map<ProcedureRef, Collection<VariableRef>> procedureReferencedVars = calculateProcedureReferencedVars(getProgram());
       LiveRangeVariables liveRanges = new LiveRangeVariables(getProgram());
+
+      Map<Statement, Collection<PreviousStatement>> previousStatementsMap = new LinkedHashMap<>();
+      for(Statement nextStmt : getProgram().getGraph().getAllStatements()) {
+         previousStatementsMap.put(nextStmt, getPreviousStatements(nextStmt));
+      }
+
       boolean propagating;
       do {
-         propagating = calculateLiveRanges(liveRanges, procedureReferencedVars);
+         propagating = calculateLiveRanges(liveRanges, procedureReferencedVars, previousStatementsMap);
          getProgram().setLiveRangeVariables(liveRanges);
          if(getLog().isVerboseLiveRanges()) {
             getLog().append("Propagating live ranges...");
@@ -78,7 +84,7 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
     * @param liveRanges The live ranges to propagate.
     * @return true if any live ranges was modified. false if no modification was performed (and the propagation is complete)
     */
-   private boolean calculateLiveRanges(LiveRangeVariables liveRanges, Map<ProcedureRef, Collection<VariableRef>> procedureReferencedVars) {
+   private boolean calculateLiveRanges(LiveRangeVariables liveRanges, Map<ProcedureRef, Collection<VariableRef>> procedureReferencedVars, Map<Statement, Collection<PreviousStatement>> previousStatementsMap) {
       VariableReferenceInfos referenceInfo = getProgram().getVariableReferenceInfos();
       boolean modified = false;
       LiveRangeVariables.LiveRangeVariablesByStatement liveRangeVariablesByStatement = liveRanges.getLiveRangeVariablesByStatement();
@@ -87,7 +93,7 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
              nextStmt.getIndex());
          Collection<VariableRef> definedNextStmt = referenceInfo.getDefinedVars(nextStmt);
          initLiveRange(liveRanges, definedNextStmt);
-         Collection<PreviousStatement> previousStmts = getPreviousStatements(nextStmt);
+         Collection<PreviousStatement> previousStmts = previousStatementsMap.get(nextStmt);
          for (PreviousStatement previousStmt : previousStmts) {
             if (PreviousStatement.Type.NORMAL.equals(previousStmt.getType())) {
                // Add all vars alive in the next statement

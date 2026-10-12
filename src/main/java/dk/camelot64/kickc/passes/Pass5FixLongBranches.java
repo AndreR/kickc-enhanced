@@ -12,6 +12,7 @@ import kickass.nonasm.c64.CharToPetsciiConverter;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -94,26 +95,33 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
       // Look for a long branch distance error
       if(asmRes != 0) {
          String outputLines[] = output.split("\\r?\\n");
+         List<Integer> linesToFix = new ArrayList<>();
          for(int i = 0; i < outputLines.length; i++) {
             String outputLine = outputLines[i];
             if(outputLine.contains("Error: relative address is illegal (jump distance is too far).")) {
                // Found a long branch!
-               String contextLine = outputLines[i + 1];
-               if(getLog().isVerboseFixLongBranch())
-                  getLog().append("Pass5FixLongBranches: Found long branch " + contextLine);
-               Pattern contextPattern = Pattern.compile("at line ([0-9]*),.*");
-               Matcher matcher = contextPattern.matcher(contextLine);
-               if(matcher.matches()) {
-                  String contextLineIdxStr = matcher.group(1);
-                  int contextLineIdx = Integer.parseInt(contextLineIdxStr);
-                  // Found line number
-                  if(getLog().isVerboseFixLongBranch())
-                     getLog().append("Pass5FixLongBranches: Found long branch line number " + contextLineIdx);
-                  if(fixLongBranch(contextLineIdx - 1)) {
-                     return true;
+               if(i + 1 < outputLines.length) {
+                  String contextLine = outputLines[i + 1];
+                  Pattern contextPattern = Pattern.compile("at line ([0-9]*),.*");
+                  Matcher matcher = contextPattern.matcher(contextLine);
+                  if(matcher.matches()) {
+                     int contextLineIdx = Integer.parseInt(matcher.group(1));
+                     linesToFix.add(contextLineIdx - 1);
                   }
                }
-               throw new CompileError("Error! Failed to fix long branch at " + contextLine);
+            }
+         }
+         if(!linesToFix.isEmpty()) {
+            // Fix in descending order to avoid line offset invalidation
+            linesToFix.sort(Collections.reverseOrder());
+            boolean fixedAny = false;
+            for(int lineIdx : linesToFix) {
+               if(fixLongBranch(lineIdx)) {
+                  fixedAny = true;
+               }
+            }
+            if(fixedAny) {
+               return true;
             }
          }
          // KickAssembler returned error, but no long branch was found. Fail with the output from KickAss

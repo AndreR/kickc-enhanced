@@ -188,14 +188,31 @@ public class Compiler {
       // Find default interrupt type
       String interruptType = program.getTargetPlatform().getInterruptType();
 
+      long tTotalStart = System.currentTimeMillis();
+      long tStart = System.currentTimeMillis();
       Pass0GenerateStatementSequence pass0GenerateStatementSequence = new Pass0GenerateStatementSequence(cParser, cFileContext, program, callingConvention, encoding, interruptType);
       pass0GenerateStatementSequence.generate();
+      System.out.println(String.format("[PERF] Pass 0 (AST -> Statement Seq): %6.2f s", (System.currentTimeMillis() - tStart) / 1000.0));
 
+      tStart = System.currentTimeMillis();
       pass1GenerateSSA();
+      System.out.println(String.format("[PERF] Pass 1 (SSA Generation):       %6.2f s", (System.currentTimeMillis() - tStart) / 1000.0));
+
+      tStart = System.currentTimeMillis();
       pass2Optimize();
+      System.out.println(String.format("[PERF] Pass 2 (SSA Optimize):         %6.2f s", (System.currentTimeMillis() - tStart) / 1000.0));
+
+      tStart = System.currentTimeMillis();
       pass2UnrollLoops();
+      System.out.println(String.format("[PERF] Pass 2 (Unroll Loops):         %6.2f s", (System.currentTimeMillis() - tStart) / 1000.0));
+
+      tStart = System.currentTimeMillis();
       pass2InlineConstants();
+      System.out.println(String.format("[PERF] Pass 2 (Inline Constants):     %6.2f s", (System.currentTimeMillis() - tStart) / 1000.0));
+
+      tStart = System.currentTimeMillis();
       pass2FinalizeAllNumbers();
+      System.out.println(String.format("[PERF] Pass 2 (Finalize Numbers):     %6.2f s", (System.currentTimeMillis() - tStart) / 1000.0));
 
       //getLog().append("\nCONTROL FLOW GRAPH PASS 2");
       //getLog().append(program.prettyControlFlowGraph());
@@ -203,9 +220,18 @@ public class Compiler {
       //getLog().append("SYMBOL TABLE PASS 2");
       //getLog().append(program.getScope().toString(program, null));
 
+      tStart = System.currentTimeMillis();
       pass3Analysis();
+      System.out.println(String.format("[PERF] Pass 3 (CFG & Live Ranges):    %6.2f s", (System.currentTimeMillis() - tStart) / 1000.0));
+
+      tStart = System.currentTimeMillis();
       pass4RegisterAllocation();
+      System.out.println(String.format("[PERF] Pass 4 (Register Allocation):  %6.2f s", (System.currentTimeMillis() - tStart) / 1000.0));
+
+      tStart = System.currentTimeMillis();
       pass5GenerateAndOptimizeAsm();
+      System.out.println(String.format("[PERF] Pass 5 (ASM Gen & Peephole):   %6.2f s", (System.currentTimeMillis() - tStart) / 1000.0));
+      System.out.println(String.format("[PERF] >>> TOTAL COMPILER TIME:       %6.2f s <<<", (System.currentTimeMillis() - tTotalStart) / 1000.0));
    }
 
    private void pass1GenerateSSA() {
@@ -524,16 +550,28 @@ public class Compiler {
     */
    private void pass2Execute(List<PassStep> optimizations) {
       boolean ssaOptimized = true;
+      int round = 0;
       while(ssaOptimized) {
+         round++;
+         long tRoundStart = System.currentTimeMillis();
          pass2AssertSSA();
          ssaOptimized = false;
          for(PassStep optimization : optimizations) {
             boolean stepOptimized = true;
             while(stepOptimized) {
+               long tStepStart = System.currentTimeMillis();
                stepOptimized = optimization.step();
+               long stepElapsed = System.currentTimeMillis() - tStepStart;
+               if(stepElapsed > 1000) {
+                  System.out.println(String.format("       [SLOW PASS2 STEP] %s took %5.2f s (round %d)", optimization.getClass().getSimpleName(), stepElapsed / 1000.0, round));
+               }
                if(stepOptimized) ssaOptimized = true;
                pass2LogOptimization(optimization, stepOptimized);
             }
+         }
+         long roundElapsed = System.currentTimeMillis() - tRoundStart;
+         if(roundElapsed > 500) {
+            System.out.println(String.format("    [PASS2 ROUND %d] took %5.2f s", round, roundElapsed / 1000.0));
          }
       }
    }
@@ -580,7 +618,9 @@ public class Compiler {
       new Pass3AssertArrayLengths(program).check();
       new Pass3AssertNoMulDivMod(program).check();
       // Phi lifting ensures that all variables in phi-blocks are in different live range equivalence classes
+      long tPhiLift = System.currentTimeMillis();
       new Pass3PhiLifting(program).perform();
+      System.out.println(String.format("   [PASS3] PhiLifting took             %6.2f s", (System.currentTimeMillis() - tPhiLift) / 1000.0));
       new PassNBlockSequencePlanner(program).step();
       //getLog().append("CONTROL FLOW GRAPH - PHI LIFTED");
       //getLog().append(program.prettyControlFlowGraph());
@@ -600,7 +640,9 @@ public class Compiler {
       pass2AssertSSA();
 
       // Phi mem coalesce removes as many variables introduced by phi lifting as possible - as long as their live ranges do not overlap
+      long tPhiMem = System.currentTimeMillis();
       new Pass3PhiMemCoalesce(program).step();
+      System.out.println(String.format("   [PASS3] PhiMemCoalesce took         %6.2f s", (System.currentTimeMillis() - tPhiMem) / 1000.0));
 
       if(getLog().isVerboseSSAOptimize()) {
          getLog().append("CONTROL FLOW GRAPH");
@@ -630,11 +672,9 @@ public class Compiler {
       new PassNStatementIndices(program).execute();
       pass2AssertSSA();
 
-      // program.getLiveRangeVariablesEffective();
-//      getLog().append("CONTROL FLOW GRAPH - LIVE RANGES FOUND");
-//      getLog().append(program.prettyControlFlowGraph());
-
+      long tLiveRanges = System.currentTimeMillis();
       program.getLiveRangeVariablesEffective();
+      System.out.println(String.format("   [PASS3] LiveRangesEffective took    %6.2f s", (System.currentTimeMillis() - tLiveRanges) / 1000.0));
 
       getLog().append("\nFINAL CONTROL FLOW GRAPH");
       getLog().append(program.prettyControlFlowGraph());
@@ -650,51 +690,47 @@ public class Compiler {
       if(getLog().isVerboseLoopAnalysis()) {
          getLog().append("DOMINATORS");
       }
+      long tPass4Start = System.currentTimeMillis();
+      System.out.println("   [PASS4] Analyzing loops & dominators...");
+      long tA = System.currentTimeMillis();
       program.clearDominators();
-      if(getLog().isVerboseLoopAnalysis()) {
-         getLog().append(program.getDominators().toString());
-      }
-
-      if(getLog().isVerboseLoopAnalysis()) {
-         getLog().append("NATURAL LOOPS");
-      }
       program.clearLoopSet();
-      if(getLog().isVerboseLoopAnalysis()) {
-         getLog().append(program.getLoopSet().toString());
-      }
-
-      if(getLog().isVerboseLoopAnalysis()) {
-         getLog().append("NATURAL LOOPS WITH DEPTH");
-      }
       new Pass3LoopDepthAnalysis(program).findLoopDepths();
-      if(getLog().isVerboseLoopAnalysis()) {
-         getLog().append(program.getLoopSet().toString());
-      }
+      System.out.println(String.format("   [PASS4] LoopDepthAnalysis took        %6.2f s", (System.currentTimeMillis() - tA) / 1000.0));
 
-      getLog().append("\nVARIABLE REGISTER WEIGHTS");
+      tA = System.currentTimeMillis();
+      System.out.println("   [PASS4] Calculating Variable Register Weights...");
       program.getVariableRegisterWeights();
-      getLog().append(program.getScope().toStringVars(program, true));
+      System.out.println(String.format("   [PASS4] VariableRegisterWeights took   %6.2f s", (System.currentTimeMillis() - tA) / 1000.0));
 
+      tA = System.currentTimeMillis();
       new Pass4LiveRangeEquivalenceClassesFinalize(program).allocate();
       new Pass4RegistersFinalize(program).allocate(true, false);
+      System.out.println(String.format("   [PASS4] Finalize Registers took        %6.2f s", (System.currentTimeMillis() - tA) / 1000.0));
 
       // Initial Code generation
+      long tStep = System.currentTimeMillis();
       new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing()).generate();
-      //getLog().append("\nINITIAL ASM");
-      //getLog().append("Target platform is " + program.getTargetPlatform().getName() + " / " + program.getTargetCpu().getName().toUpperCase(Locale.ENGLISH));
-      //getLog().append(program.getAsm().toString(new AsmProgram.AsmPrintState(true), program));
+      System.out.println(String.format("   [PASS4] Initial CodeGen:              %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
       new Pass4AssertNoCpuClobber(program).check();
 
       if(disableUplift) {
          getLog().append("REGISTER UPLIFT DISABLED!");
+         System.out.println("   [PASS4] Register uplift disabled.");
       } else {
          // Find potential registers for each live range equivalence class - based on clobbering of fragments
          getLog().append("REGISTER UPLIFT POTENTIAL REGISTERS");
+         tStep = System.currentTimeMillis();
          new Pass4RegisterUpliftPotentialInitialize(program).initPotentialRegisters();
          boolean change;
+         int iter = 0;
          do {
+            iter++;
+            long tIter = System.currentTimeMillis();
             change = new Pass4RegisterUpliftPotentialRegisterAnalysis(program).findPotentialRegisters();
+            System.out.println(String.format("      [PASS4 POTENTIAL REGISTERS iter %d] took %6.2f s (change=%b)", iter, (System.currentTimeMillis() - tIter) / 1000.0, change));
          } while(change);
+         System.out.println(String.format("   [PASS4] Total Potential Reg Analysis: %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
          getLog().append(program.getRegisterPotentials().toString());
 
          if(getLog().isVerboseSizeInfo()) {
@@ -706,36 +742,56 @@ public class Compiler {
          getLog().append(program.getRegisterUpliftProgram().toString((program.getVariableRegisterWeights())));
 
          // Attempt uplifting registers through a lot of combinations
-         //getLog().setVerboseUplift(true);
+         tStep = System.currentTimeMillis();
          new Pass4RegisterUpliftCombinations(program).performUplift(upliftCombinations);
-
-         //getLog().setVerboseUplift(true);
-         //new Pass4RegisterUpliftStatic(program).performUplift();
-         //getLog().setVerboseUplift(false);
+         System.out.println(String.format("   [PASS4] Uplift Combinations:          %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
 
          // Attempt uplifting registers one at a time to catch remaining potential not realized by combination search
+         tStep = System.currentTimeMillis();
          new Pass4RegisterUpliftRemains(program).performUplift(upliftCombinations);
+         System.out.println(String.format("   [PASS4] Uplift Remains:               %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
       }
 
       // Register coalesce on assignment (saving bytes & cycles)
+      tStep = System.currentTimeMillis();
       new Pass4MemoryCoalesceAssignment(program).coalesce();
+      System.out.println(String.format("   [PASS4] Coalesce Assignment:          %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
 
       // Coalesce can be completely disabled for compilation speed reasons during programming and testing.
       if(!disableCoalesce) {
          // Register coalesce on call graph (saving ZP)
+         tStep = System.currentTimeMillis();
          new Pass4MemoryCoalesceCallGraph(program).coalesce();
+         System.out.println(String.format("   [PASS4] Coalesce CallGraph:           %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
 
          if (enableZeroPageCoalesce) {
             // Register coalesce using exhaustive search (saving even more ZP - but slow)
+            tStep = System.currentTimeMillis();
             new Pass4MemoryCoalesceExhaustive(program).coalesce();
+            System.out.println(String.format("   [PASS4] Coalesce Exhaustive:          %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
          }
       }
+      System.out.println(String.format("   [PASS4] Total Pass 4 time:            %6.2f s", (System.currentTimeMillis() - tPass4Start) / 1000.0));
       new Pass4RegistersFinalize(program).allocate(true, true);
       new Pass4AssertZeropageAllocation(program).check();
 
       // Final ASM code generation before optimization
       program.clearPhiTransitions();
-      new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing()).generate();
+      try {
+         new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing()).generate();
+      } catch (Exception e) {
+         System.out.println("=== DIAGNOSTIC FOR CRASH AT LINE 780 ===");
+         System.out.println("Exception: " + e.getMessage());
+         for(dk.camelot64.kickc.model.symbols.Procedure proc : program.getScope().getAllProcedures(true)) {
+            if(proc.getFullName().contains("trade_render_header")) {
+               System.out.println("Procedure: " + proc.getFullName());
+               for(dk.camelot64.kickc.model.symbols.Variable var : proc.getAllVars(true)) {
+                  System.out.println("  Var: " + var.getFullName() + " -> " + var.getAllocation());
+               }
+            }
+         }
+         throw e;
+      }
       new Pass4AssertNoCpuClobber(program).check();
 
       // Remove unnecessary register savings from interrupts {@link InterruptType#HARDWARE_NOCLOBBER}

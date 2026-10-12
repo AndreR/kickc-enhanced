@@ -166,6 +166,7 @@ public class Pass2ConstantIdentification extends Pass2SsaOptimization {
       }
 
       // Look for constants among non-versioned variables
+      VarAssignments.Index varAssignmentsIndex = new VarAssignments.Index(getGraph());
       for(Variable variable : getProgramScope().getAllVariables(true)) {
          if(variable.isVolatile() || !variable.isKindLoadStore())
             // Do not examine volatiles, non-constants or versioned variables
@@ -173,7 +174,7 @@ public class Pass2ConstantIdentification extends Pass2SsaOptimization {
          if(variable.getRegister() != null && variable.getRegister().isMem())
             // Skip variables allocated into memory
             continue;
-         final List<VarAssignments.VarAssignment> varAssignments = VarAssignments.get(variable.getRef(), getGraph(), getProgramScope());
+         final List<VarAssignments.VarAssignment> varAssignments = varAssignmentsIndex.get(variable.getRef(), getProgramScope());
          if(varAssignments.size() == 1) {
             final VarAssignments.VarAssignment varAssignment = varAssignments.get(0);
             if(!VarAssignments.VarAssignment.Type.STATEMENT_LVALUE.equals(varAssignment.type) || !(varAssignment.statementLValue instanceof StatementAssignment))

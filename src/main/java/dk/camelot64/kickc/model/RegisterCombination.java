@@ -20,6 +20,10 @@ public class RegisterCombination {
       allocation.put(equivalenceClass, register);
    }
 
+   public Map<LiveRangeEquivalenceClass, Registers.Register> getAllocation() {
+      return allocation;
+   }
+
    /**
     * Allocate the registers of the combination into the programs register allocation
     * (does not update the allocation in the equivalence classes).

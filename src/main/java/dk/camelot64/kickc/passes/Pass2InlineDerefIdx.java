@@ -21,12 +21,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Identify derefs of pointers that are defined as pointer + value - and inline them as derefidx instead */
 public class Pass2InlineDerefIdx extends Pass2SsaOptimization {
 
+   private VarAssignments.Index varAssignmentsIndex;
+
    public Pass2InlineDerefIdx(Program program) {
       super(program);
    }
 
    @Override
    public boolean step() {
+      this.varAssignmentsIndex = new VarAssignments.Index(getGraph());
       AtomicBoolean optimized = new AtomicBoolean(false);
       ProgramValueIterator.execute(getGraph(), (programValue, currentStmt, stmtIt, currentBlock) -> {
          if(programValue.get() instanceof PointerDereferenceSimple) {
@@ -54,7 +57,7 @@ public class Pass2InlineDerefIdx extends Pass2SsaOptimization {
          final Variable var = getProgramScope().getVar(derefVar);
          if(var.isKindLoadStore())
             return null;
-         final List<VarAssignments.VarAssignment> varAssignments = VarAssignments.get(derefVar, getGraph(), getProgramScope());
+         final List<VarAssignments.VarAssignment> varAssignments = (varAssignmentsIndex != null) ? varAssignmentsIndex.get(derefVar, getProgramScope()) : VarAssignments.get(derefVar, getGraph(), getProgramScope());
          if(varAssignments.size()!=1)
             return null;
          final VarAssignments.VarAssignment varAssignment = varAssignments.get(0);

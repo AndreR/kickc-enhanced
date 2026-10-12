@@ -34,16 +34,33 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          ScopeRef scope,
          Program program
    ) {
+      chooseBestUpliftCombination(combinationIterator, maxCombinations, unknownFragments, scope, program, null);
+   }
+
+   static void chooseBestUpliftCombination(
+         RegisterCombinationIterator combinationIterator, int maxCombinations,
+         Set<String> unknownFragments,
+         ScopeRef scope,
+         Program program,
+         Map<Graph.Block, List<AsmChunk>> cachedBlockChunks
+   ) {
       int bestScore = Integer.MAX_VALUE;
       RegisterCombination bestCombination = null;
       int countCombinations = 0;
+
+      if(cachedBlockChunks == null) {
+         cachedBlockChunks = new HashMap<>();
+         new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing(), true).generate(null, cachedBlockChunks, true);
+      }
+      Set<Graph.Block> blocksToRegenerate = getBlocksToRegenerate(program, scope, combinationIterator.getEquivalenceClasses());
+
       while(combinationIterator.hasNext() && countCombinations < maxCombinations) {
          countCombinations++;
          if(countCombinations % 10000 == 0) {
             program.getLog().append("Uplift attempts [" + scope + "] " + countCombinations + "/" + combinationIterator.getNumIterations() + " (limiting to " + maxCombinations + ")");
          }
          RegisterCombination combination = combinationIterator.next();
-         if(!generateCombinationAsm(combination, program, unknownFragments, scope)) {
+         if(!generateCombinationAsm(combination, program, unknownFragments, scope, blocksToRegenerate, cachedBlockChunks)) {
             continue;
          }
          // If no clobber - Find value of the resulting allocation
@@ -63,7 +80,9 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       if(bestCombination != null) {
          // Save the best combination in the equivalence class
          bestCombination.store(program.getLiveRangeEquivalenceClassSet());
+         bestCombination.allocate(program);
          program.getLog().append("Uplifting [" + scope + "] best " + bestScore + " combination " + bestCombination.toString());
+         new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing(), true).generate(blocksToRegenerate, cachedBlockChunks, true);
       }
       if(combinationIterator.hasNext()) {
          program.getLog().append("Limited combination testing to " + countCombinations + " combinations of " + combinationIterator.getNumIterations() + " possible.");
@@ -90,49 +109,90 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          Program program,
          Set<String> unknownFragments,
          ScopeRef scope) {
-      // Reset register allocation to original zero page allocation
-      new Pass4RegistersFinalize(program).allocate(false, false);
+      return generateCombinationAsm(combination, program, unknownFragments, scope, null, null);
+   }
+
+   public static boolean generateCombinationAsm(
+         RegisterCombination combination,
+         Program program,
+         Set<String> unknownFragments,
+         ScopeRef scope,
+         Set<Graph.Block> blocksToRegenerate,
+         Map<Graph.Block, List<AsmChunk>> cachedBlockChunks) {
+      // Save original registers of the combination
+      Map<LiveRangeEquivalenceClass, Registers.Register> oldRegisters = new HashMap<>();
+      for(LiveRangeEquivalenceClass ec : combination.getAllocation().keySet()) {
+         oldRegisters.put(ec, ec.getRegister());
+      }
       // Apply the uplift combination
       combination.allocate(program);
-      // Check the register allocation for whether any register is being allocated to two variables with overlapping live ranges
-      if(isAllocationOverlapping(program)) {
-         if(program.getLog().isVerboseUplift()) {
-            StringBuilder msg = new StringBuilder();
-            msg.append("Uplift attempt [" + (scope == null ? "" : scope) + "] ");
-            msg.append("overlapping");
-            msg.append(" allocation: ").append(combination.toString());
-            program.getLog().append(msg.toString());
-         }
-
-         return false;
-      }
-      // Generate ASM
       try {
-         program.clearPhiTransitions();
-         new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing()).generate();
-      } catch(AsmFragmentTemplateSynthesizer.UnknownFragmentException e) {
-         unknownFragments.add(e.getFragmentSignature());
-         if(program.getLog().isVerboseUplift()) {
-            StringBuilder msg = new StringBuilder();
-            msg.append("Uplift attempt [" + (scope == null ? "" : scope) + "] ");
-            msg.append("missing fragment " + e.getFragmentSignature());
-            msg.append(" allocation: ").append(combination.toString());
-            program.getLog().append(msg.toString());
+         // Check the register allocation for whether any register is being allocated to two variables with overlapping live ranges
+         if(isAllocationOverlapping(program, combination)) {
+            if(program.getLog().isVerboseUplift()) {
+               StringBuilder msg = new StringBuilder();
+               msg.append("Uplift attempt [" + (scope == null ? "" : scope) + "] ");
+               msg.append("overlapping");
+               msg.append(" allocation: ").append(combination.toString());
+               program.getLog().append(msg.toString());
+            }
+
+            return false;
          }
-         return false;
-      }
-      boolean hasClobberProblem = new Pass4AssertNoCpuClobber(program).hasClobberProblem(false);
-      if(hasClobberProblem) {
-         if(program.getLog().isVerboseUplift()) {
-            StringBuilder msg = new StringBuilder();
-            msg.append("Uplift attempt [" + (scope == null ? "" : scope) + "] ");
-            msg.append("clobber");
-            msg.append(" allocation: ").append(combination.toString());
-            program.getLog().append(msg.toString());
+         // Generate ASM
+         try {
+            new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing(), true).generate(blocksToRegenerate, cachedBlockChunks, false);
+         } catch(AsmFragmentTemplateSynthesizer.UnknownFragmentException e) {
+            unknownFragments.add(e.getFragmentSignature());
+            if(program.getLog().isVerboseUplift()) {
+               StringBuilder msg = new StringBuilder();
+               msg.append("Uplift attempt [" + (scope == null ? "" : scope) + "] ");
+               msg.append("missing fragment " + e.getFragmentSignature());
+               msg.append(" allocation: ").append(combination.toString());
+               program.getLog().append(msg.toString());
+            }
+            return false;
          }
-         return false;
+         boolean hasClobberProblem = new Pass4AssertNoCpuClobber(program).hasClobberProblem(false);
+         if(hasClobberProblem) {
+            if(program.getLog().isVerboseUplift()) {
+               StringBuilder msg = new StringBuilder();
+               msg.append("Uplift attempt [" + (scope == null ? "" : scope) + "] ");
+               msg.append("clobber");
+               msg.append(" allocation: ").append(combination.toString());
+               program.getLog().append(msg.toString());
+            }
+            return false;
+         }
+         return true;
+      } finally {
+         for(LiveRangeEquivalenceClass ec : combination.getAllocation().keySet()) {
+            Registers.Register oldReg = oldRegisters.get(ec);
+            ec.setRegister(oldReg);
+            for(VariableRef varRef : ec.getVariables()) {
+               program.getScope().getVariable(varRef).setAllocation(oldReg);
+            }
+         }
       }
-      return true;
+   }
+
+   private static Map<Integer, Double> loopMultipliersCache = null;
+   private static Program loopMultipliersProgram = null;
+
+   private static synchronized Map<Integer, Double> getLoopMultipliers(Program program) {
+      if(loopMultipliersProgram == program && loopMultipliersCache != null) {
+         return loopMultipliersCache;
+      }
+      Map<Integer, Double> map = new HashMap<>();
+      NaturalLoopSet loopSet = program.getLoopSet();
+      for(Statement stmt : program.getGraph().getAllStatements()) {
+         Graph.Block block = program.getStatementInfos().getBlock(stmt.getIndex());
+         int depth = loopSet.getMaxLoopDepth(block.getLabel());
+         map.put(stmt.getIndex(), Math.pow(10, depth));
+      }
+      loopMultipliersProgram = program;
+      loopMultipliersCache = map;
+      return map;
    }
 
    /**
@@ -147,20 +207,81 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
    public static int getAsmScore(Program program) {
       int score = 0;
       AsmProgram asm = program.getAsm();
-      NaturalLoopSet loopSet = program.getLoopSet();
+      Map<Integer, Double> multipliers = getLoopMultipliers(program);
       for(AsmChunk asmChunk : asm.getChunks()) {
          double asmChunkCycles = asmChunk.getCycles();
          if(asmChunkCycles > 0) {
             Integer statementIdx = asmChunk.getStatementIdx();
-            int maxLoopDepth = 1;
-            if(statementIdx != null) {
-               Graph.Block block = program.getStatementInfos().getBlock(statementIdx);
-               maxLoopDepth = loopSet.getMaxLoopDepth(block.getLabel());
-            }
-            score += asmChunkCycles * Math.pow(10, maxLoopDepth);
+            Double mult = statementIdx == null ? 10.0 : multipliers.get(statementIdx);
+            score += asmChunkCycles * (mult == null ? 10.0 : mult);
          }
       }
       return score;
+   }
+
+   private static Map<VariableRef, List<Statement>> varStatementsCache = null;
+   private static Program varStatementsProgram = null;
+
+   private static synchronized Map<VariableRef, List<Statement>> getVarStatements(Program program) {
+      if(varStatementsProgram == program && varStatementsCache != null) {
+         return varStatementsCache;
+      }
+      Map<VariableRef, List<Statement>> map = new HashMap<>();
+      VariableReferenceInfos refInfos = program.getVariableReferenceInfos();
+      LiveRangeVariablesEffective liveRanges = program.getLiveRangeVariablesEffective();
+      for(Statement statement : program.getGraph().getAllStatements()) {
+         Set<VariableRef> stmVars = new HashSet<>();
+         stmVars.addAll(refInfos.getReferencedVars(statement));
+         stmVars.addAll(liveRanges.getAliveEffective(statement));
+         for(VariableRef v : stmVars) {
+            map.computeIfAbsent(v, k -> new ArrayList<>()).add(statement);
+         }
+      }
+      varStatementsProgram = program;
+      varStatementsCache = map;
+      return map;
+   }
+
+   public static Set<Graph.Block> getBlocksToRegenerate(
+         Program program,
+         ScopeRef scope,
+         Collection<LiveRangeEquivalenceClass> equivalenceClasses) {
+      Set<Graph.Block> blocks = new HashSet<>();
+      if(scope != null) {
+         for(Graph.Block block : program.getGraph().getAllBlocks()) {
+            if(scope.equals(block.getScope())) {
+               blocks.add(block);
+            }
+         }
+      }
+      Map<VariableRef, List<Statement>> varStatements = getVarStatements(program);
+      if(equivalenceClasses != null) {
+         for(LiveRangeEquivalenceClass ec : equivalenceClasses) {
+            for(VariableRef varRef : ec.getVariables()) {
+               List<Statement> stmts = varStatements.get(varRef);
+               if(stmts != null) {
+                  for(Statement stmt : stmts) {
+                     Graph.Block b = program.getStatementInfos().getBlock(stmt.getIndex());
+                     if(b != null) {
+                        blocks.add(b);
+                     }
+                  }
+               }
+            }
+         }
+      }
+      Set<Graph.Block> neighbors = new HashSet<>();
+      for(Graph.Block b : blocks) {
+         neighbors.addAll(program.getGraph().getPredecessors(b));
+         for(dk.camelot64.kickc.model.values.LabelRef succ : b.getSuccessors()) {
+            Graph.Block succBlock = program.getGraph().getBlock(succ);
+            if(succBlock != null) {
+               neighbors.add(succBlock);
+            }
+         }
+      }
+      blocks.addAll(neighbors);
+      return blocks;
    }
 
    /**
@@ -170,7 +291,29 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
     * @return true if the register allocation contains an overlapping allocation. false otherwise.
     */
    public static boolean isAllocationOverlapping(Program program) {
-      for(var statement : program.getGraph().getAllStatements()) {
+      return isAllocationOverlapping(program, null);
+   }
+
+   public static boolean isAllocationOverlapping(Program program, RegisterCombination combination) {
+      if(combination == null) {
+         for(var statement : program.getGraph().getAllStatements()) {
+            if(isStatementAllocationOverlapping(program, statement)) {
+               return true;
+            }
+         }
+         return false;
+      }
+      Map<VariableRef, List<Statement>> varStatements = getVarStatements(program);
+      Set<Statement> statementsToCheck = new HashSet<>();
+      for(LiveRangeEquivalenceClass ec : combination.getAllocation().keySet()) {
+         for(VariableRef v : ec.getVariables()) {
+            List<Statement> stmts = varStatements.get(v);
+            if(stmts != null) {
+               statementsToCheck.addAll(stmts);
+            }
+         }
+      }
+      for(Statement statement : statementsToCheck) {
          if(isStatementAllocationOverlapping(program, statement)) {
             return true;
          }
@@ -236,6 +379,9 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
    public void performUplift(int maxCombinations) {
       // Test uplift combinations to find the best one.
       Set<String> unknownFragments = new LinkedHashSet<>();
+      Map<Graph.Block, List<AsmChunk>> cachedBlockChunks = new HashMap<>();
+      new Pass4CodeGeneration(getProgram(), false, getProgram().isWarnFragmentMissing(), true).generate(null, cachedBlockChunks, true);
+
       List<RegisterUpliftScope> registerUpliftScopes = getProgram().getRegisterUpliftProgram().getRegisterUpliftScopes();
       for(RegisterUpliftScope upliftScope : registerUpliftScopes) {
          RegisterCombinationIterator combinationIterator = upliftScope.getCombinationIterator(getProgram().getRegisterPotentials());
@@ -244,7 +390,8 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
                maxCombinations,
                unknownFragments,
                upliftScope.getScopeRef(),
-               getProgram());
+               getProgram(),
+               cachedBlockChunks);
       }
 
       if(unknownFragments.size() > 0) {

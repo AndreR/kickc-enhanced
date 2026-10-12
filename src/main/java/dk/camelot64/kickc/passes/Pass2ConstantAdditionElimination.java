@@ -32,6 +32,7 @@ import java.util.List;
 public class Pass2ConstantAdditionElimination extends Pass2SsaOptimization {
 
    private VariableReferenceInfos variableReferenceInfos;
+   private VarAssignments.Index varAssignmentsIndex;
 
    public Pass2ConstantAdditionElimination(Program program) {
       super(program);
@@ -47,6 +48,7 @@ public class Pass2ConstantAdditionElimination extends Pass2SsaOptimization {
       final boolean[] optimized = {false};
 
       this.variableReferenceInfos = getProgram().getVariableReferenceInfos();
+      this.varAssignmentsIndex = new VarAssignments.Index(getGraph());
 
       ProgramValueIterator.execute(getProgram(), (programValue, currentStmt, stmtIt, currentBlock) -> {
          if(programValue.get() instanceof PointerDereferenceIndexed) {
@@ -194,7 +196,7 @@ public class Pass2ConstantAdditionElimination extends Pass2SsaOptimization {
       final Variable var = getProgramScope().getVar(variable);
       if(var.isKindLoadStore())
          return null;
-      final List<VarAssignments.VarAssignment> varAssignments = VarAssignments.get(variable, getGraph(), getProgramScope());
+      final List<VarAssignments.VarAssignment> varAssignments = (varAssignmentsIndex != null) ? varAssignmentsIndex.get(variable, getProgramScope()) : VarAssignments.get(variable, getGraph(), getProgramScope());
       if(varAssignments.size()!=1)
          return null;
       final VarAssignments.VarAssignment varAssignment = varAssignments.get(0);

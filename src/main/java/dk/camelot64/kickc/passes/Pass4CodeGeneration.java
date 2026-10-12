@@ -62,14 +62,21 @@ public class Pass4CodeGeneration {
      *
      * @param transition The transition
      */
+    private boolean trialMode = false;
+
     private void transitionSetGenerated(PhiTransitions.PhiTransition transition) {
         transitionsGenerated.put(transition, Boolean.TRUE);
     }
 
     public Pass4CodeGeneration(Program program, boolean verboseAliveInfo, boolean warnFragmentMissing) {
+        this(program, verboseAliveInfo, warnFragmentMissing, false);
+    }
+
+    public Pass4CodeGeneration(Program program, boolean verboseAliveInfo, boolean warnFragmentMissing, boolean trialMode) {
         this.program = program;
         this.verboseAliveInfo = verboseAliveInfo;
         this.warnFragmentMissing = warnFragmentMissing;
+        this.trialMode = trialMode;
     }
 
     Graph getGraph() {
@@ -81,71 +88,100 @@ public class Pass4CodeGeneration {
     }
 
     public void generate() {
+        generate(null, null, false);
+    }
+
+    public void generate(Set<Graph.Block> blocksToRegenerate, Map<Graph.Block, List<AsmChunk>> cachedBlockChunks) {
+        generate(blocksToRegenerate, cachedBlockChunks, false);
+    }
+
+    public void generate(Set<Graph.Block> blocksToRegenerate, Map<Graph.Block, List<AsmChunk>> cachedBlockChunks, boolean updateCache) {
         AsmProgram asm = new AsmProgram(program.getTargetCpu());
         ScopeRef currentScope = ScopeRef.ROOT;
 
-        // Add file level comments
-        asm.startChunk(currentScope, null, "File Comments");
-        generateComments(asm, program.getMainFileComments());
-        asm.startChunk(currentScope, null, "Upstart");
-        final TargetPlatform targetPlatform = program.getTargetPlatform();
+        if(!trialMode) {
+            // Add file level comments
+            asm.startChunk(currentScope, null, "File Comments");
+            generateComments(asm, program.getMainFileComments());
+            asm.startChunk(currentScope, null, "Upstart");
+            final TargetPlatform targetPlatform = program.getTargetPlatform();
 
-        // Add Target CPU - if it is not the default
-        final TargetCpu targetCpu = program.getTargetCpu();
-        if (!targetCpu.equals(TargetCpu.DEFAULT)) asm.addLine(new AsmSetCpu(targetCpu));
+            // Add Target CPU - if it is not the default
+            final TargetCpu targetCpu = program.getTargetCpu();
+            if (!targetCpu.equals(TargetCpu.DEFAULT)) asm.addLine(new AsmSetCpu(targetCpu));
 
-        String linkScriptBody = targetPlatform.getLinkScriptBody();
-        String outputFileName = program.getOutputFileManager().getBinaryOutputFile().getFileName().toString();
-        linkScriptBody = linkScriptBody.replace("%O", outputFileName);
-        linkScriptBody = linkScriptBody.replace("%_O", outputFileName.toLowerCase());
-        linkScriptBody = linkScriptBody.replace("%^O", outputFileName.toUpperCase());
-        String entryName = program.getStartProcedure().getFullName();
-        linkScriptBody = linkScriptBody.replace("%E", entryName);
-        Number startAddress = program.getTargetPlatform().getStartAddress();
-        if (startAddress != null) linkScriptBody = linkScriptBody.replace("%P", AsmFormat.getAsmNumber(startAddress));
-        asm.addLine(new AsmInlineKickAsm(linkScriptBody, 0L, 0L, CpuClobber.CLOBBER_ALL));
+            String linkScriptBody = targetPlatform.getLinkScriptBody();
+            String outputFileName = program.getOutputFileManager().getBinaryOutputFile().getFileName().toString();
+            linkScriptBody = linkScriptBody.replace("%O", outputFileName);
+            linkScriptBody = linkScriptBody.replace("%_O", outputFileName.toLowerCase());
+            linkScriptBody = linkScriptBody.replace("%^O", outputFileName.toUpperCase());
+            String entryName = program.getStartProcedure().getFullName();
+            linkScriptBody = linkScriptBody.replace("%E", entryName);
+            Number startAddress = program.getTargetPlatform().getStartAddress();
+            if (startAddress != null) linkScriptBody = linkScriptBody.replace("%P", AsmFormat.getAsmNumber(startAddress));
+            asm.addLine(new AsmInlineKickAsm(linkScriptBody, 0L, 0L, CpuClobber.CLOBBER_ALL));
 
-        // Generate global ZP labels
-        asm.startChunk(currentScope, null, "Global Constants & labels");
-        addConstantsAndLabels(asm, currentScope);
+            // Generate global ZP labels
+            asm.startChunk(currentScope, null, "Global Constants & labels");
+            addConstantsAndLabels(asm, currentScope);
+        }
+
         for (Graph.Block block : getGraph().getAllBlocks()) {
             if (!block.getScope().equals(currentScope)) {
                 // The current block is in a different scope. End the old scope.
-                generateScopeEnding(asm, currentScope);
+                if(!trialMode) {
+                    generateScopeEnding(asm, currentScope);
+                }
                 currentScope = block.getScope();
-                if (program.isProcedureEntry(block)) {
-                    Procedure procedure = program.getProcedure(block);
-                    currentCodeSegmentName = procedure.getSegmentCode();
+                if(!trialMode) {
+                    if (program.isProcedureEntry(block)) {
+                        Procedure procedure = program.getProcedure(block);
+                        currentCodeSegmentName = procedure.getSegmentCode();
+                    }
+                    setCurrentSegment(currentCodeSegmentName, asm);
+                    asm.startChunk(currentScope, null, block.getLabel().getFullName());
+                    // Add any procedure comments
+                    if (program.isProcedureEntry(block)) {
+                        Procedure procedure = program.getProcedure(block);
+                        generateComments(asm, procedure.getComments());
+                        // Generate parameter information
+                        generateSignatureComments(asm, procedure);
+                    }
+                    // Start the new scope
+                    asm.addScopeBegin(AsmFormat.asmFix(block.getLabel().getFullName()));
+                    // Add all ZP labels for the scope
+                    addConstantsAndLabels(asm, currentScope);
                 }
-                setCurrentSegment(currentCodeSegmentName, asm);
-                asm.startChunk(currentScope, null, block.getLabel().getFullName());
-                // Add any procedure comments
-                if (program.isProcedureEntry(block)) {
-                    Procedure procedure = program.getProcedure(block);
-                    generateComments(asm, procedure.getComments());
-                    // Generate parameter information
-                    generateSignatureComments(asm, procedure);
-                }
-                // Start the new scope
-                asm.addScopeBegin(AsmFormat.asmFix(block.getLabel().getFullName()));
-                // Add all ZP labels for the scope
-                addConstantsAndLabels(asm, currentScope);
             }
 
-            generateComments(asm, block.getComments());
+            if(trialMode && cachedBlockChunks != null && blocksToRegenerate != null && !blocksToRegenerate.contains(block)) {
+                List<AsmChunk> cached = cachedBlockChunks.get(block);
+                if(cached != null) {
+                    asm.addChunks(cached);
+                }
+                continue;
+            }
+
+            int chunkStartIndex = asm.getChunkList().size();
+
+            if(!trialMode) {
+                generateComments(asm, block.getComments());
+            }
             // Generate entry points (if needed)
             genBlockEntryPoints(asm, block);
 
-            if (program.isProcedureEntry(block)) {
-                // Generate interrupt entry if needed
-                Procedure procedure = program.getProcedure(block);
-                if (procedure != null && procedure.getInterruptType() != null) {
-                    generateInterruptEntry(asm, procedure);
+            if(!trialMode) {
+                if (program.isProcedureEntry(block)) {
+                    // Generate interrupt entry if needed
+                    Procedure procedure = program.getProcedure(block);
+                    if (procedure != null && procedure.getInterruptType() != null) {
+                        generateInterruptEntry(asm, procedure);
+                    }
+                } else {
+                    // Generate label for block inside procedure
+                    asm.startChunk(currentScope, null, block.getLabel().getFullName());
+                    asm.addLabel(AsmFormat.asmFix(block.getLabel().getLocalName()));
                 }
-            } else {
-                // Generate label for block inside procedure
-                asm.startChunk(currentScope, null, block.getLabel().getFullName());
-                asm.addLabel(AsmFormat.asmFix(block.getLabel().getLocalName()));
             }
             // Generate statements
             genStatements(asm, block);
@@ -156,24 +192,41 @@ public class Pass4CodeGeneration {
                     PhiTransitions.PhiTransition transition = getTransitions(defaultSuccessor).getTransition(block);
                     if (!transitionIsGenerated(transition)) {
                         genBlockPhiTransition(asm, block, defaultSuccessor, defaultSuccessor.getScope());
-                        String label = AsmFormat.asmFix(defaultSuccessor.getLabel().getLocalName());
-                        asm.addInstruction("JMP", CpuAddressingMode.ABS, label, false);
+                        if(!trialMode) {
+                            String label = AsmFormat.asmFix(defaultSuccessor.getLabel().getLocalName());
+                            asm.addInstruction("JMP", CpuAddressingMode.ABS, label, false);
+                        }
                     } else {
-                        String label = AsmFormat.asmFix(defaultSuccessor.getLabel().getLocalName() + "_from_" + block.getLabel().getLocalName());
-                        asm.addInstruction("JMP", CpuAddressingMode.ABS, label, false);
+                        if(!trialMode) {
+                            String label = AsmFormat.asmFix(defaultSuccessor.getLabel().getLocalName() + "_from_" + block.getLabel().getLocalName());
+                            asm.addInstruction("JMP", CpuAddressingMode.ABS, label, false);
+                        }
                     }
                 } else {
-                    String label = AsmFormat.asmFix(defaultSuccessor.getLabel().getLocalName());
-                    asm.addInstruction("JMP", CpuAddressingMode.ABS, label, false);
+                    if(!trialMode) {
+                        String label = AsmFormat.asmFix(defaultSuccessor.getLabel().getLocalName());
+                        asm.addInstruction("JMP", CpuAddressingMode.ABS, label, false);
+                    }
                 }
             }
-        }
-        generateScopeEnding(asm, currentScope);
 
-        currentScope = ScopeRef.ROOT;
-        asm.startChunk(currentScope, null, "File Data");
-        addData(asm, ScopeRef.ROOT);
-        addAbsoluteAddressData(asm, ScopeRef.ROOT);
+            if(trialMode && cachedBlockChunks != null && (blocksToRegenerate == null || updateCache)) {
+                List<AsmChunk> blockChunks = new ArrayList<>();
+                List<AsmChunk> allChunks = asm.getChunkList();
+                for(int i = chunkStartIndex; i < allChunks.size(); i++) {
+                    blockChunks.add(allChunks.get(i));
+                }
+                cachedBlockChunks.put(block, blockChunks);
+            }
+        }
+        if(!trialMode) {
+            generateScopeEnding(asm, currentScope);
+
+            currentScope = ScopeRef.ROOT;
+            asm.startChunk(currentScope, null, "File Data");
+            addData(asm, ScopeRef.ROOT);
+            addAbsoluteAddressData(asm, ScopeRef.ROOT);
+        }
         program.setAsm(asm);
     }
 
@@ -295,6 +348,7 @@ public class Pass4CodeGeneration {
      * @param comments The comments to add
      */
     private void generateComments(AsmProgram asm, List<Comment> comments) {
+        if (trialMode) return;
         for (Comment comment : comments) {
             asm.addComment(comment.getComment(), comment.isBlock());
         }
@@ -834,8 +888,10 @@ public class Pass4CodeGeneration {
      * @param statement The statement to generate ASM code for
      */
     void generateStatementAsm(AsmProgram asm, Graph.Block block, Statement statement, boolean genCallPhiEntry) {
-        asm.startChunk(block.getScope(), statement.getIndex(), statement.toString(program, verboseAliveInfo));
-        generateComments(asm, statement.getComments());
+        asm.startChunk(block.getScope(), statement.getIndex(), trialMode ? "" : statement.toString(program, verboseAliveInfo));
+        if(!trialMode) {
+            generateComments(asm, statement.getComments());
+        }
         if (!(statement instanceof StatementPhiBlock)) {
             if (statement instanceof StatementAssignment) {
                 StatementAssignment assignment = (StatementAssignment) statement;
@@ -1037,7 +1093,9 @@ public class Pass4CodeGeneration {
             PhiTransitions.PhiTransition transition = transitions.getTransition(fromBlock);
             if (!transitionIsGenerated(transition) && toBlock.getLabel().equals(fromBlock.getConditionalSuccessor())) {
                 genBlockPhiTransition(asm, fromBlock, toBlock, toBlock.getScope());
-                asm.addInstruction("JMP", CpuAddressingMode.ABS, AsmFormat.asmFix(toBlock.getLabel().getLocalName()), false);
+                if(!trialMode) {
+                    asm.addInstruction("JMP", CpuAddressingMode.ABS, AsmFormat.asmFix(toBlock.getLabel().getLocalName()), false);
+                }
             }
         }
     }
@@ -1059,15 +1117,20 @@ public class Pass4CodeGeneration {
         PhiTransitions.PhiTransition transition = transitions.getTransition(fromBlock);
         if (!transitionIsGenerated(transition)) {
             Statement toFirstStatement = toBlock.getStatements().get(0);
-            String chunkSrc = "[" + toFirstStatement.getIndex() + "] phi from ";
-            for (var fBlock : transition.getFromBlocks()) {
-                chunkSrc += fBlock.getLabel().getFullName() + " ";
+            String chunkSrc = "";
+            if(!trialMode) {
+                chunkSrc = "[" + toFirstStatement.getIndex() + "] phi from ";
+                for (var fBlock : transition.getFromBlocks()) {
+                    chunkSrc += fBlock.getLabel().getFullName() + " ";
+                }
+                chunkSrc += "to " + toBlock.getLabel().getFullName();
             }
-            chunkSrc += "to " + toBlock.getLabel().getFullName();
             asm.startChunk(scope, toFirstStatement.getIndex(), chunkSrc);
             asm.getCurrentChunk().setSubStatementId(transition.getTransitionId());
-            for (var fBlock : transition.getFromBlocks()) {
-                asm.addLabel(AsmFormat.asmFix(toBlock.getLabel().getLocalName() + "_from_" + fBlock.getLabel().getLocalName()));
+            if(!trialMode) {
+                for (var fBlock : transition.getFromBlocks()) {
+                    asm.addLabel(AsmFormat.asmFix(toBlock.getLabel().getLocalName() + "_from_" + fBlock.getLabel().getLocalName()));
+                }
             }
             List<PhiTransitions.PhiTransition.PhiAssignment> assignments = transition.getAssignments();
             for (PhiTransitions.PhiTransition.PhiAssignment assignment : assignments) {
@@ -1075,7 +1138,8 @@ public class Pass4CodeGeneration {
                 RValue rValue = assignment.getrValue();
                 Statement statement = assignment.getPhiBlock();
                 // Generate an ASM move fragment
-                asm.startChunk(scope, statement.getIndex(), "[" + statement.getIndex() + "] phi " + lValue.toString(program) + " = " + rValue.toString(program));
+                String assignChunkSrc = trialMode ? "" : ("[" + statement.getIndex() + "] phi " + lValue.toString(program) + " = " + rValue.toString(program));
+                asm.startChunk(scope, statement.getIndex(), assignChunkSrc);
                 asm.getCurrentChunk().setSubStatementId(transition.getTransitionId());
                 asm.getCurrentChunk().setSubStatementIdx(assignment.getAssignmentIdx());
                 if (isRegisterCopy(lValue, rValue)) {

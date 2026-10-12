@@ -23,6 +23,10 @@ public class RegisterCombinationIterator implements Iterator<RegisterCombination
       this.nextIterationId = 0;
    }
 
+   public List<LiveRangeEquivalenceClass> getEquivalenceClasses() {
+      return equivalenceClasses;
+   }
+
    @Override
    public boolean hasNext() {
       return nextIterationId < getNumIterations();

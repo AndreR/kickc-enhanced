@@ -72,6 +72,9 @@ public class Pass4AssertNoCpuClobber extends Pass2Base {
             // Find the registered clobbered by the ASM asmChunk
             CpuClobber asmChunkClobber = asmChunk.getClobber();
             Collection<Registers.Register> clobberRegisters = getClobberRegisters(asmChunkClobber);
+            if(clobberRegisters.isEmpty()) {
+               continue;
+            }
             // Find vars assigned to in the statement
             Collection<VariableRef> assignedVars = Pass4RegisterUpliftPotentialRegisterAnalysis.getAssignedVars(statement);
 
@@ -164,7 +167,7 @@ public class Pass4AssertNoCpuClobber extends Pass2Base {
                            statement.getSource()
                      );
                   }
-                  clobberProblem = true;
+                  return true;
                }
             }
          }

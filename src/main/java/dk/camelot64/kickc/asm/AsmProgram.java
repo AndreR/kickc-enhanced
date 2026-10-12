@@ -61,6 +61,16 @@ public class AsmProgram {
       return chunks;
    }
 
+   public List<AsmChunk> getChunkList() {
+      return chunks;
+   }
+
+   public void addChunks(Collection<AsmChunk> chunksToAdd) {
+      if(chunksToAdd != null) {
+         this.chunks.addAll(chunksToAdd);
+      }
+   }
+
    public AsmChunk startChunk(ScopeRef scopeRef, Integer statementIndex, String source) {
       AsmChunk chunk = new AsmChunk(nextChunkIndex++, scopeRef, statementIndex, source);
       chunks.add(chunk);
