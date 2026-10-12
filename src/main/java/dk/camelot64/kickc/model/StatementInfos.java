@@ -60,7 +60,7 @@ public class StatementInfos {
     * @return The containing block
     */
    public Graph.Block getBlock(Integer stmtIdx) {
-      return graph.getBlock(getBlockRef(stmtIdx));
+      return stmtBlocks.get(stmtIdx);
    }
 
    /**
