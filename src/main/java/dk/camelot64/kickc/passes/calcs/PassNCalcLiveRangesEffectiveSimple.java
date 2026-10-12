@@ -25,10 +25,7 @@ public class PassNCalcLiveRangesEffectiveSimple extends PassNCalcBase<LiveRangeV
 
    @Override
    public LiveRangeVariablesEffectiveSimple calculate() {
-      long tStart = System.currentTimeMillis();
-      long tLive = System.currentTimeMillis();
       final LiveRangeVariables liveRangeVariables = getProgram().getLiveRangeVariables();
-      System.out.println(String.format("      [EffectiveSimple] liveRangeVariables took %5.2f s", (System.currentTimeMillis() - tLive) / 1000.0));
       final CallGraph callGraph = getProgram().getCallGraph();
       final LiveRangeVariables.LiveRangeVariablesByStatement liveRangeVariablesByStatement = liveRangeVariables.getLiveRangeVariablesByStatement();
       final Map<ProcedureRef, Collection<VariableRef>> procedureReferencedVars = PassNCalcLiveRangeVariables.calculateProcedureReferencedVars(getProgram());
@@ -38,7 +35,6 @@ public class PassNCalcLiveRangesEffectiveSimple extends PassNCalcBase<LiveRangeV
       // All variables alive outside all calls to a procedure. This is variables that are alive across a call that are not touched by the procedure (or any sub-procedure).
       Map<ProcedureRef, Collection<VariableRef>> aliveOutsideProcedures = new LinkedHashMap<>();
       Map<CallGraph.CallBlock.Call, Collection<VariableRef>> rawAliveOutsideCaller = new LinkedHashMap<>();
-      long tProcs = System.currentTimeMillis();
       Collection<Procedure> procedures = getProgram().getScope().getAllProcedures(true);
       for(Procedure procedure : procedures) {
          Collection<VariableRef> aliveOutsideProcedure = new LinkedHashSet<>();
@@ -51,7 +47,7 @@ public class PassNCalcLiveRangesEffectiveSimple extends PassNCalcBase<LiveRangeV
                final Collection<Statement> precedingStatements = PassNCalcLiveRangeVariables.getPrecedingStatement(callStatement, getGraph(), getProgram().getStatementInfos());
                rawAlive = new LinkedHashSet<>();
                for(Statement precedingStatement : precedingStatements) {
-                  final List<VariableRef> precedingStatementAlive = liveRangeVariables.getAlive(precedingStatement.getIndex());
+                  final List<VariableRef> precedingStatementAlive = liveRangeVariablesByStatement.getAlive(precedingStatement.getIndex());
                   for(VariableRef precedingStatementAliveVarRef : precedingStatementAlive) {
                      if(!precedingStatementAliveVarRef.getScopeNames().equals(caller.getProcedure().getFullName())) {
                         // Skipping variables alive preceeding the caller from the called scope (these are parameters and are handled by local live ranges)
@@ -69,7 +65,6 @@ public class PassNCalcLiveRangesEffectiveSimple extends PassNCalcBase<LiveRangeV
          }
          aliveOutsideProcedures.put(procedure.getRef(), aliveOutsideProcedure);
       }
-      System.out.println(String.format("      [EffectiveSimple] aliveOutsideProcedures (%d procs) took %5.2f s", procedures.size(), (System.currentTimeMillis() - tProcs) / 1000.0));
 
       // Find all alive variables for all statements by adding everything alive outside each call (not including variables from the called scope)
       final LinkedHashMap<Integer, Collection<VariableRef>> statementAliveEffective = new LinkedHashMap<>();

@@ -37,6 +37,8 @@ public class Pass3PhiMemCoalesce extends Pass2SsaOptimization {
    @Override
    public boolean step() {
       long t0 = System.currentTimeMillis();
+      getProgram().getLiveRangeVariables();
+      long t0_lr = System.currentTimeMillis();
       EquivalenceClassPhiInitializer equivalenceClassPhiInitializer = new EquivalenceClassPhiInitializer(getProgram());
       equivalenceClassPhiInitializer.visitGraph(getGraph());
       LiveRangeEquivalenceClassSet phiEquivalenceClasses = equivalenceClassPhiInitializer.getPhiEquivalenceClasses();
@@ -46,13 +48,8 @@ public class Pass3PhiMemCoalesce extends Pass2SsaOptimization {
       phiMemCoalescer.visitGraph(getGraph());
       long t2 = System.currentTimeMillis();
       removeAssignments(getGraph(), phiMemCoalescer.getRemove());
-      long t3 = System.currentTimeMillis();
       replaceVariables(phiMemCoalescer.getReplace());
-      long t4 = System.currentTimeMillis();
       deleteSymbols(getProgramScope(), phiMemCoalescer.getRemove());
-      long t5 = System.currentTimeMillis();
-      System.out.println(String.format("      [PhiMemCoalesce detail] init: %.2fs, coalesce: %.2fs, remove: %.2fs, replace: %.2fs, delete: %.2fs",
-            (t1-t0)/1000.0, (t2-t1)/1000.0, (t3-t2)/1000.0, (t4-t3)/1000.0, (t5-t4)/1000.0));
       getLog().append("Coalesced down to " + phiEquivalenceClasses.size() + " phi equivalence classes");
       return false;
    }

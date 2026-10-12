@@ -231,17 +231,27 @@ public class VariableReferenceInfos {
     * @param labelRef The label of the block.
     * @return The referenced variables
     */
+   /** Caches results for getReferencedVars(LabelRef). */
+   private Map<LabelRef, Collection<VariableRef>> cachedReferencedVarsByBlock = new HashMap<>();
+
    public Collection<VariableRef> getReferencedVars(LabelRef labelRef) {
-      ArrayList<VariableRef> variableRefs = new ArrayList<>();
-      blockVarReferences
-            .get(labelRef)
-            .stream()
-            .filter(referenceToSymbolVar -> referenceToSymbolVar.getReferenced() instanceof VariableRef)
-            .forEach(referenceToSymbolVar -> {
-                     if(!variableRefs.contains(referenceToSymbolVar.getReferenced()))
-                        variableRefs.add((VariableRef) referenceToSymbolVar.getReferenced());
-                  }
-            );
+      Collection<VariableRef> cached = cachedReferencedVarsByBlock.get(labelRef);
+      if(cached != null) {
+         return cached;
+      }
+      Collection<ReferenceToSymbolVar> refs = blockVarReferences.get(labelRef);
+      if(refs == null) {
+         cached = Collections.emptyList();
+         cachedReferencedVarsByBlock.put(labelRef, cached);
+         return cached;
+      }
+      LinkedHashSet<VariableRef> variableRefs = new LinkedHashSet<>();
+      for(ReferenceToSymbolVar ref : refs) {
+         if(ref.getReferenced() instanceof VariableRef) {
+            variableRefs.add((VariableRef) ref.getReferenced());
+         }
+      }
+      cachedReferencedVarsByBlock.put(labelRef, variableRefs);
       return variableRefs;
    }
 

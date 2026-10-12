@@ -11,8 +11,10 @@ import dk.camelot64.kickc.model.values.ProcedureRef;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 
 /** Calculates {@link dk.camelot64.kickc.model.ControlFlowBlockSuccessorClosure}. */
 public class PassNCalcBlockSuccessorClosure extends PassNCalcBase<ControlFlowBlockSuccessorClosure> {
@@ -23,11 +25,15 @@ public class PassNCalcBlockSuccessorClosure extends PassNCalcBase<ControlFlowBlo
 
    @Override
    public ControlFlowBlockSuccessorClosure calculate() {
+      Map<LabelRef, Graph.Block> blockMap = new HashMap<>();
+      for(var block : getProgram().getGraph().getAllBlocks()) {
+         blockMap.put(block.getLabel(), block);
+      }
       LinkedHashMap<LabelRef, Collection<LabelRef>> blockSuccessors = new LinkedHashMap<>();
       for(var block : getProgram().getGraph().getAllBlocks()) {
          LabelRef blockLabel = block.getLabel();
          LinkedHashSet<LabelRef> successorClosure = new LinkedHashSet<>();
-         findSuccessorClosure(block.getLabel(), successorClosure, new ArrayList<>());
+         findSuccessorClosure(block.getLabel(), successorClosure, new java.util.HashSet<>(), blockMap);
          blockSuccessors.put(blockLabel, successorClosure);
       }
       return new ControlFlowBlockSuccessorClosure(blockSuccessors);
@@ -40,23 +46,26 @@ public class PassNCalcBlockSuccessorClosure extends PassNCalcBase<ControlFlowBlo
     * @param successorClosure the set of all blocks that are successors (including called methods).
     * @param visited The blocks already visited during the search. Used to stop infinite recursion.
     */
-   private void findSuccessorClosure(LabelRef labelRef, LinkedHashSet<LabelRef> successorClosure, Collection<LabelRef> visited) {
-      if(labelRef == null || visited.contains(labelRef))
+   private void findSuccessorClosure(LabelRef labelRef, LinkedHashSet<LabelRef> successorClosure, java.util.Set<LabelRef> visited, Map<LabelRef, Graph.Block> blockMap) {
+      if(labelRef == null || !visited.add(labelRef))
          return;
-      visited.add(labelRef);
-      Graph.Block block = getProgram().getGraph().getBlock(labelRef);
-      if(block == null)
-         return;
+      Graph.Block block = blockMap.get(labelRef);
+      if(block == null) {
+         block = getProgram().getGraph().getBlock(labelRef);
+         if(block == null)
+            return;
+         blockMap.put(labelRef, block);
+      }
       successorClosure.add(labelRef);
-      findSuccessorClosure(block.getDefaultSuccessor(), successorClosure, visited);
-      findSuccessorClosure(block.getConditionalSuccessor(), successorClosure, visited);
-      findSuccessorClosure(block.getCallSuccessor(), successorClosure, visited);
+      findSuccessorClosure(block.getDefaultSuccessor(), successorClosure, visited, blockMap);
+      findSuccessorClosure(block.getConditionalSuccessor(), successorClosure, visited, blockMap);
+      findSuccessorClosure(block.getCallSuccessor(), successorClosure, visited, blockMap);
       // Also handle stack-calls
       for(Statement statement : block.getStatements()) {
          if(statement instanceof StatementCallExecute) {
             final ProcedureRef calledProcRef = ((StatementCallExecute) statement).getProcedure();
             if(calledProcRef != null)
-               findSuccessorClosure(calledProcRef.getLabelRef(), successorClosure, visited);
+               findSuccessorClosure(calledProcRef.getLabelRef(), successorClosure, visited, blockMap);
          }
       }
    }

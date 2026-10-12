@@ -23,10 +23,21 @@ public class ControlFlowBlockSuccessorClosure {
     * @param labelRef The block to examine
     * @return All used variables
     */
+   private java.util.Map<LabelRef, Collection<VariableRef>> cachedReferencedVars = new java.util.HashMap<>();
+
    public Collection<VariableRef> getSuccessorClosureReferencedVars(LabelRef labelRef, VariableReferenceInfos varInfos) {
+      Collection<VariableRef> cached = cachedReferencedVars.get(labelRef);
+      if(cached != null) {
+         return cached;
+      }
       java.util.Set<VariableRef> variableRefs = new java.util.LinkedHashSet<>();
       final Collection<LabelRef> successors = blockSuccessorClosure.get(labelRef);
-      successors.forEach(labelRef1 -> variableRefs.addAll(varInfos.getReferencedVars(labelRef1)));
+      if(successors != null) {
+         for(LabelRef succ : successors) {
+            variableRefs.addAll(varInfos.getReferencedVars(succ));
+         }
+      }
+      cachedReferencedVars.put(labelRef, variableRefs);
       return variableRefs;
    }
 
