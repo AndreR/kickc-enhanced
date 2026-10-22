@@ -40,6 +40,19 @@
             <name>Jesper Balman Gravgaard</name>
             <email>jesper@balmangravgaard.dk</email>
             <url>https://gitlab.com/jespergravgaard</url>
+            <roles>
+                <role>Author</role>
+                <role>Lead Developer</role>
+            </roles>
+        </developer>
+        <developer>
+            <name>André Reichelt</name>
+            <email>andrer241@gmail.com</email>
+            <url>https://github.com/AndreR</url>
+            <roles>
+                <role>Maintainer (Enhanced Fork)</role>
+                <role>Developer</role>
+            </roles>
         </developer>
     </developers>
 
