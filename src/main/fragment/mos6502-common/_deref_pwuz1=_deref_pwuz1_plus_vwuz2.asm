@@ -1,0 +1,9 @@
+ldy #0
+lda ({z1}),y
+clc
+adc {z2}
+sta ({z1}),y
+iny
+lda ({z1}),y
+adc {z2}+1
+sta ({z1}),y
