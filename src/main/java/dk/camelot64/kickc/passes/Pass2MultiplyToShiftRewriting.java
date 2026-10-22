@@ -74,6 +74,16 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
       } else if(power2 > 0.0 && Math.round(power2) == power2) {
          // Found a whole power of 2
          getLog().append("Rewriting multiplication to use shift " + assignment.toString(getProgram(), false));
+         SymbolType lValueType = SymbolTypeInference.inferType(getProgramScope(), assignment.getlValue());
+         SymbolType varType = SymbolTypeInference.inferType(getProgramScope(), varValue);
+         if(lValueType.getSizeBytes() > varType.getSizeBytes() || constValue > 255) {
+            SymbolType targetType = lValueType.getSizeBytes() > varType.getSizeBytes() ? lValueType : SymbolType.WORD;
+            stmtIt.previous();
+            Variable varPromote = VariableBuilder.createIntermediate(scope, targetType, getProgram());
+            stmtIt.add(new StatementAssignment((LValue) varPromote.getRef(), varValue, true, assignment.getSource(), Comment.NO_COMMENTS));
+            stmtIt.next();
+            varValue = varPromote.getRef();
+         }
          assignment.setOperator(Operators.SHIFT_LEFT);
          assignment.setrValue2(new ConstantInteger((long) power2, SymbolType.BYTE));
          assignment.setrValue1(varValue);
@@ -82,10 +92,21 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
          // Multiplication by constant
          getLog().append("Rewriting multiplication to use shift and addition" + assignment.toString(getProgram(), false));
          stmtIt.previous();
-         SymbolType resultType = SymbolTypeInference.inferType(getProgramScope(), varValue);
+         SymbolType lValueType = SymbolTypeInference.inferType(getProgramScope(), assignment.getlValue());
+         SymbolType varType = SymbolTypeInference.inferType(getProgramScope(), varValue);
+         SymbolType resultType = varType;
+         if(lValueType.getSizeBytes() > varType.getSizeBytes() || constValue > 255) {
+            resultType = lValueType.getSizeBytes() > varType.getSizeBytes() ? lValueType : SymbolType.WORD;
+         }
+         RValue building = varValue;
+         if(resultType.getSizeBytes() > varType.getSizeBytes()) {
+            Variable varPromote = VariableBuilder.createIntermediate(scope, resultType, getProgram());
+            stmtIt.add(new StatementAssignment((LValue) varPromote.getRef(), varValue, true, assignment.getSource(), Comment.NO_COMMENTS));
+            varValue = varPromote.getRef();
+            building = varPromote.getRef();
+         }
          long pow2 = (long) power2;
          long remains = constValue - (1L << pow2);
-         RValue building = varValue;
          long shiftCount = 0;
          while(pow2 >= 0) {
             long powVal = 1L << pow2;
