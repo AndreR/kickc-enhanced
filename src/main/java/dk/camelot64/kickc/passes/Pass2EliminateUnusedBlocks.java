@@ -20,9 +20,15 @@ public class Pass2EliminateUnusedBlocks extends Pass2SsaOptimization {
 
    @Override
    public boolean step() {
-      Set<LabelRef> referencedBlocks = getReferencedBlocks();
+      Collection<Graph.Block> allBlocks = getGraph().getAllBlocks();
+      Map<LabelRef, Graph.Block> blockMap = new HashMap<>(allBlocks.size() * 2);
+      for(Graph.Block b : allBlocks) {
+         blockMap.put(b.getLabel(), b);
+      }
+
+      Set<LabelRef> referencedBlocks = getReferencedBlocks(blockMap);
       Set<LabelRef> unusedBlocks = new LinkedHashSet<>();
-      for(var block : getGraph().getAllBlocks()) {
+      for(var block : allBlocks) {
          if(!referencedBlocks.contains(block.getLabel())) {
             unusedBlocks.add(block.getLabel());
          }
@@ -33,7 +39,7 @@ public class Pass2EliminateUnusedBlocks extends Pass2SsaOptimization {
       }
 
       for(LabelRef unusedLabel : unusedBlocks) {
-         Graph.Block block = getGraph().getBlock(unusedLabel);
+         Graph.Block block = blockMap.get(unusedLabel);
          if(block == null) continue;
          for(Statement stmt : block.getStatements()) {
             if(stmt instanceof StatementLValue assignment) {
@@ -149,11 +155,11 @@ public class Pass2EliminateUnusedBlocks extends Pass2SsaOptimization {
     *
     * @return All blocks referenced
     */
-   private Set<LabelRef> getReferencedBlocks() {
+   private Set<LabelRef> getReferencedBlocks(Map<LabelRef, Graph.Block> blockMap) {
       Set<LabelRef> referencedBlocks = new LinkedHashSet<>();
       List<Graph.Block> entryPointBlocks = getProgram().getEntryPointBlocks();
       for(var entryPointBlock : entryPointBlocks) {
-         findReferencedBlocks(entryPointBlock, referencedBlocks);
+         findReferencedBlocks(entryPointBlock, referencedBlocks, blockMap);
       }
 
       return referencedBlocks;
@@ -165,7 +171,7 @@ public class Pass2EliminateUnusedBlocks extends Pass2SsaOptimization {
     * @param block The block to add (inc. all blocks that this block calls or jumps to)
     * @param used The blocks already discovered (not examined again)
     */
-   private void findReferencedBlocks(Graph.Block block, Set<LabelRef> used) {
+   private void findReferencedBlocks(Graph.Block block, Set<LabelRef> used, Map<LabelRef, Graph.Block> blockMap) {
       if(block == null) {
          return;
       }
@@ -174,25 +180,25 @@ public class Pass2EliminateUnusedBlocks extends Pass2SsaOptimization {
       }
       used.add(block.getLabel());
       if(block.getCallSuccessor() != null) {
-         findReferencedBlocks(getGraph().getBlock(block.getCallSuccessor()), used);
+         findReferencedBlocks(blockMap.get(block.getCallSuccessor()), used, blockMap);
       }
       if(block.getConditionalSuccessor() != null) {
-         findReferencedBlocks(getGraph().getBlock(block.getConditionalSuccessor()), used);
+         findReferencedBlocks(blockMap.get(block.getConditionalSuccessor()), used, blockMap);
       }
       if(block.getDefaultSuccessor() != null) {
          if(block.getDefaultSuccessor().getFullName().equals(SymbolRef.PROCEXIT_BLOCK_NAME)) {
             return;
          }
-         findReferencedBlocks(getGraph().getBlock(block.getDefaultSuccessor()), used);
+         findReferencedBlocks(blockMap.get(block.getDefaultSuccessor()), used, blockMap);
       }
       for(Statement statement : block.getStatements()) {
          if(statement instanceof StatementCall) {
             final ProcedureRef procedure = ((StatementCall) statement).getProcedure();
-            findReferencedBlocks(getGraph().getBlock(procedure.getLabelRef()), used);
+            findReferencedBlocks(blockMap.get(procedure.getLabelRef()), used, blockMap);
          } else if(statement instanceof StatementCallExecute) {
             final ProcedureRef procedure = ((StatementCallExecute) statement).getProcedure();
             if(procedure != null) {
-               findReferencedBlocks(getGraph().getBlock(procedure.getLabelRef()), used);
+               findReferencedBlocks(blockMap.get(procedure.getLabelRef()), used, blockMap);
             }
          }
       }

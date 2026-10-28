@@ -51,28 +51,34 @@ public class Pass4MemoryCoalesceCallGraph extends Pass2Base {
       // All live range equivalence classes already handled - we handle each only once
       List<LiveRangeEquivalenceClass> handledECs = new ArrayList<>();
       List<LiveRangeEquivalenceClass> allECs = new ArrayList<>(liveRangeEquivalenceClassSet.getEquivalenceClasses());
+      Map<LiveRangeEquivalenceClass, Collection<ScopeRef>> ecScopesCache = new HashMap<>();
       for(LiveRangeEquivalenceClass thisEC : allECs) {
-         // Skip main-memory registers
-         if(Registers.RegisterType.MAIN_MEM.equals(thisEC.getRegister().getType()))
+         // Skip main-memory registers or non-memory registers
+         Registers.Register thisReg = thisEC.getRegister();
+         if(Registers.RegisterType.MAIN_MEM.equals(thisReg.getType()) || !thisReg.isMem())
             continue;
+         if(thisReg instanceof Registers.RegisterZpMem && getProgram().getReservedZps().contains(((Registers.RegisterZpMem) thisReg).getZp()))
+            continue;
+
          // Find all calling scopes - since we want to avoid coalescing with variables in these
          Set<ScopeRef> allCallingScopes = new LinkedHashSet<>();
-         for(ScopeRef ecScope : getEquivalenceClassScopes(thisEC)) {
+         for(ScopeRef ecScope : getEquivalenceClassScopesCached(thisEC, ecScopesCache)) {
             allCallingScopes.addAll(callGraph.getRecursiveCallerProcs(ecScope));
          }
          // Go through the already handled equivalence classes - and try to coalesce with any that does not have variables from the calling scopes
          boolean coalesced = false;
          for(LiveRangeEquivalenceClass otherEC : handledECs) {
-            // Skip main-memory registers
-            if(Registers.RegisterType.MAIN_MEM.equals(otherEC.getRegister().getType()))
+            // Fast compatibility check: must be compatible memory registers (same type, same size, not in reserved ZPs)
+            if(!Pass4MemoryCoalesce.canCoalesceCompatible(thisEC, otherEC, getProgram()))
                continue;
             // Skip if there is a scope overlap
-            if(isProcedureOverlap(otherEC, allCallingScopes))
+            if(isProcedureOverlap(otherEC, allCallingScopes, ecScopesCache))
                continue;
             // No scope overlap - attempt to coalesce
             Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate candidate = new Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate(thisEC, otherEC, null);
             if(Pass4MemoryCoalesce.attemptCoalesce(candidate, threadHeads, unknownFragments, getProgram())) {
-               // Succesfully coalesced with already handled EC - move on to the next one!
+               // Successfully coalesced with already handled EC - invalidate its cached scopes and move on!
+               ecScopesCache.remove(otherEC);
                coalesced = true;
                modified = true;
                break;
@@ -86,20 +92,28 @@ public class Pass4MemoryCoalesceCallGraph extends Pass2Base {
       return modified;
    }
 
+   private static Collection<ScopeRef> getEquivalenceClassScopesCached(LiveRangeEquivalenceClass equivalenceClass, Map<LiveRangeEquivalenceClass, Collection<ScopeRef>> cache) {
+      Collection<ScopeRef> scopes = cache.get(equivalenceClass);
+      if(scopes == null) {
+         scopes = getEquivalenceClassScopes(equivalenceClass);
+         cache.put(equivalenceClass, scopes);
+      }
+      return scopes;
+   }
+
    /**
     * Determine if any variable in a live range equivalence class has a scope from the passed set of procedures.
     * @param equivalenceClass The live range equivalence class
     * @param procedureRefs The set of procedures
     * @return true if there is a scope overlap
     */
-   private boolean isProcedureOverlap(LiveRangeEquivalenceClass equivalenceClass, Collection<ScopeRef> procedureRefs) {
-      boolean scopeOverlap = false;
-      for(VariableRef otherVarRef : equivalenceClass.getVariables()) {
-         ScopeRef otherProcedureRef = getScopeRef(otherVarRef);
+   private boolean isProcedureOverlap(LiveRangeEquivalenceClass equivalenceClass, Collection<ScopeRef> procedureRefs, Map<LiveRangeEquivalenceClass, Collection<ScopeRef>> cache) {
+      Collection<ScopeRef> scopes = getEquivalenceClassScopesCached(equivalenceClass, cache);
+      for(ScopeRef otherProcedureRef : scopes) {
          if(procedureRefs.contains(otherProcedureRef))
-            scopeOverlap = true;
+            return true;
       }
-      return scopeOverlap;
+      return false;
    }
 
    /**

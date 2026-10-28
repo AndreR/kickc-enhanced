@@ -14,10 +14,7 @@ import dk.camelot64.kickc.model.symbols.Symbol;
 import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.values.*;
 
-import java.util.Collection;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Compiler Pass that generates Single Static Assignment Form based on a Control Flow Graph.
@@ -34,13 +31,14 @@ public class Pass1GenerateSingleStaticAssignmentForm extends Pass1Base {
    public boolean step() {
       versionAllAssignments();
       versionAllUses();
+      Map<LabelRef, List<Graph.Block>> phiPredecessorsMap = getPhiPredecessorsMap(getProgram());
       boolean done;
       do {
          if(getLog().isVerbosePass1CreateSsa()) {
             getLog().append("Completing Phi functions...");
             //getLog().append(getGraph().toString(getProgram()));
          }
-         done = completePhiFunctions();
+         done = completePhiFunctions(phiPredecessorsMap);
       } while(!done);
       return false;
    }
@@ -187,7 +185,7 @@ public class Pass1GenerateSingleStaticAssignmentForm extends Pass1Base {
     * @return true if all phis were completely filled out.
     * false if new phis were added, meaning another iteration is needed.
     */
-   private boolean completePhiFunctions() {
+   private boolean completePhiFunctions(Map<LabelRef, List<Graph.Block>> phiPredecessorsMap) {
       Map<LabelRef, Map<Variable, Variable>> newPhis = new LinkedHashMap<>();
       Map<LabelRef, Map<Variable, Variable>> symbolMap = buildSymbolMap();
       for(var block : getGraph().getAllBlocks()) {
@@ -200,7 +198,8 @@ public class Pass1GenerateSingleStaticAssignmentForm extends Pass1Base {
                      VariableRef phiLValVarRef = phiVariable.getVariable();
                      Variable versioned = getProgramScope().getVariable(phiLValVarRef);
                      Variable unversioned = versioned.getPhiMaster();
-                     List<Graph.Block> predecessors = getPhiPredecessors(block, getProgram());
+                     List<Graph.Block> predecessors = phiPredecessorsMap.get(block.getLabel());
+                     if(predecessors == null) predecessors = Collections.emptyList();
                      for(var predecessor : predecessors) {
                         LabelRef predecessorLabel = predecessor.getLabel();
                         Map<Variable, Variable> predecessorMap = symbolMap.get(predecessorLabel);
@@ -250,23 +249,48 @@ public class Pass1GenerateSingleStaticAssignmentForm extends Pass1Base {
     * @return All predecessor blocks
     */
    public static List<Graph.Block> getPhiPredecessors(Graph.Block block, Program program) {
-      List<Graph.Block> predecessors = program.getGraph().getPredecessors(block);
-      Symbol symbol = program.getScope().getSymbol(block.getLabel());
-      if(symbol instanceof Procedure) {
-         Procedure procedure = (Procedure) symbol;
-         if(procedure.getInterruptType() != null || Pass2ConstantIdentification.isAddressOfUsed(procedure.getRef(), program)) {
-            // Find all root-level predecessors to the main block
-            Graph.Block mainBlock = program.getGraph().getBlock(new LabelRef(SymbolRef.MAIN_PROC_NAME));
-            List<Graph.Block> mainPredecessors = program.getGraph().getPredecessors(mainBlock);
-            for(var mainPredecessor : mainPredecessors) {
-               if(mainPredecessor.getScope().equals(ScopeRef.ROOT)) {
-                  predecessors.add(mainPredecessor);
-                  throw new RuntimeException("W");
+      return getPhiPredecessorsMap(program).getOrDefault(block.getLabel(), Collections.emptyList());
+   }
+
+   public static Map<LabelRef, List<Graph.Block>> getPhiPredecessorsMap(Program program) {
+      Map<LabelRef, List<Graph.Block>> predMap = new LinkedHashMap<>();
+      for(Graph.Block other : program.getGraph().getAllBlocks()) {
+         if(other.getDefaultSuccessor() != null) {
+            predMap.computeIfAbsent(other.getDefaultSuccessor(), k -> new ArrayList<>()).add(other);
+         }
+         if(other.getConditionalSuccessor() != null) {
+            predMap.computeIfAbsent(other.getConditionalSuccessor(), k -> new ArrayList<>()).add(other);
+         }
+         if(other.getCallSuccessor() != null) {
+            predMap.computeIfAbsent(other.getCallSuccessor(), k -> new ArrayList<>()).add(other);
+         }
+      }
+      for(List<Graph.Block> list : predMap.values()) {
+         list.sort(Comparator.comparing(o -> o.getLabel().getFullName()));
+      }
+      for(Graph.Block block : program.getGraph().getAllBlocks()) {
+         Symbol symbol = program.getScope().getSymbol(block.getLabel());
+         if(symbol instanceof Procedure) {
+            Procedure procedure = (Procedure) symbol;
+            if(procedure.getInterruptType() != null || Pass2ConstantIdentification.isAddressOfUsed(procedure.getRef(), program)) {
+               // Find all root-level predecessors to the main block
+               Graph.Block mainBlock = program.getGraph().getBlock(new LabelRef(SymbolRef.MAIN_PROC_NAME));
+               if(mainBlock != null) {
+                  List<Graph.Block> mainPredecessors = predMap.get(mainBlock.getLabel());
+                  if(mainPredecessors != null) {
+                     List<Graph.Block> predecessors = predMap.computeIfAbsent(block.getLabel(), k -> new ArrayList<>());
+                     for(var mainPredecessor : mainPredecessors) {
+                        if(mainPredecessor.getScope().equals(ScopeRef.ROOT)) {
+                           predecessors.add(mainPredecessor);
+                           throw new RuntimeException("W");
+                        }
+                     }
+                  }
                }
             }
          }
       }
-      return predecessors;
+      return predMap;
    }
 
    /**

@@ -14,9 +14,20 @@ import java.util.*;
 public class CallGraph {
 
    private List<CallBlock> callBlocks;
+   private Map<ScopeRef, CallBlock> callBlocksByScope;
+   private Map<ScopeRef, Collection<ScopeRef>> callerProcsCache;
+   private Map<ScopeRef, Collection<ScopeRef>> recursiveCallerProcsCache;
 
    public CallGraph() {
       this.callBlocks = new ArrayList<>();
+      this.callBlocksByScope = new LinkedHashMap<>();
+      this.callerProcsCache = new HashMap<>();
+      this.recursiveCallerProcsCache = new HashMap<>();
+   }
+
+   private void clearCaches() {
+      if(callerProcsCache != null) callerProcsCache.clear();
+      if(recursiveCallerProcsCache != null) recursiveCallerProcsCache.clear();
    }
 
    /**
@@ -26,13 +37,15 @@ public class CallGraph {
     * @return The call block for the scope
     */
    public CallBlock getOrCreateCallBlock(ScopeRef scopeLabel) {
-      CallBlock callBlock = getCallBlock(scopeLabel);
+      CallBlock callBlock = callBlocksByScope.get(scopeLabel);
       if(callBlock != null) {
          return callBlock;
       }
       // Not found - create it
       CallBlock newCallBlock = new CallBlock(scopeLabel);
       callBlocks.add(newCallBlock);
+      callBlocksByScope.put(scopeLabel, newCallBlock);
+      clearCaches();
       return newCallBlock;
    }
 
@@ -43,12 +56,7 @@ public class CallGraph {
     * @return The call block for the scope. Null if the call block does not exist (no calls are made from it).
     */
    public CallBlock getCallBlock(ScopeRef scopeLabel) {
-      for(CallBlock callBlock : callBlocks) {
-         if(callBlock.getScopeLabel().equals(scopeLabel)) {
-            return callBlock;
-         }
-      }
-      return null;
+      return callBlocksByScope.get(scopeLabel);
    }
 
    /**
@@ -180,6 +188,10 @@ public class CallGraph {
        * @return All calls
        */
    public Collection<ScopeRef> getCallerProcs(ScopeRef label) {
+      Collection<ScopeRef> cached = callerProcsCache.get(label);
+      if(cached != null) {
+         return cached;
+      }
       Collection<ScopeRef> callers = new ArrayList<>();
       for(CallBlock callBlock : callBlocks) {
          for(CallBlock.Call call : callBlock.getCalls()) {
@@ -189,6 +201,7 @@ public class CallGraph {
                }
          }
       }
+      callerProcsCache.put(label, callers);
       return callers;
    }
 
@@ -199,8 +212,13 @@ public class CallGraph {
     * @return All scopes calling the passed scope (potentially through other callers)
     */
    public Collection<ScopeRef> getRecursiveCallerProcs(ScopeRef scopeRef) {
-      ArrayList<ScopeRef> closure = new ArrayList<>();
+      Collection<ScopeRef> cached = recursiveCallerProcsCache.get(scopeRef);
+      if(cached != null) {
+         return cached;
+      }
+      Set<ScopeRef> closure = new LinkedHashSet<>();
       addRecursiveCallerProcs(scopeRef, closure);
+      recursiveCallerProcsCache.put(scopeRef, closure);
       return closure;
    }
 
@@ -210,12 +228,11 @@ public class CallGraph {
     * @param scopeRef The scope (procedure/root) to examine
     * @param found The scopes already found
     * */
-   private void addRecursiveCallerProcs(ScopeRef scopeRef, Collection<ScopeRef> found) {
-      if(found.contains(scopeRef)) {
+   private void addRecursiveCallerProcs(ScopeRef scopeRef, Set<ScopeRef> found) {
+      if(!found.add(scopeRef)) {
          // Recursion detected - stop here
          return;
       }
-      found.add(scopeRef);
       Collection<ScopeRef> callerProcs = getCallerProcs(scopeRef);
       for(ScopeRef callerProc : callerProcs) {
          addRecursiveCallerProcs(callerProc, found);

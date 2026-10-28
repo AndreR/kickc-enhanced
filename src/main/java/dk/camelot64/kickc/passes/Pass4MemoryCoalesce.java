@@ -151,7 +151,7 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
     * @param program The program
     * @return True if the two equivalence classes can be coalesced into one without problems.
     */
-   private static boolean canCoalesceCompatible(LiveRangeEquivalenceClass ec1, LiveRangeEquivalenceClass ec2, Program program) {
+   static boolean canCoalesceCompatible(LiveRangeEquivalenceClass ec1, LiveRangeEquivalenceClass ec2, Program program) {
       Registers.Register register1 = ec1.getRegister();
       Registers.Register register2 = ec2.getRegister();
       // Check the both registers are in memory

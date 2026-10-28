@@ -8,6 +8,8 @@ import dk.camelot64.kickc.model.statements.StatementPhiBlock;
 import dk.camelot64.kickc.model.values.LabelRef;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Collections;
 import java.util.stream.Collectors;
 
 /** Asserts that the program does not contain any predecessors in Phi-blocks that are not true predecessors */
@@ -19,10 +21,11 @@ public class Pass2AssertPhiPredecessors extends Pass2SsaAssertion {
 
    @Override
    public void check() throws AssertionFailed {
+      Map<LabelRef, List<Graph.Block>> phiPredecessorsMap = Pass1GenerateSingleStaticAssignmentForm.getPhiPredecessorsMap(getProgram());
       for(var block : getGraph().getAllBlocks()) {
          if(block.hasPhiBlock()) {
             StatementPhiBlock phiBlock = block.getPhiBlock();
-            List<Graph.Block> phiPredecessors = Pass1GenerateSingleStaticAssignmentForm.getPhiPredecessors(block, getProgram());
+            List<Graph.Block> phiPredecessors = phiPredecessorsMap.getOrDefault(block.getLabel(), Collections.emptyList());
             List<LabelRef> predecessors =
                   phiPredecessors.stream().map(Graph.Block::getLabel).toList();
             for(StatementPhiBlock.PhiVariable phiVariable : phiBlock.getPhiVariables()) {
