@@ -11,6 +11,7 @@ import dk.camelot64.kickc.model.values.ProcedureRef;
 import dk.camelot64.kickc.model.values.ScopeRef;
 import dk.camelot64.kickc.passes.calcs.*;
 import dk.camelot64.kickc.passes.utils.ProcedureUtils;
+import dk.camelot64.kickc.passes.Pass2ConstantIdentification;
 
 import java.nio.file.Path;
 import java.util.*;
@@ -601,8 +602,9 @@ public class Program {
    public List<Graph.Block> getEntryPointBlocks() {
       final Graph graph = getGraph();
       List<Graph.Block> entryPointBlocks = new ArrayList<>();
+      Set<ProcedureRef> addressOfProcedures = Pass2ConstantIdentification.getAllAddressOfProcedures(this);
       for(Procedure procedure : getScope().getAllProcedures(true)) {
-         if(ProcedureUtils.isEntrypoint(procedure.getRef(), this) || Procedure.CallingConvention.STACK_CALL.equals(procedure.getCallingConvention()) || Procedure.CallingConvention.VAR_CALL.equals(procedure.getCallingConvention())) {
+         if(ProcedureUtils.isEntrypoint(procedure.getRef(), this, addressOfProcedures) || Procedure.CallingConvention.STACK_CALL.equals(procedure.getCallingConvention()) || Procedure.CallingConvention.VAR_CALL.equals(procedure.getCallingConvention())) {
             // Address-of is used on the procedure
             Label procedureLabel = procedure.getLabel();
             Graph.Block procedureBlock = graph.getBlock(procedureLabel.getRef());

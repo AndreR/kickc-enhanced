@@ -405,14 +405,8 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          ScopeRef scope,
          Collection<LiveRangeEquivalenceClass> equivalenceClasses) {
       Set<Graph.Block> blocks = new HashSet<>();
-      if(scope != null) {
-         List<Graph.Block> scopeBlocks = getBlocksByScope(program).get(scope);
-         if(scopeBlocks != null) {
-            blocks.addAll(scopeBlocks);
-         }
-      }
-      Map<VariableRef, List<Statement>> varStatements = getVarStatements(program);
-      if(equivalenceClasses != null) {
+      if(equivalenceClasses != null && !equivalenceClasses.isEmpty()) {
+         Map<VariableRef, List<Statement>> varStatements = getVarStatements(program);
          for(LiveRangeEquivalenceClass ec : equivalenceClasses) {
             for(VariableRef varRef : ec.getVariables()) {
                List<Statement> stmts = varStatements.get(varRef);
@@ -425,6 +419,12 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
                   }
                }
             }
+         }
+      }
+      if(blocks.isEmpty() && scope != null) {
+         List<Graph.Block> scopeBlocks = getBlocksByScope(program).get(scope);
+         if(scopeBlocks != null) {
+            blocks.addAll(scopeBlocks);
          }
       }
       Map<dk.camelot64.kickc.model.values.LabelRef, List<Graph.Block>> predMap = getPredecessorsMap(program);

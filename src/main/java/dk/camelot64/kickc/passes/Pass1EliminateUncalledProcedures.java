@@ -25,9 +25,10 @@ public class Pass1EliminateUncalledProcedures extends Pass1Base {
       Set<ProcedureRef> calledProcedures = getAllCalledProcedures(getGraph());
 
       Set<ProcedureRef> unusedProcedures = new LinkedHashSet<>();
+      Set<ProcedureRef> addressOfProcedures = Pass2ConstantIdentification.getAllAddressOfProcedures(getProgram());
       Collection<Procedure> allProcedures = getProgram().getScope().getAllProcedures(true);
       for(Procedure procedure : allProcedures)
-         if(!ProcedureUtils.isEntrypoint(procedure.getRef(), getProgram()))
+         if(!ProcedureUtils.isEntrypoint(procedure.getRef(), getProgram(), addressOfProcedures))
             if(!calledProcedures.contains(procedure.getRef()))
                // The procedure is not used - mark for removal!
                unusedProcedures.add(procedure.getRef());

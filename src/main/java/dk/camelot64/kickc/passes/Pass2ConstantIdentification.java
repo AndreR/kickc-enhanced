@@ -275,30 +275,31 @@ public class Pass2ConstantIdentification extends Pass2SsaOptimization {
     * @param procedureRef tHe variable to examine
     * @return true if the address-of operator is used on the variable
     */
-   public static boolean isAddressOfUsed(ProcedureRef procedureRef, Program program) {
-      final boolean[] found = {false};
+   public static Set<ProcedureRef> getAllAddressOfProcedures(Program program) {
+      final Set<ProcedureRef> addressOfProcedures = new HashSet<>();
       // Examine all program values in expressions
       ProgramValueIterator.execute(program, (programValue, currentStmt, stmtIt, currentBlock) -> {
          Value value = programValue.get();
-         if(value instanceof ProcedureRef && value.equals(procedureRef)) {
+         if(value instanceof ProcedureRef) {
             if(!(programValue instanceof ProgramValue.CallExecuteProcedure))
-               found[0] = true;
+               addressOfProcedures.add((ProcedureRef) value);
          }
       });
-      if(found[0]) {
-         return true;
-      }
 
       // Examine all statements
       for(var statement : program.getGraph().getAllStatements()) {
          if(statement instanceof StatementAssignment assignment) {
-            if(Operators.ADDRESS_OF.equals(assignment.getOperator()) && procedureRef.equals(assignment.getrValue2())) {
-               return true;
+            if(Operators.ADDRESS_OF.equals(assignment.getOperator()) && assignment.getrValue2() instanceof ProcedureRef) {
+               addressOfProcedures.add((ProcedureRef) assignment.getrValue2());
             }
          }
       }
 
-      return false;
+      return addressOfProcedures;
+   }
+
+   public static boolean isAddressOfUsed(ProcedureRef procedureRef, Program program) {
+      return getAllAddressOfProcedures(program).contains(procedureRef);
    }
 
 

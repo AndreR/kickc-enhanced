@@ -33,9 +33,10 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
     */
    public static Collection<ScopeRef> getThreadHeads(Program program) {
       ArrayList<ScopeRef> threadHeads = new ArrayList<>();
+      Set<ProcedureRef> addressOfProcedures = Pass2ConstantIdentification.getAllAddressOfProcedures(program);
       Collection<Procedure> procedures = program.getScope().getAllProcedures(true);
       for(Procedure procedure : procedures)
-         if(ProcedureUtils.isEntrypoint(procedure.getRef(), program))
+         if(ProcedureUtils.isEntrypoint(procedure.getRef(), program, addressOfProcedures))
             threadHeads.add(procedure.getRef());
       return threadHeads;
    }

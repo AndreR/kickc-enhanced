@@ -60,19 +60,35 @@ public class Pass2AliasElimination extends Pass2SsaOptimization {
          return;
       }
       List<StatementPhiBlock> phiBlocks = new ArrayList<>();
+      Map<VariableRef, List<StatementPhiBlock>> phiBlocksByVar = new HashMap<>();
       for(var block : program.getGraph().getAllBlocks()) {
          if(block.hasPhiBlock() && block.getPhiBlock().getPhiVariables().size() > 1) {
-            phiBlocks.add(block.getPhiBlock());
+            StatementPhiBlock phi = block.getPhiBlock();
+            phiBlocks.add(phi);
+            for(StatementPhiBlock.PhiVariable phiVariable : phi.getPhiVariables()) {
+               phiBlocksByVar.computeIfAbsent(phiVariable.getVariable(), k -> new ArrayList<>()).add(phi);
+            }
          }
       }
       if(phiBlocks.isEmpty()) {
          return;
       }
       ListIterator<AliasSet> aliasSetListIterator = candidates.getAliasSets().listIterator();
+      Set<StatementPhiBlock> candidatePhiBlocks = new LinkedHashSet<>();
       while(aliasSetListIterator.hasNext()) {
          AliasSet aliasSet = aliasSetListIterator.next();
+         candidatePhiBlocks.clear();
+         for(VariableRef varRef : aliasSet.getVars()) {
+            List<StatementPhiBlock> list = phiBlocksByVar.get(varRef);
+            if(list != null) {
+               candidatePhiBlocks.addAll(list);
+            }
+         }
+         if(candidatePhiBlocks.isEmpty()) {
+            continue;
+         }
          boolean removeSet = false;
-         for(StatementPhiBlock phi : phiBlocks) {
+         for(StatementPhiBlock phi : candidatePhiBlocks) {
             boolean lMatch = false;
             for(StatementPhiBlock.PhiVariable phiVariable : phi.getPhiVariables()) {
                if(lMatch) {

@@ -23,13 +23,22 @@ public class ProcedureUtils {
     * @return true if the procedure is an entry point
     */
    public static boolean isEntrypoint(ProcedureRef procedureRef, Program program) {
+      return isEntrypoint(procedureRef, program, null);
+   }
+
+   public static boolean isEntrypoint(ProcedureRef procedureRef, Program program, java.util.Set<ProcedureRef> addressOfProcedures) {
       if(procedureRef.equals(program.getStartProcedure()))
          return true;
       final Procedure procedure = program.getScope().getProcedure(procedureRef);
       if(procedure.getInterruptType()!=null)
          return true;
-      if(Pass2ConstantIdentification.isAddressOfUsed(procedureRef, program))
-         return true;
+      if(addressOfProcedures != null) {
+         if(addressOfProcedures.contains(procedureRef))
+            return true;
+      } else {
+         if(Pass2ConstantIdentification.isAddressOfUsed(procedureRef, program))
+            return true;
+      }
       return false;
    }
 
