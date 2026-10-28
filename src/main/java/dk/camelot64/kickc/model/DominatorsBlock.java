@@ -37,9 +37,7 @@ public class DominatorsBlock {
     * @param dominators The dominators to add
     */
    public void addAll(Collection<LabelRef> dominators) {
-      for(LabelRef dominator : dominators) {
-         add(dominator);
-      }
+      this.dominators.addAll(dominators);
    }
 
    /**

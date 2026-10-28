@@ -24,6 +24,10 @@ public class AsmSegment extends AsmLine {
       return this;
    }
 
+   public String getName() {
+      return name;
+   }
+
    @Override
    public int getLineBytes() {
       return 0;

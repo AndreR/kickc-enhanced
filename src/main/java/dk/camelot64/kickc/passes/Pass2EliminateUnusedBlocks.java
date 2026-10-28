@@ -28,26 +28,29 @@ public class Pass2EliminateUnusedBlocks extends Pass2SsaOptimization {
          }
       }
 
-      for(var block : getGraph().getAllBlocks()) {
-         if(unusedBlocks.contains(block.getLabel())) {
-            for(Statement stmt : block.getStatements()) {
-               if(stmt instanceof StatementLValue assignment) {
-                  LValue lValue = assignment.getlValue();
-                  if(lValue instanceof VariableRef) {
-                     Variable variable = getProgramScope().getVariable((VariableRef) lValue);
-                     if(variable.isKindPhiVersion() || variable.isKindIntermediate()) {
-                        getLog().append("Eliminating variable " + lValue.toString(getProgram()) + " from unused block " + block.getLabel());
-                        variable.getScope().remove(variable);
-                     }
-                  }
-               } else if(stmt instanceof StatementPhiBlock) {
-                  for(StatementPhiBlock.PhiVariable phiVariable : ((StatementPhiBlock) stmt).getPhiVariables()) {
-                     VariableRef phiVar = phiVariable.getVariable();
-                     getLog().append("Eliminating variable " + phiVar.toString(getProgram()) + " from unused block " + block.getLabel());
-                     Variable variable = getProgramScope().getVariable(phiVar);
-                     variable.getScope().remove(variable);
+      if(unusedBlocks.isEmpty()) {
+         return false;
+      }
 
+      for(LabelRef unusedLabel : unusedBlocks) {
+         Graph.Block block = getGraph().getBlock(unusedLabel);
+         if(block == null) continue;
+         for(Statement stmt : block.getStatements()) {
+            if(stmt instanceof StatementLValue assignment) {
+               LValue lValue = assignment.getlValue();
+               if(lValue instanceof VariableRef) {
+                  Variable variable = getProgramScope().getVariable((VariableRef) lValue);
+                  if(variable.isKindPhiVersion() || variable.isKindIntermediate()) {
+                     getLog().append("Eliminating variable " + lValue.toString(getProgram()) + " from unused block " + block.getLabel());
+                     variable.getScope().remove(variable);
                   }
+               }
+            } else if(stmt instanceof StatementPhiBlock) {
+               for(StatementPhiBlock.PhiVariable phiVariable : ((StatementPhiBlock) stmt).getPhiVariables()) {
+                  VariableRef phiVar = phiVariable.getVariable();
+                  getLog().append("Eliminating variable " + phiVar.toString(getProgram()) + " from unused block " + block.getLabel());
+                  Variable variable = getProgramScope().getVariable(phiVar);
+                  variable.getScope().remove(variable);
                }
             }
          }
@@ -63,7 +66,7 @@ public class Pass2EliminateUnusedBlocks extends Pass2SsaOptimization {
             procedureGraph.remove(unusedBlock);
             Label label = getProgramScope().getLabel(unusedBlock);
             label.getScope().remove(label);
-            removePhiRValues(unusedBlock, getProgram());
+            removePhiRValues(unusedBlock, procedureGraph, getProgram().getLog());
             removedBlocks.add(unusedBlock);
             getLog().append("Removing unused block " + unusedBlock);
          } else if(unusedSymbol instanceof Procedure) {
@@ -95,7 +98,6 @@ public class Pass2EliminateUnusedBlocks extends Pass2SsaOptimization {
          LabelRef blockLabelRef = procedureBlock.getLabel();
          program.getLog().append("Removing unused procedure block " + blockLabelRef);
          procedureGraph.remove(blockLabelRef);
-         removePhiRValues(blockLabelRef, program);
          removedBlocks.add(blockLabelRef);
       }
       unusedProcedure.getScope().remove(unusedProcedure);
@@ -107,7 +109,15 @@ public class Pass2EliminateUnusedBlocks extends Pass2SsaOptimization {
     *
     * @param removeBlock The block to remove from PHI RValues
     */
-   private static void removePhiRValues(LabelRef removeBlock, Program program) {
+   public static void removePhiRValues(LabelRef removeBlock, ControlFlowGraph procedureGraph, CompileLog log) {
+      if(procedureGraph != null) {
+         for(var block : procedureGraph.getAllBlocks()) {
+            removePhiRValues(removeBlock, block, log);
+         }
+      }
+   }
+
+   public static void removePhiRValues(LabelRef removeBlock, Program program) {
       for(var block : program.getGraph().getAllBlocks()) {
          removePhiRValues(removeBlock, block, program.getLog());
       }

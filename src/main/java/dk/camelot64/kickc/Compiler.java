@@ -620,7 +620,10 @@ public class Compiler {
       // Phi lifting ensures that all variables in phi-blocks are in different live range equivalence classes
       long tPhiLift = System.currentTimeMillis();
       new Pass3PhiLifting(program).perform();
-      System.out.println(String.format("   [PASS3] PhiLifting took             %6.2f s", (System.currentTimeMillis() - tPhiLift) / 1000.0));
+      long tPhiLiftElapsed = System.currentTimeMillis() - tPhiLift;
+      if(tPhiLiftElapsed > 100) {
+         System.out.println(String.format("   [PASS3] PhiLifting took             %6.2f s", tPhiLiftElapsed / 1000.0));
+      }
       new PassNBlockSequencePlanner(program).step();
       //getLog().append("CONTROL FLOW GRAPH - PHI LIFTED");
       //getLog().append(program.prettyControlFlowGraph());
@@ -706,7 +709,10 @@ public class Compiler {
       tA = System.currentTimeMillis();
       new Pass4LiveRangeEquivalenceClassesFinalize(program).allocate();
       new Pass4RegistersFinalize(program).allocate(true, false);
-      System.out.println(String.format("   [PASS4] Finalize Registers took        %6.2f s", (System.currentTimeMillis() - tA) / 1000.0));
+      long tFinalize = System.currentTimeMillis() - tA;
+      if(tFinalize > 100) {
+         System.out.println(String.format("   [PASS4] Finalize Registers took        %6.2f s", tFinalize / 1000.0));
+      }
 
       // Initial Code generation
       long tStep = System.currentTimeMillis();
@@ -726,9 +732,7 @@ public class Compiler {
          int iter = 0;
          do {
             iter++;
-            long tIter = System.currentTimeMillis();
             change = new Pass4RegisterUpliftPotentialRegisterAnalysis(program).findPotentialRegisters();
-            System.out.println(String.format("      [PASS4 POTENTIAL REGISTERS iter %d] took %6.2f s (change=%b)", iter, (System.currentTimeMillis() - tIter) / 1000.0, change));
          } while(change);
          System.out.println(String.format("   [PASS4] Total Potential Reg Analysis: %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
          getLog().append(program.getRegisterPotentials().toString());
@@ -821,10 +825,17 @@ public class Compiler {
       pass5Optimizations.add(new Pass5RelabelLongLabels(program));
       pass5Optimizations.add(new Pass5AddMainRts(program));
       boolean asmOptimized = true;
+      int pass5Rounds = 0;
       while(asmOptimized) {
+         pass5Rounds++;
          asmOptimized = false;
          for(Pass5AsmOptimization optimization : pass5Optimizations) {
+            long tStepStart = System.currentTimeMillis();
             boolean stepOptimized = optimization.optimize();
+            long stepElapsed = System.currentTimeMillis() - tStepStart;
+            if(stepElapsed > 500) {
+               System.out.println(String.format("       [SLOW PASS5 STEP] %s took %5.2f s (round %d)", optimization.getClass().getSimpleName(), stepElapsed / 1000.0, pass5Rounds));
+            }
             if(stepOptimized) {
                if(getLog().isSysOut() || getLog().isVerboseAsmOptimize()) {
                   getLog().append("Succesful ASM optimization " + optimization.getClass().getSimpleName());
@@ -836,10 +847,14 @@ public class Compiler {
          }
       }
       long tOptElapsed = System.currentTimeMillis() - tOptStart;
+      System.out.println(String.format("   [PASS5] Peephole Optimizations (%d rounds): %6.2f s", pass5Rounds, tOptElapsed / 1000.0));
 
       long tReindexStart = System.currentTimeMillis();
       new Pass5ReindexAsmLines(program).optimize();
       long tReindexElapsed = System.currentTimeMillis() - tReindexStart;
+      if(tReindexElapsed > 100) {
+         System.out.println(String.format("   [PASS5] Reindex Lines:                %6.2f s", tReindexElapsed / 1000.0));
+      }
 
       long tBranchStart = System.currentTimeMillis();
       if(disableLongBranchFix) {
@@ -848,6 +863,7 @@ public class Compiler {
          new Pass5FixLongBranches(program).optimize();
       }
       long tBranchElapsed = System.currentTimeMillis() - tBranchStart;
+      System.out.println(String.format("   [PASS5] Fix Long Branches:            %6.2f s", tBranchElapsed / 1000.0));
 
       long tLogAfterStart = System.currentTimeMillis();
       if(getLog().isSysOut() || getLog().isVerboseAsmOptimize()) {

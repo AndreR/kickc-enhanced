@@ -22,6 +22,16 @@ import java.util.regex.Pattern;
  */
 public class Pass5FixLongBranches extends Pass5AsmOptimization {
 
+   private static class BranchToFix {
+      final AsmChunk chunk;
+      final AsmInstruction instr;
+
+      BranchToFix(AsmChunk chunk, AsmInstruction instr) {
+         this.chunk = chunk;
+         this.instr = instr;
+      }
+   }
+
    public Pass5FixLongBranches(Program program) {
       super(program);
    }
@@ -35,14 +45,137 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
          getLog().append("Warning! KickAssembler not found in java CLASSPATH. Cannot eliminate long branches.");
       }
 
+      // Pre-pass: analytically find and fix long branches in memory
+      long tPreStart = System.currentTimeMillis();
+      int preFixedCount = preFixLongBranches();
+      long tPreElapsed = System.currentTimeMillis() - tPreStart;
+      if(preFixedCount > 0) {
+         System.out.println(String.format("      [PASS5 PRE-FIX LONG BRANCHES] fixed %d branches in %4.2f s", preFixedCount, tPreElapsed / 1000.0));
+      }
+
       // Perform repeated optimization until no more branches are too long
-      boolean anyOptimized = false;
+      boolean anyOptimized = (preFixedCount > 0);
       boolean stepOptimized = true;
+      int iter = 0;
       while(stepOptimized) {
+         iter++;
+         long tStepStart = System.currentTimeMillis();
          stepOptimized = step();
-         anyOptimized = true;
+         long tStepElapsed = System.currentTimeMillis() - tStepStart;
+         System.out.println(String.format("      [PASS5 LONG BRANCH iter %d] took %6.2f s (fixed=%b)", iter, tStepElapsed / 1000.0, stepOptimized));
+         if(stepOptimized) anyOptimized = true;
       }
       return anyOptimized;
+   }
+
+   /**
+    * Pre-pass to analytically detect and fix long branches across all scopes.
+    *
+    * @return total number of branches fixed
+    */
+   private int preFixLongBranches() {
+      int totalFixed = 0;
+      boolean anyFixedThisPass = true;
+      int pass = 0;
+
+      while(anyFixedThisPass) {
+         anyFixedThisPass = false;
+         pass++;
+
+         // Phase 1: Collect label offsets per scope
+         Map<String, Integer> labelOffsets = new HashMap<>();
+         String currentScope = null;
+         boolean inCode = true;
+         int currentOffset = 0;
+
+         for(AsmChunk chunk : getAsmProgram().getChunks()) {
+            for(AsmLine line : chunk.getLines()) {
+               if(line instanceof AsmScopeBegin) {
+                  currentScope = ((AsmScopeBegin) line).getLabel();
+                  inCode = true;
+                  currentOffset = 0;
+               } else if(line instanceof AsmScopeEnd) {
+                  currentScope = null;
+                  inCode = true;
+                  currentOffset = 0;
+               } else if(currentScope != null) {
+                  if(line instanceof AsmSegment) {
+                     String seg = ((AsmSegment) line).getName();
+                     if(seg != null && seg.toLowerCase().contains("data")) {
+                        inCode = false;
+                     } else {
+                        inCode = true;
+                     }
+                  } else if(inCode) {
+                     if(line instanceof AsmLabel) {
+                        String label = ((AsmLabel) line).getLabel();
+                        if(!label.startsWith("!")) {
+                           labelOffsets.put(currentScope + "::" + label, currentOffset);
+                        }
+                     }
+                     currentOffset += line.getLineBytes();
+                  }
+               }
+            }
+         }
+
+         // Phase 2: Check conditional branches and record long ones
+         currentScope = null;
+         inCode = true;
+         currentOffset = 0;
+         List<BranchToFix> branchesToFix = new ArrayList<>();
+
+         for(AsmChunk chunk : getAsmProgram().getChunks()) {
+            for(AsmLine line : chunk.getLines()) {
+               if(line instanceof AsmScopeBegin) {
+                  currentScope = ((AsmScopeBegin) line).getLabel();
+                  inCode = true;
+                  currentOffset = 0;
+               } else if(line instanceof AsmScopeEnd) {
+                  currentScope = null;
+                  inCode = true;
+                  currentOffset = 0;
+               } else if(currentScope != null) {
+                  if(line instanceof AsmSegment) {
+                     String seg = ((AsmSegment) line).getName();
+                     if(seg != null && seg.toLowerCase().contains("data")) {
+                        inCode = false;
+                     } else {
+                        inCode = true;
+                     }
+                  } else if(inCode) {
+                     if(line instanceof AsmInstruction) {
+                        AsmInstruction instr = (AsmInstruction) line;
+                        CpuOpcode inverse = invertBranch(instr.getCpuOpcode());
+                        if(inverse != null) {
+                           String target = instr.getOperandJumpTarget();
+                           if(target != null && !target.startsWith("!")) {
+                              Integer targetOffset = labelOffsets.get(currentScope + "::" + target);
+                              if(targetOffset != null) {
+                                 int branchPc = currentOffset + 2;
+                                 int distance = targetOffset - branchPc;
+                                 if(distance < -128 || distance > 127) {
+                                    branchesToFix.add(new BranchToFix(chunk, instr));
+                                 }
+                              }
+                           }
+                        }
+                     }
+                     currentOffset += line.getLineBytes();
+                  }
+               }
+            }
+         }
+
+         for(BranchToFix b : branchesToFix) {
+            if(fixLongBranch(b.chunk, b.instr)) {
+               anyFixedThisPass = true;
+               totalFixed++;
+            }
+         }
+      }
+
+      return totalFixed;
    }
 
    /**
@@ -53,11 +186,10 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
    private boolean step() {
       // Reindex ASM lines
       new Pass5ReindexAsmLines(getProgram()).optimize();
+      long t0 = System.currentTimeMillis();
       Path tmpDir = TmpDirManager.MANAGER.newTmpDir();
       // Generate the ASM file
       try {
-         //getLog().append("ASM");
-         //getLog().append(getProgram().getAsm().toString(false, true));
          final Path asmFilePath = getProgram().getOutputFileManager().getOutputFile(tmpDir, getProgram().getOutputFileManager().getAsmExtension());
          writeOutputFile(asmFilePath, getProgram().getAsm().toString(new AsmProgram.AsmPrintState(false), null));
          // Copy Resource Files
@@ -68,8 +200,10 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
       } catch(IOException e) {
          throw new CompileError("Error writing ASM temp file.", e);
       }
+      long tWrite = System.currentTimeMillis() - t0;
 
       // Compile using KickAssembler - catch the output in a String
+      long t1 = System.currentTimeMillis();
       File asmFile = getProgram().getOutputFileManager().getOutputFile(tmpDir, getProgram().getOutputFileManager().getAsmExtension()).toFile();
       File binaryFile = getProgram().getOutputFileManager().getOutputFile(tmpDir, getProgram().getOutputFileManager().getBinaryExtension()).toFile();
       ByteArrayOutputStream kickAssOut = new ByteArrayOutputStream();
@@ -88,6 +222,8 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
          System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out)));
       }
       String output = kickAssOut.toString();
+      long tKasm = System.currentTimeMillis() - t1;
+      System.out.println(String.format("         (writeAsm=%4.2fs, kasm=%4.2fs, res=%d)", tWrite / 1000.0, tKasm / 1000.0, asmRes));
 
       if(getLog().isVerboseFixLongBranch())
          getLog().append("Pass5FixLongBranches: ASM process result " + asmRes);
@@ -131,6 +267,29 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
    }
 
    /**
+    * Fix a long branch on a specific instruction within a chunk.
+    */
+   private boolean fixLongBranch(AsmChunk asmChunk, AsmInstruction asmInstruction) {
+      CpuOpcode cpuOpcode = asmInstruction.getCpuOpcode();
+      CpuOpcode inverseCpuOpcode = invertBranch(cpuOpcode);
+      if(inverseCpuOpcode != null) {
+         if(getLog().isVerboseFixLongBranch()) {
+            getLog().append("Fixing long branch [" + asmInstruction.getIndex() + "] " + asmInstruction.toString() + " to " + inverseCpuOpcode.getMnemonic());
+         }
+         String branchDest = asmInstruction.getOperandJumpTarget();
+         asmInstruction.setCpuOpcode(inverseCpuOpcode);
+         String newLabel = AsmFormat.asmFix("!" + branchDest);
+         asmInstruction.setOperandJumpTarget(newLabel + "+");
+         CpuOpcode jmpOpcode = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("jmp", CpuAddressingMode.ABS, false);
+         AsmInstruction jmpInstruction = new AsmInstruction(jmpOpcode, branchDest, null, null);
+         asmChunk.addLineAfter(asmInstruction, jmpInstruction);
+         asmChunk.addLineAfter(jmpInstruction, new AsmLabel(newLabel));
+         return true;
+      }
+      return false;
+   }
+
+   /**
     * Fix a long branch detected at a specific ASM index
     *
     * @param idx The index of the ASM line with the long branch
@@ -140,26 +299,9 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
       AsmProgram asm = getProgram().getAsm();
       AsmChunk asmChunk = asm.getAsmChunk(idx);
       if(asmChunk != null) {
-         //getLog().append("Found ASM chunk "+asmChunk);
          AsmLine asmLine = asmChunk.getAsmLine(idx);
          if(asmLine instanceof AsmInstruction) {
-            //getLog().append("Found ASM line "+asmLine);
-            AsmInstruction asmInstruction = (AsmInstruction) asmLine;
-            CpuOpcode cpuOpcode = asmInstruction.getCpuOpcode();
-            CpuOpcode inverseCpuOpcode = invertBranch(cpuOpcode);
-            if(inverseCpuOpcode != null) {
-               //getLog().append("Inversed branch instruction "+asmInstructionType.getMnemnonic()+" -> "+inverseType.getMnemnonic());
-               getLog().append("Fixing long branch [" + idx + "] " + asmLine.toString() + " to " + inverseCpuOpcode.getMnemonic());
-               String branchDest = asmInstruction.getOperandJumpTarget();
-               asmInstruction.setCpuOpcode(inverseCpuOpcode);
-               String newLabel = AsmFormat.asmFix("!" + branchDest);
-               asmInstruction.setOperandJumpTarget(newLabel + "+");
-               CpuOpcode jmpOpcode = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("jmp", CpuAddressingMode.ABS, false);
-               AsmInstruction jmpInstruction = new AsmInstruction(jmpOpcode, branchDest, null, null);
-               asmChunk.addLineAfter(asmInstruction, jmpInstruction);
-               asmChunk.addLineAfter(jmpInstruction, new AsmLabel(newLabel));
-               return true;
-            }
+            return fixLongBranch(asmChunk, (AsmInstruction) asmLine);
          }
       }
       return false;
@@ -189,14 +331,12 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
    }
 
    private File writeOutputFile(Path outputFile, String outputString) throws IOException {
-      // Write output file
       File file = outputFile.toFile();
       FileOutputStream outputStream = new FileOutputStream(file);
       OutputStreamWriter writer = new OutputStreamWriter(outputStream);
       writer.write(outputString);
       writer.close();
       outputStream.close();
-      //System.out.println("Long Branch ASM generated to " + file.getAbsolutePath());
       return file;
    }
 

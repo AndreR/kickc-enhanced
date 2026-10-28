@@ -7,9 +7,11 @@ import dk.camelot64.kickc.asm.AsmProgram;
 import dk.camelot64.kickc.model.Program;
 
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
+import java.util.Set;
 
 /**
  * Optimization performed on Assembler Code (Asm Code).
@@ -43,11 +45,15 @@ public abstract class Pass5AsmOptimization {
    }
 
    public void remove(List<AsmLine> remove) {
+      if(remove == null || remove.isEmpty()) {
+         return;
+      }
+      Set<AsmLine> removeSet = (remove instanceof Set) ? (Set<AsmLine>) remove : new HashSet<>(remove);
       Collection<AsmChunk> chunks = getAsmProgram().getChunks();
       for(AsmChunk chunk : chunks) {
          for(Iterator<AsmLine> iterator = chunk.getLines().iterator(); iterator.hasNext(); ) {
             AsmLine line = iterator.next();
-            if(remove.contains(line)) {
+            if(removeSet.contains(line)) {
                getLog().append("Removing instruction " + line.getAsm());
                iterator.remove();
             }

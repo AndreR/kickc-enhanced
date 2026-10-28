@@ -63,10 +63,12 @@ public class PassNCalcDominators extends PassNCalcBase<DominatorsGraph> {
                Graph.Block block = getGraph().getBlock(procedureBlock);
                List<Graph.Block> predecessors = getGraph().getPredecessors(block);
                DominatorsBlock newDominators = new DominatorsBlock();
-               newDominators.addAll(procedureBlocks);
-               for(var predecessor : predecessors) {
-                  DominatorsBlock predecessorDominators = dominatorsGraph.getDominators(predecessor.getLabel());
-                  newDominators.intersect(predecessorDominators);
+               if(!predecessors.isEmpty()) {
+                  var predIt = predecessors.iterator();
+                  newDominators.addAll(dominatorsGraph.getDominators(predIt.next().getLabel()).getDominators());
+                  while(predIt.hasNext()) {
+                     newDominators.intersect(dominatorsGraph.getDominators(predIt.next().getLabel()));
+                  }
                }
                newDominators.add(block.getLabel());
                DominatorsBlock currentDominators = dominatorsGraph.getDominators(block.getLabel());

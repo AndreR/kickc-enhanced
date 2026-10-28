@@ -3,6 +3,7 @@ package dk.camelot64.kickc.passes;
 import dk.camelot64.kickc.asm.*;
 import dk.camelot64.kickc.model.Program;
 
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -47,6 +48,7 @@ public class Pass5RelabelLongLabels extends Pass5AsmOptimization {
       // Find relabels for all long labels
       // Scope->(Label->NewLabel)
       Map<String, Map<String, String>> relabels = new LinkedHashMap<>();
+      Map<String, Set<String>> relabelsValues = new LinkedHashMap<>();
       for(AsmChunk asmChunk : getAsmProgram().getChunks()) {
          for(AsmLine asmLine : asmChunk.getLines()) {
             if(asmLine instanceof AsmScopeBegin) {
@@ -63,14 +65,16 @@ public class Pass5RelabelLongLabels extends Pass5AsmOptimization {
                      scopeRelabels = new LinkedHashMap<>();
                      relabels.put(currentScope, scopeRelabels);
                   }
+                  Set<String> scopeRelabelValues = relabelsValues.computeIfAbsent(currentScope, k -> new HashSet<>());
                   // Find new short unused label
-                  int labelIdx = 1;
+                  int labelIdx = scopeRelabelValues.size() + 1;
                   String newLabel = "__b" + labelIdx;
-                  while(scopeLabels.contains(newLabel) || scopeRelabels.containsValue(newLabel)) {
-                     newLabel = "__b" + labelIdx++;
+                  while((scopeLabels != null && scopeLabels.contains(newLabel)) || scopeRelabelValues.contains(newLabel)) {
+                     newLabel = "__b" + (++labelIdx);
                   }
                   getLog().append("Relabelling long label " + asmLabel.getLabel() + " to " + newLabel);
                   scopeRelabels.put(asmLabel.getLabel(), newLabel);
+                  scopeRelabelValues.add(newLabel);
                   asmLabel.setLabel(newLabel);
                }
             }
