@@ -28,18 +28,33 @@ public class PassNCalcLoopSet extends PassNCalcBase<NaturalLoopSet> {
       DominatorsGraph dominators = getProgram().getDominators();
       Collection<Graph.Block> blocks = getGraph().getAllBlocks();
 
+      Map<LabelRef, Graph.Block> blockMap = new HashMap<>(blocks.size() * 2);
+      Map<LabelRef, List<Graph.Block>> predecessorMap = new HashMap<>(blocks.size() * 2);
+
+      for(Graph.Block b : blocks) {
+         blockMap.put(b.getLabel(), b);
+         if(b.getDefaultSuccessor() != null)
+            predecessorMap.computeIfAbsent(b.getDefaultSuccessor(), k -> new ArrayList<>()).add(b);
+         if(b.getConditionalSuccessor() != null)
+            predecessorMap.computeIfAbsent(b.getConditionalSuccessor(), k -> new ArrayList<>()).add(b);
+         if(b.getCallSuccessor() != null)
+            predecessorMap.computeIfAbsent(b.getCallSuccessor(), k -> new ArrayList<>()).add(b);
+      }
+
       // Look through graph for natural loop back edges
       NaturalLoopSet loopSet = new NaturalLoopSet();
       for(var block : blocks) {
          DominatorsBlock blockDominators = dominators.getDominators(block.getLabel());
-         for(LabelRef successor : block.getSuccessors()) {
-            if(blockDominators.contains(successor)) {
-               // Found a loop back edge!
-               NaturalLoop loop = new NaturalLoop(successor, block.getLabel());
-               if(getLog().isVerboseLoopAnalysis()) {
-                  getLog().append("Found back edge: " + loop.toString());
+         if(blockDominators != null) {
+            for(LabelRef successor : block.getSuccessors()) {
+               if(blockDominators.contains(successor)) {
+                  // Found a loop back edge!
+                  NaturalLoop loop = new NaturalLoop(successor, block.getLabel());
+                  if(getLog().isVerboseLoopAnalysis()) {
+                     getLog().append("Found back edge: " + loop.toString());
+                  }
+                  loopSet.addLoop(loop);
                }
-               loopSet.addLoop(loop);
             }
          }
       }
@@ -55,11 +70,13 @@ public class PassNCalcLoopSet extends PassNCalcBase<NaturalLoopSet> {
             if(block.equals(loop.getHead())) {
                continue;
             }
-            Graph.Block controlFlowBlock = getGraph().getBlock(block);
-            List<Graph.Block> predecessors = getGraph().getPredecessors(controlFlowBlock);
-            for(var predecessor : predecessors) {
-               if(!loopBlocks.contains(predecessor.getLabel()) && !todo.contains(predecessor.getLabel())) {
-                  todo.add(predecessor.getLabel());
+            Graph.Block controlFlowBlock = blockMap.get(block);
+            List<Graph.Block> predecessors = controlFlowBlock != null ? predecessorMap.get(controlFlowBlock.getLabel()) : null;
+            if(predecessors != null) {
+               for(var predecessor : predecessors) {
+                  if(!loopBlocks.contains(predecessor.getLabel()) && !todo.contains(predecessor.getLabel())) {
+                     todo.add(predecessor.getLabel());
+                  }
                }
             }
          }
@@ -113,6 +130,5 @@ public class PassNCalcLoopSet extends PassNCalcBase<NaturalLoopSet> {
       }
       return false;
    }
-
 
 }

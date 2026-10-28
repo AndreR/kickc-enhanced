@@ -29,6 +29,10 @@ public class DominatorsGraph {
     * @param block Label of the block
     * @return The block dominators
     */
+   public Map<LabelRef, DominatorsBlock> getBlockDominators() {
+      return blockDominators;
+   }
+
    public DominatorsBlock getDominators(LabelRef block) {
       return blockDominators.get(block);
    }
