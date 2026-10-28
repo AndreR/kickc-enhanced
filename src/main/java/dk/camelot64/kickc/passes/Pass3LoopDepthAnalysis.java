@@ -22,11 +22,14 @@ public class Pass3LoopDepthAnalysis extends Pass2Base {
       loopSet = getProgram().getLoopSet();
    }
 
+   private final Map<ScopeRef, Integer> callingDepthCache = new HashMap<>();
+
    /**
     * Finds the depth of loops in the control flow graph.
     * Uses the call graph and natural loops of the control flow graph.
     */
    public void findLoopDepths() {
+      callingDepthCache.clear();
       Deque<ScopeRef> todo = new ArrayDeque<>();
       Set<ScopeRef> done = new LinkedHashSet<>();
 
@@ -46,16 +49,19 @@ public class Pass3LoopDepthAnalysis extends Pass2Base {
             }
          }
          // Find the scope blocks calling the current scope block - and the loop depth of the blocks where the call statement is
-         int callingDepth = getCallingDepth(currentScope, new ArrayList<>());
+         int callingDepth = getCallingDepth(currentScope, new HashSet<>());
          findLoopDepth(currentScope, callingDepth);
       }
    }
 
-   private int getCallingDepth(ScopeRef currentScope, List<ScopeRef> path) {
+   private int getCallingDepth(ScopeRef currentScope, Set<ScopeRef> path) {
       // Avoid infinite recursion
       if(path.contains(currentScope))
          return 10;
-      path = new ArrayList<>(path);
+      Integer cached = callingDepthCache.get(currentScope);
+      if(cached != null) {
+         return cached;
+      }
       path.add(currentScope);
 
       int callingDepth = 1;
@@ -86,6 +92,8 @@ public class Pass3LoopDepthAnalysis extends Pass2Base {
             }
          }
       }
+      path.remove(currentScope);
+      callingDepthCache.put(currentScope, callingDepth);
       return callingDepth;
    }
 

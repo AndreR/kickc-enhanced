@@ -554,7 +554,9 @@ public class Compiler {
       while(ssaOptimized) {
          round++;
          long tRoundStart = System.currentTimeMillis();
-         pass2AssertSSA();
+         if(round == 1) {
+            pass2AssertSSA();
+         }
          ssaOptimized = false;
          for(PassStep optimization : optimizations) {
             boolean stepOptimized = true;
@@ -574,6 +576,7 @@ public class Compiler {
             System.out.println(String.format("    [PASS2 ROUND %d] took %5.2f s", round, roundElapsed / 1000.0));
          }
       }
+      pass2AssertSSA();
    }
 
    /**
@@ -585,11 +588,11 @@ public class Compiler {
    private boolean pass2ExecuteOnce(List<PassStep> optimizations) {
       boolean ssaOptimized = false;
       for(PassStep optimization : optimizations) {
-         pass2AssertSSA();
          boolean stepOptimized = optimization.step();
          if(stepOptimized) ssaOptimized = true;
          pass2LogOptimization(optimization, stepOptimized);
       }
+      pass2AssertSSA();
       return ssaOptimized;
    }
 

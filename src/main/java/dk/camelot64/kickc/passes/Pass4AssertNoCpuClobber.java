@@ -11,10 +11,7 @@ import dk.camelot64.kickc.model.values.RValue;
 import dk.camelot64.kickc.model.values.ValueList;
 import dk.camelot64.kickc.model.values.VariableRef;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /*** Ensures that no statement clobbers a CPU register used by an alive variable - and that assigning statements clobber the CPU registers they assign to */
 public class Pass4AssertNoCpuClobber extends Pass2Base {
@@ -29,21 +26,25 @@ public class Pass4AssertNoCpuClobber extends Pass2Base {
     * @param clobber The clobber
     * @return The clobbered CPU registers
     */
+   @SuppressWarnings("unchecked")
+   private static final Collection<Registers.Register>[] CLOBBER_REGISTER_CACHE = new Collection[16];
+   static {
+      for(int i = 0; i < 16; i++) {
+         List<Registers.Register> regs = new ArrayList<>(4);
+         if((i & 1) != 0) regs.add(Registers.getRegisterA());
+         if((i & 2) != 0) regs.add(Registers.getRegisterX());
+         if((i & 4) != 0) regs.add(Registers.getRegisterY());
+         if((i & 8) != 0) regs.add(Registers.getRegisterZ());
+         CLOBBER_REGISTER_CACHE[i] = Collections.unmodifiableList(regs);
+      }
+   }
+
    public static Collection<Registers.Register> getClobberRegisters(CpuClobber clobber) {
-      List<Registers.Register> clobberRegisters = new ArrayList<>();
-      if(clobber.isRegisterA()) {
-         clobberRegisters.add(Registers.getRegisterA());
-      }
-      if(clobber.isRegisterX()) {
-         clobberRegisters.add(Registers.getRegisterX());
-      }
-      if(clobber.isRegisterY()) {
-         clobberRegisters.add(Registers.getRegisterY());
-      }
-      if(clobber.isRegisterZ()) {
-         clobberRegisters.add(Registers.getRegisterZ());
-      }
-      return clobberRegisters;
+      int key = (clobber.isRegisterA() ? 1 : 0)
+              | (clobber.isRegisterX() ? 2 : 0)
+              | (clobber.isRegisterY() ? 4 : 0)
+              | (clobber.isRegisterZ() ? 8 : 0);
+      return CLOBBER_REGISTER_CACHE[key];
    }
 
    /**
@@ -79,7 +80,7 @@ public class Pass4AssertNoCpuClobber extends Pass2Base {
             Collection<VariableRef> assignedVars = Pass4RegisterUpliftPotentialRegisterAnalysis.getAssignedVars(statement);
 
             // Find alive variables
-            List<VariableRef> aliveVars = new ArrayList<>(getProgram().getLiveRangeVariablesEffective().getAliveEffective(statement));
+            Collection<VariableRef> aliveVars = getProgram().getLiveRangeVariablesEffective().getAliveEffective(statement);
 
             // If the chunk is an assignment in a phi transition, examine the later phi transition assignments and update alive variables alive and variables assigned
             if(statement instanceof StatementPhiBlock && asmChunk.getSubStatementId() != null && asmChunk.getSubStatementIdx() != null) {
@@ -89,6 +90,8 @@ public class Pass4AssertNoCpuClobber extends Pass2Base {
                Map<LabelRef, PhiTransitions> programPhiTransitions = getProgram().getPhiTransitions();
                PhiTransitions phiTransitions = programPhiTransitions.get(statementBlock.getLabel());
                PhiTransitions.PhiTransition phiTransition = phiTransitions.getTransition(phiTransitionId);
+               assignedVars = new LinkedHashSet<>(assignedVars);
+               aliveVars = new ArrayList<>(aliveVars);
                for(PhiTransitions.PhiTransition.PhiAssignment phiAssignment : phiTransition.getAssignments()) {
                   if(phiAssignment.getAssignmentIdx() != transitionAssignmentIdx) {
                      // Only the current transition var is assigned
@@ -109,6 +112,7 @@ public class Pass4AssertNoCpuClobber extends Pass2Base {
                int parameterIdx = asmChunk.getSubStatementIdx();
                final StatementCallPrepare callPrepare = (StatementCallPrepare) statement;
                final int numParameters = callPrepare.getNumParameters();
+               aliveVars = new ArrayList<>(aliveVars);
                for(int idx = parameterIdx + 1; idx < numParameters; idx++) {
                   // For parameter prepares later than the current one - add referenced to alive
                   final RValue parameter = callPrepare.getParameter(idx);
@@ -123,6 +127,7 @@ public class Pass4AssertNoCpuClobber extends Pass2Base {
                final StatementCallFinalize stmtCallFinalize = (StatementCallFinalize) statement;
                final List<RValue> lValues = ((ValueList)stmtCallFinalize.getlValue()).getList();
                final int numLValues = lValues.size();
+               assignedVars = new LinkedHashSet<>(assignedVars);
                for(int idx = 0; idx < numLValues; idx++) {
                   if(idx != memberIdx) {
                      // Only the current transition var is assigned
@@ -138,6 +143,7 @@ public class Pass4AssertNoCpuClobber extends Pass2Base {
                final StatementReturn stmtReturn = (StatementReturn) statement;
                final List<RValue> returnValues = ((ValueList) stmtReturn.getValue()).getList();
                final int numReturnValues = returnValues.size();
+               aliveVars = new ArrayList<>(aliveVars);
                for(int idx = memberIdx + 1; idx < numReturnValues; idx++) {
                   // Add all referenced vars in later return values to alive
                   final RValue returnValue = returnValues.get(idx);
