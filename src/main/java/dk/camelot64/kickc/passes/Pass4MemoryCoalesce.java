@@ -240,6 +240,7 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
             liveRangeEquivalenceClassSet.consolidate(candidate.getEc1(), candidate.getEc2());
             // Reset the program register allocation
             program.getLiveRangeEquivalenceClassSet().storeRegisterAllocation();
+            if(program.getLiveRangeInterference() != null) program.getLiveRangeInterference().consolidate(candidate.getEc1(), candidate.getEc2());
             return true;
          }
       }

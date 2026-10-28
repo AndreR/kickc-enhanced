@@ -101,6 +101,8 @@ public class Program {
    private NaturalLoopSet loopSet;
    /** The register weight of all variables describing how much the variable would theoretically gain from being in a register. PASS 3-5 (CACHED ON-DEMAND) */
    private VariableRegisterWeights variableRegisterWeights;
+   /** Cached live range interference matrix. PASS 4 (CACHED ON-DEMAND) */
+   private LiveRangeInterference liveRangeInterference;
 
    public Program() {
       this.outputFileManager = new OutputFileManager();
@@ -480,6 +482,21 @@ public class Program {
 
    public void setRegisterPotentials(RegisterPotentials registerPotentials) {
       this.registerPotentials = registerPotentials;
+   }
+
+   public LiveRangeInterference getLiveRangeInterference() {
+      if(liveRangeInterference == null && liveRangeEquivalenceClassSet != null) {
+         liveRangeInterference = new LiveRangeInterference(this);
+      }
+      return liveRangeInterference;
+   }
+
+   public void setLiveRangeInterference(LiveRangeInterference liveRangeInterference) {
+      this.liveRangeInterference = liveRangeInterference;
+   }
+
+   public void clearLiveRangeInterference() {
+      this.liveRangeInterference = null;
    }
 
    /**

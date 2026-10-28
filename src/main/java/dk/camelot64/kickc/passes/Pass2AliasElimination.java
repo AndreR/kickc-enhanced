@@ -436,7 +436,7 @@ public class Pass2AliasElimination extends Pass2SsaOptimization {
          }
       }
 
-      AliasSet findAliasSet(LValue lValue) {
+      public AliasSet findAliasSet(LValue lValue) {
          if(lValue instanceof VariableRef) {
             return varToSet.get((VariableRef) lValue);
          }

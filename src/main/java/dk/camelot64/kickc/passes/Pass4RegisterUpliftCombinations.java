@@ -156,6 +156,7 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          // Save the best combination in the equivalence class
          bestCombination.store(program.getLiveRangeEquivalenceClassSet());
          bestCombination.allocate(program);
+         if(program.getLiveRangeInterference() != null) program.getLiveRangeInterference().updateCombination(bestCombination);
          program.getLog().append("Uplifting [" + scope + "] best " + bestScore + " combination " + bestCombination.toString());
          long tUp = System.nanoTime();
          cache.updateBlocks(blocksToRegenerate, program);
@@ -452,10 +453,14 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
     * @return true if the register allocation contains an overlapping allocation. false otherwise.
     */
    public static boolean isAllocationOverlapping(Program program) {
-      return isAllocationOverlapping(program, null);
+      return program.getLiveRangeInterference().isAllocationOverlapping(null);
    }
 
    public static boolean isAllocationOverlapping(Program program, RegisterCombination combination) {
+      return program.getLiveRangeInterference().isAllocationOverlapping(combination);
+   }
+
+   public static boolean isAllocationOverlappingSlow(Program program, RegisterCombination combination) {
       if(combination == null) {
          for(var statement : program.getGraph().getAllStatements()) {
             if(isStatementAllocationOverlapping(program, statement)) {
