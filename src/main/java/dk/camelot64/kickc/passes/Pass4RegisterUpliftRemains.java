@@ -23,7 +23,7 @@ public class Pass4RegisterUpliftRemains extends Pass2Base {
       final VariableRegisterWeights registerWeights = getProgram().getVariableRegisterWeights();
       Collections.sort(equivalenceClasses, (o1, o2) -> Double.compare(registerWeights.getTotalWeight(o2), registerWeights.getTotalWeight(o1)));
 
-      Set<String> unknownFragments = new LinkedHashSet<>();
+      Set<String> unknownFragments = Collections.synchronizedSet(new LinkedHashSet<>());
       if(cache == null) {
          cache = new Pass4RegisterUpliftCombinations.CachedBlockScores();
          cache.init(getProgram());

@@ -48,8 +48,8 @@ public class Pass4MemoryCoalesceCallGraph extends Pass2Base {
    private boolean coalesce(LiveRangeEquivalenceClassSet liveRangeEquivalenceClassSet, Collection<ScopeRef> threadHeads, Set<String> unknownFragments) {
       boolean modified = false;
       CallGraph callGraph = getProgram().getCallGraph();
-      // All live range equivalence classes already handled - we handle each only once
-      List<LiveRangeEquivalenceClass> handledECs = new ArrayList<>();
+      // All live range equivalence classes already handled - partitioned by (type, bytes)
+      Map<String, List<LiveRangeEquivalenceClass>> handledECsByTypeAndSize = new LinkedHashMap<>();
       List<LiveRangeEquivalenceClass> allECs = new ArrayList<>(liveRangeEquivalenceClassSet.getEquivalenceClasses());
       Map<LiveRangeEquivalenceClass, Collection<ScopeRef>> ecScopesCache = new HashMap<>();
       for(LiveRangeEquivalenceClass thisEC : allECs) {
@@ -60,33 +60,40 @@ public class Pass4MemoryCoalesceCallGraph extends Pass2Base {
          if(thisReg instanceof Registers.RegisterZpMem && getProgram().getReservedZps().contains(((Registers.RegisterZpMem) thisReg).getZp()))
             continue;
 
+         String typeKey = thisReg.getType().name() + ":" + thisReg.getBytes();
+         List<LiveRangeEquivalenceClass> handledList = handledECsByTypeAndSize.get(typeKey);
+
          // Find all calling scopes - since we want to avoid coalescing with variables in these
-         Set<ScopeRef> allCallingScopes = new LinkedHashSet<>();
-         for(ScopeRef ecScope : getEquivalenceClassScopesCached(thisEC, ecScopesCache)) {
-            allCallingScopes.addAll(callGraph.getRecursiveCallerProcs(ecScope));
-         }
-         // Go through the already handled equivalence classes - and try to coalesce with any that does not have variables from the calling scopes
+         Set<ScopeRef> allCallingScopes = null;
          boolean coalesced = false;
-         for(LiveRangeEquivalenceClass otherEC : handledECs) {
-            // Fast compatibility check: must be compatible memory registers (same type, same size, not in reserved ZPs)
-            if(!Pass4MemoryCoalesce.canCoalesceCompatible(thisEC, otherEC, getProgram()))
-               continue;
-            // Skip if there is a scope overlap
-            if(isProcedureOverlap(otherEC, allCallingScopes, ecScopesCache))
-               continue;
-            // No scope overlap - attempt to coalesce
-            Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate candidate = new Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate(thisEC, otherEC, null);
-            if(Pass4MemoryCoalesce.attemptCoalesce(candidate, threadHeads, unknownFragments, getProgram())) {
-               // Successfully coalesced with already handled EC - invalidate its cached scopes and move on!
-               ecScopesCache.remove(otherEC);
-               coalesced = true;
-               modified = true;
-               break;
+         if(handledList != null && !handledList.isEmpty()) {
+            for(LiveRangeEquivalenceClass otherEC : handledList) {
+               // Fast compatibility check: must be compatible memory registers (same type, same size, not in reserved ZPs)
+               if(!Pass4MemoryCoalesce.canCoalesceCompatible(thisEC, otherEC, getProgram()))
+                  continue;
+               if(allCallingScopes == null) {
+                  allCallingScopes = new LinkedHashSet<>();
+                  for(ScopeRef ecScope : getEquivalenceClassScopesCached(thisEC, ecScopesCache)) {
+                     allCallingScopes.addAll(callGraph.getRecursiveCallerProcs(ecScope));
+                  }
+               }
+               // Skip if there is a scope overlap
+               if(isProcedureOverlap(otherEC, allCallingScopes, ecScopesCache))
+                  continue;
+               // No scope overlap - attempt to coalesce
+               Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate candidate = new Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate(thisEC, otherEC, null);
+               if(Pass4MemoryCoalesce.attemptCoalesce(candidate, threadHeads, unknownFragments, getProgram())) {
+                  // Successfully coalesced with already handled EC - invalidate its cached scopes and move on!
+                  ecScopesCache.remove(otherEC);
+                  coalesced = true;
+                  modified = true;
+                  break;
+               }
             }
          }
          if(!coalesced) {
-            // Add the already handled
-            handledECs.add(thisEC);
+            // Add to already handled
+            handledECsByTypeAndSize.computeIfAbsent(typeKey, k -> new ArrayList<>()).add(thisEC);
          }
       }
       return modified;

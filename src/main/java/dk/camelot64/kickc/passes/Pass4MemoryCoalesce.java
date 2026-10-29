@@ -58,7 +58,15 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
                   canCoalesceSegments(ec1, ec2, program) &&
                   canCoalesceVolatile(ec1, ec2, program) &&
                   canCoalesceThreads(ec1, ec2, threadHeads, program) &&
+                  canCoalesceInterference(ec1, ec2, program) &&
                   canCoalesceClobber(ec1, ec2, unknownFragments, program);
+   }
+
+   private static boolean canCoalesceInterference(LiveRangeEquivalenceClass ec1, LiveRangeEquivalenceClass ec2, Program program) {
+      if(program.getLiveRangeInterference() != null) {
+         return !program.getLiveRangeInterference().interferes(ec1, ec2);
+      }
+      return true;
    }
 
    /**

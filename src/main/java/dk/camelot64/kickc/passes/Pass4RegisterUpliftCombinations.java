@@ -95,6 +95,64 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       chooseBestUpliftCombination(combinationIterator, maxCombinations, unknownFragments, scope, program, (CachedBlockScores) null);
    }
 
+   public static class UpliftTrialResult {
+      public final RegisterCombination combination;
+      public final int score;
+      public final boolean success;
+
+      public UpliftTrialResult(RegisterCombination combination, int score, boolean success) {
+         this.combination = combination;
+         this.score = score;
+         this.success = success;
+      }
+   }
+
+   public static UpliftTrialResult evaluateCombination(
+         RegisterCombination combination,
+         Program program,
+         Set<String> unknownFragments,
+         ScopeRef scope,
+         Set<Graph.Block> blocksToRegenerate,
+         int outsideScore) {
+      countAttempts++;
+      // Check the register allocation for whether any register is being allocated to two variables with overlapping live ranges
+      if(isAllocationOverlapping(program, combination)) {
+         return new UpliftTrialResult(combination, Integer.MAX_VALUE, false);
+      }
+
+      Map<VariableRef, Registers.Register> override = new HashMap<>();
+      for(Map.Entry<LiveRangeEquivalenceClass, Registers.Register> entry : combination.getAllocation().entrySet()) {
+         Registers.Register reg = entry.getValue();
+         for(VariableRef varRef : entry.getKey().getVariables()) {
+            override.put(varRef, reg);
+         }
+      }
+
+      Variable.setThreadAllocationOverride(override);
+      try {
+         AsmProgram asm;
+         try {
+            asm = new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing(), true)
+                  .generate(blocksToRegenerate, null, false);
+         } catch(AsmFragmentTemplateSynthesizer.UnknownFragmentException e) {
+            if(unknownFragments != null) {
+               unknownFragments.add(e.getFragmentSignature());
+            }
+            return new UpliftTrialResult(combination, Integer.MAX_VALUE, false);
+         }
+
+         boolean hasClobberProblem = new Pass4AssertNoCpuClobber(program).hasClobberProblem(false, asm);
+         if(hasClobberProblem) {
+            return new UpliftTrialResult(combination, Integer.MAX_VALUE, false);
+         }
+
+         int combinationScore = outsideScore + getAsmScore(program, asm);
+         return new UpliftTrialResult(combination, combinationScore, true);
+      } finally {
+         Variable.setThreadAllocationOverride(null);
+      }
+   }
+
    public static void chooseBestUpliftCombination(
          RegisterCombinationIterator combinationIterator, int maxCombinations,
          Set<String> unknownFragments,
@@ -102,10 +160,6 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          Program program,
          CachedBlockScores cache
    ) {
-      int bestScore = Integer.MAX_VALUE;
-      RegisterCombination bestCombination = null;
-      int countCombinations = 0;
-
       if(cache == null) {
          cache = new CachedBlockScores();
          cache.init(program);
@@ -118,40 +172,38 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       timeBlocksNs += (tBlkEnd - tBlk);
       timeOutsideNs += (tOutEnd - tBlkEnd);
 
-      while(true) {
-         long tIt = System.nanoTime();
-         boolean hasNext = combinationIterator.hasNext();
-         timeIteratorNs += (System.nanoTime() - tIt);
-         if(!hasNext || countCombinations >= maxCombinations) break;
+      List<RegisterCombination> combinationsToTest = new ArrayList<>();
+      while(combinationIterator.hasNext() && combinationsToTest.size() < maxCombinations) {
+         combinationsToTest.add(combinationIterator.next());
+      }
 
-         countCombinations++;
-         if(countCombinations % 10000 == 0) {
-            program.getLog().append("Uplift attempts [" + scope + "] " + countCombinations + "/" + combinationIterator.getNumIterations() + " (limiting to " + maxCombinations + ")");
-         }
-         tIt = System.nanoTime();
-         RegisterCombination combination = combinationIterator.next();
-         timeIteratorNs += (System.nanoTime() - tIt);
+      if(combinationsToTest.isEmpty()) return;
 
-         if(!generateCombinationAsm(combination, program, unknownFragments, scope, blocksToRegenerate, cache.cachedBlockChunks)) {
-            continue;
-         }
-         long tSc = System.nanoTime();
-         // If no clobber - Find value of the resulting allocation
-         int combinationScore = outsideScore + getAsmScore(program);
-         timeScoreNs += (System.nanoTime() - tSc);
+      int countCombinations = combinationsToTest.size();
+      int bestScore = Integer.MAX_VALUE;
+      RegisterCombination bestCombination = null;
 
+      List<UpliftTrialResult> results;
+      if(combinationsToTest.size() > 1) {
+         results = combinationsToTest.parallelStream()
+               .map(c -> evaluateCombination(c, program, unknownFragments, scope, blocksToRegenerate, outsideScore))
+               .toList();
+      } else {
+         results = Collections.singletonList(evaluateCombination(combinationsToTest.get(0), program, unknownFragments, scope, blocksToRegenerate, outsideScore));
+      }
+
+      for(UpliftTrialResult res : results) {
          if(program.getLog().isVerboseUplift()) {
-            StringBuilder msg = new StringBuilder();
-            msg.append("Uplift attempt [" + scope + "] ");
-            msg.append(combinationScore);
-            msg.append(" allocation: ").append(combination.toString());
-            program.getLog().append(msg.toString());
+            if(res.success) {
+               program.getLog().append("Uplift attempt [" + scope + "] " + res.score + " allocation: " + res.combination.toString());
+            }
          }
-         if(combinationScore < bestScore) {
-            bestScore = combinationScore;
-            bestCombination = combination;
+         if(res.success && res.score < bestScore) {
+            bestScore = res.score;
+            bestCombination = res.combination;
          }
       }
+
       if(bestCombination != null) {
          // Save the best combination in the equivalence class
          bestCombination.store(program.getLiveRangeEquivalenceClassSet());
@@ -167,21 +219,6 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       }
    }
 
-   /**
-    * Attempt generate ASM with a specific register combination.
-    * The generation may result in failure if
-    * <ul>
-    * <li>The combination has assigned the same register to variables with overlapping live ranges</li>
-    * <li>The register combination results in clobbering registers containing values that are still alive</li>
-    * <li>some ASM fragments are missing </li>
-    * <li>the ALU register is used in a non-applicable way</li>
-    * </ul>
-    *
-    * @param combination The register allocation combination
-    * @param unknownFragments Will receive any AsmFragments that can not be found during the ASM code generation
-    * @param scope The scope where the combination is tested. (Only used for logging)
-    * @return true if the generation was successful
-    */
    public static boolean generateCombinationAsm(
          RegisterCombination combination,
          Program program,
@@ -207,73 +244,11 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          ScopeRef scope,
          Set<Graph.Block> blocksToRegenerate,
          Map<Graph.Block, List<AsmChunk>> cachedBlockChunks) {
-      countAttempts++;
-      // Save original registers of the combination
-      Map<LiveRangeEquivalenceClass, Registers.Register> oldRegisters = new HashMap<>();
-      for(LiveRangeEquivalenceClass ec : combination.getAllocation().keySet()) {
-         oldRegisters.put(ec, ec.getRegister());
+      if(blocksToRegenerate == null) {
+         blocksToRegenerate = getBlocksToRegenerate(program, scope, combination.getAllocation().keySet());
       }
-      // Apply the uplift combination
-      combination.allocate(program);
-      try {
-         long tA = System.nanoTime();
-         // Check the register allocation for whether any register is being allocated to two variables with overlapping live ranges
-         if(isAllocationOverlapping(program, combination)) {
-            timeOverlapNs += (System.nanoTime() - tA);
-            if(program.getLog().isVerboseUplift()) {
-               StringBuilder msg = new StringBuilder();
-               msg.append("Uplift attempt [" + (scope == null ? "" : scope) + "] ");
-               msg.append("overlapping");
-               msg.append(" allocation: ").append(combination.toString());
-               program.getLog().append(msg.toString());
-            }
-
-            return false;
-         }
-         timeOverlapNs += (System.nanoTime() - tA);
-         // Generate ASM
-         if(blocksToRegenerate == null) {
-            blocksToRegenerate = getBlocksToRegenerate(program, scope, combination.getAllocation().keySet());
-         }
-         long tB = System.nanoTime();
-         try {
-            new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing(), true).generate(blocksToRegenerate, cachedBlockChunks, false);
-         } catch(AsmFragmentTemplateSynthesizer.UnknownFragmentException e) {
-            timeCodeGenNs += (System.nanoTime() - tB);
-            unknownFragments.add(e.getFragmentSignature());
-            if(program.getLog().isVerboseUplift()) {
-               StringBuilder msg = new StringBuilder();
-               msg.append("Uplift attempt [" + (scope == null ? "" : scope) + "] ");
-               msg.append("missing fragment " + e.getFragmentSignature());
-               msg.append(" allocation: ").append(combination.toString());
-               program.getLog().append(msg.toString());
-            }
-            return false;
-         }
-         timeCodeGenNs += (System.nanoTime() - tB);
-         long tC = System.nanoTime();
-         boolean hasClobberProblem = new Pass4AssertNoCpuClobber(program).hasClobberProblem(false);
-         timeClobberNs += (System.nanoTime() - tC);
-         if(hasClobberProblem) {
-            if(program.getLog().isVerboseUplift()) {
-               StringBuilder msg = new StringBuilder();
-               msg.append("Uplift attempt [" + (scope == null ? "" : scope) + "] ");
-               msg.append("clobber");
-               msg.append(" allocation: ").append(combination.toString());
-               program.getLog().append(msg.toString());
-            }
-            return false;
-         }
-         return true;
-      } finally {
-         for(LiveRangeEquivalenceClass ec : combination.getAllocation().keySet()) {
-            Registers.Register oldReg = oldRegisters.get(ec);
-            ec.setRegister(oldReg);
-            for(VariableRef varRef : ec.getVariables()) {
-               program.getScope().getVariable(varRef).setAllocation(oldReg);
-            }
-         }
-      }
+      UpliftTrialResult res = evaluateCombination(combination, program, unknownFragments, scope, blocksToRegenerate, 0);
+      return res.success;
    }
 
    private static Map<Integer, Double> loopMultipliersCache = null;
@@ -305,8 +280,12 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
     * @return The score of the ASM
     */
    public static int getAsmScore(Program program) {
+      return getAsmScore(program, null);
+   }
+
+   public static int getAsmScore(Program program, AsmProgram asm) {
       int score = 0;
-      AsmProgram asm = program.getAsm();
+      if(asm == null) asm = program.getAsm();
       Map<Integer, Double> multipliers = getLoopMultipliers(program);
       for(AsmChunk asmChunk : asm.getChunks()) {
          double asmChunkCycles = asmChunk.getCycles();
@@ -544,7 +523,7 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
 
    public CachedBlockScores performUplift(int maxCombinations) {
       // Test uplift combinations to find the best one.
-      Set<String> unknownFragments = new LinkedHashSet<>();
+      Set<String> unknownFragments = Collections.synchronizedSet(new LinkedHashSet<>());
       CachedBlockScores cache = new CachedBlockScores();
       cache.init(getProgram());
 

@@ -131,10 +131,9 @@ public class Pass4MemoryCoalesceAssignment extends Pass2Base {
          for(LiveRangeEquivalenceClass ec1 : allEcs) {
             Map<LiveRangeEquivalenceClass, Integer> ec1Raw = rawScores.get(ec1);
             if(ec1Raw == null) continue;
-            for(LiveRangeEquivalenceClass ec2 : allEcs) {
-               Integer score = ec1Raw.get(ec2);
-               if(score != null && score > 0) {
-                  setScore(ec1, ec2, score);
+            for(Map.Entry<LiveRangeEquivalenceClass, Integer> entry : ec1Raw.entrySet()) {
+               if(entry.getValue() != null && entry.getValue() > 0) {
+                  setScore(ec1, entry.getKey(), entry.getValue());
                }
             }
          }
@@ -163,18 +162,14 @@ public class Pass4MemoryCoalesceAssignment extends Pass2Base {
        * @return candidate pairs of live range equivalence classes for coalescing with a positive score
        */
       public List<Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate> getCoalesceCandidates() {
-         ArrayList<Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate> candidates = new ArrayList<>();
-         for(LiveRangeEquivalenceClass ec1 : scores.keySet()) {
-            Map<LiveRangeEquivalenceClass, Integer> ec1Scores = scores.get(ec1);
-            for(LiveRangeEquivalenceClass ec2 : ec1Scores.keySet()) {
-               Integer score = ec1Scores.get(ec2);
-               Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate candidate =
-                     new Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate(ec1, ec2, score);
-               if(!candidates.contains(candidate)) {
-                  candidates.add(candidate);
-               }
+         Set<Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate> candidateSet = new LinkedHashSet<>();
+         for(Map.Entry<LiveRangeEquivalenceClass, Map<LiveRangeEquivalenceClass, Integer>> ec1Entry : scores.entrySet()) {
+            LiveRangeEquivalenceClass ec1 = ec1Entry.getKey();
+            for(Map.Entry<LiveRangeEquivalenceClass, Integer> ec2Entry : ec1Entry.getValue().entrySet()) {
+               candidateSet.add(new Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate(ec1, ec2Entry.getKey(), ec2Entry.getValue()));
             }
          }
+         ArrayList<Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate> candidates = new ArrayList<>(candidateSet);
          candidates.sort((o1, o2) -> (o2.getScore() - o1.getScore()));
          return candidates;
       }

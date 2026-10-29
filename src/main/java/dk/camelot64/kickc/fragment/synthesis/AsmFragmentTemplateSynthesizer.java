@@ -91,7 +91,7 @@ public class AsmFragmentTemplateSynthesizer {
      * @param log       The log
      * @return The best templates (with different clobber profiles) for the signature
      */
-    private AsmFragmentTemplate getFragmentTemplate(String signature, CompileLog log) {
+    private synchronized AsmFragmentTemplate getFragmentTemplate(String signature, CompileLog log) {
         // Attempt to find in memory/disk cache
         AsmFragmentTemplate bestTemplate = fragmentCache.get(signature);
         if (bestTemplate == AsmFragmentTemplateCache.NO_SYNTHESIS) {

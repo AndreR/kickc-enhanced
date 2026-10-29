@@ -99,7 +99,7 @@ public class CompileLog {
       this.log = new StringBuilder();
    }
 
-   public void append(String msg) {
+   public synchronized void append(String msg) {
       log.append(msg);
       log.append("\n");
       if(sysOut) {

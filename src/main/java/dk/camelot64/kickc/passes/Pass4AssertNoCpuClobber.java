@@ -62,8 +62,13 @@ public class Pass4AssertNoCpuClobber extends Pass2Base {
     * @return true if there is a clobber problem in the program
     */
    public boolean hasClobberProblem(boolean verbose) {
+      return hasClobberProblem(verbose, null);
+   }
 
-      AsmProgram asm = getProgram().getAsm();
+   public boolean hasClobberProblem(boolean verbose, AsmProgram asm) {
+      if(asm == null) {
+         asm = getProgram().getAsm();
+      }
       boolean clobberProblem = false;
       for(AsmChunk asmChunk : asm.getChunks()) {
          if(asmChunk.getStatementIdx() != null) {

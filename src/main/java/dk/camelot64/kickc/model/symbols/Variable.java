@@ -13,6 +13,7 @@ import dk.camelot64.kickc.model.values.VariableRef;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Map;
 
 /**
  * A Variable symbol (can either be a runtime variable or a compile-time constant).
@@ -351,7 +352,22 @@ public class Variable implements Symbol {
       return type instanceof SymbolTypeStruct;
    }
 
+   private static final ThreadLocal<Map<VariableRef, Registers.Register>> THREAD_ALLOCATION_OVERRIDE = new ThreadLocal<>();
+
+   public static void setThreadAllocationOverride(Map<VariableRef, Registers.Register> override) {
+      if(override == null) {
+         THREAD_ALLOCATION_OVERRIDE.remove();
+      } else {
+         THREAD_ALLOCATION_OVERRIDE.set(override);
+      }
+   }
+
    public Registers.Register getAllocation() {
+      Map<VariableRef, Registers.Register> override = THREAD_ALLOCATION_OVERRIDE.get();
+      if(override != null) {
+         Registers.Register reg = override.get(getRef());
+         if(reg != null) return reg;
+      }
       return allocation;
    }
 

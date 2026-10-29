@@ -182,6 +182,13 @@ public class LiveRangeInterference {
       return false;
    }
 
+   public boolean interferes(LiveRangeEquivalenceClass ec1, LiveRangeEquivalenceClass ec2) {
+      Integer idx1 = ecToIndex.get(ec1);
+      Integer idx2 = ecToIndex.get(ec2);
+      if(idx1 == null || idx2 == null) return false;
+      return interference[idx1].get(idx2);
+   }
+
    public void updateRegister(LiveRangeEquivalenceClass ec, Registers.Register newReg) {
       Integer idx = ecToIndex.get(ec);
       if(idx == null) return;

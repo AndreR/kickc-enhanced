@@ -95,7 +95,7 @@ public class Pass4CodeGeneration {
         generate(blocksToRegenerate, cachedBlockChunks, false);
     }
 
-    public void generate(Set<Graph.Block> blocksToRegenerate, Map<Graph.Block, List<AsmChunk>> cachedBlockChunks, boolean updateCache) {
+    public AsmProgram generate(Set<Graph.Block> blocksToRegenerate, Map<Graph.Block, List<AsmChunk>> cachedBlockChunks, boolean updateCache) {
         AsmProgram asm = new AsmProgram(program.getTargetCpu());
         ScopeRef currentScope = ScopeRef.ROOT;
 
@@ -222,8 +222,9 @@ public class Pass4CodeGeneration {
             asm.startChunk(currentScope, null, "File Data");
             addData(asm, ScopeRef.ROOT);
             addAbsoluteAddressData(asm, ScopeRef.ROOT);
+            program.setAsm(asm);
         }
-        program.setAsm(asm);
+        return asm;
     }
 
     // Name of the current data segment
