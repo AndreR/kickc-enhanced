@@ -26,7 +26,46 @@ public class Pass1ExtractInlineStrings extends Pass1Base {
 
    @Override
    public boolean step() {
-      ProgramValueIterator.execute(getProgram(), (programValue, currentStmt, stmtIt, currentBlock) -> {
+      // 1. Process variables in program scope (including arrays and struct member inits)
+      for(Variable variable : getProgramScope().getAllVars(true)) {
+         final String targetDataSegment = variable.getDataSegment();
+         ProgramValueIterator.execute(variable, (programValue, currentStmt, stmtIt, currentBlock) -> {
+            Value value = programValue.get();
+            if(value instanceof ConstantString && programValue instanceof ProgramValue.ProgramValueConstantStructMember) {
+               // Struct member initialization
+               final ProgramValue.ProgramValueConstantStructMember constantStructMember = (ProgramValue.ProgramValueConstantStructMember) programValue;
+               final SymbolVariableRef memberRef = constantStructMember.getMemberRef();
+               final Variable memberDef = getProgramScope().getVar(memberRef);
+               if(memberDef.getType() instanceof SymbolTypePointer) {
+                  if(((SymbolTypePointer) memberDef.getType()).getArraySpec() == null) {
+                     // Member is not an array - create a string.
+                     String nameHint = memberDef.getFullName().replace("::", "_").toLowerCase();
+                     Variable strConst = Pass1ExtractInlineStrings.this.createStringConstantVar(getProgramScope(), (ConstantString) programValue.get(), nameHint, targetDataSegment);
+                     programValue.set(strConst.getRef());
+                  }
+               }
+            } else if(value instanceof ConstantString && programValue instanceof ProgramValue.ProgramValueConstantArrayElement) {
+               // Array element initialization
+               final ProgramValue.ProgramValueConstantArrayElement constantArrayElement = (ProgramValue.ProgramValueConstantArrayElement) programValue;
+               final SymbolType elementType = constantArrayElement.getArrayList().getElementType();
+               if(elementType instanceof SymbolTypePointer) {
+                  if(((SymbolTypePointer) elementType).getArraySpec() == null) {
+                     // Element is not an array - create a string.
+                     Variable strConst = Pass1ExtractInlineStrings.this.createStringConstantVar(getProgramScope(), (ConstantString) programValue.get(), null, targetDataSegment);
+                     programValue.set(strConst.getRef());
+                  }
+               }
+            }
+         });
+      }
+
+      // 2. Process procedures (constructors)
+      for(Procedure procedure : getProgramScope().getAllProcedures(true)) {
+         ProgramValueIterator.execute(procedure, (programValue, currentStmt, stmtIt, currentBlock) -> {});
+      }
+
+      // 3. Process statements in control flow graph
+      ProgramValueIterator.execute(getProgram().getGraph(), (programValue, currentStmt, stmtIt, currentBlock) -> {
          String nameHint = null;
          if(currentStmt instanceof StatementCall) {
             StatementCall call = (StatementCall) currentStmt;
@@ -54,41 +93,17 @@ public class Pass1ExtractInlineStrings extends Pass1Base {
             }
          }
          Value value = programValue.get();
-         if(value instanceof ConstantString && currentStmt!=null) {
+         if(value instanceof ConstantString && currentStmt != null) {
             // String in statement expression
             Scope blockScope = Pass1ExtractInlineStrings.this.getProgram().getScope().getScope(currentBlock.getScope());
-            Variable strConst = Pass1ExtractInlineStrings.this.createStringConstantVar(blockScope, (ConstantString) programValue.get(), nameHint);
+            Variable strConst = Pass1ExtractInlineStrings.this.createStringConstantVar(blockScope, (ConstantString) programValue.get(), nameHint, blockScope.getSegmentData());
             programValue.set(strConst.getRef());
-         } else if(value instanceof ConstantString && programValue instanceof ProgramValue.ProgramValueConstantStructMember) {
-            // Struct member initialization
-            final ProgramValue.ProgramValueConstantStructMember constantStructMember = (ProgramValue.ProgramValueConstantStructMember) programValue;
-            final SymbolVariableRef memberRef = constantStructMember.getMemberRef();
-            final Variable memberDef = getProgramScope().getVar(memberRef);
-            if(memberDef.getType() instanceof SymbolTypePointer) {
-               if(((SymbolTypePointer) memberDef.getType()).getArraySpec()==null) {
-                  // Member is not an array - create a string.
-                  nameHint = memberDef.getFullName().replace("::","_").toLowerCase();
-                  Variable strConst = Pass1ExtractInlineStrings.this.createStringConstantVar(getProgramScope(), (ConstantString) programValue.get(), nameHint);
-                  programValue.set(strConst.getRef());
-               }
-            }
-      } else if(value instanceof ConstantString && programValue instanceof ProgramValue.ProgramValueConstantArrayElement) {
-            // Array element initialization
-            final ProgramValue.ProgramValueConstantArrayElement constantArrayElement = (ProgramValue.ProgramValueConstantArrayElement) programValue;
-            final SymbolType elementType = constantArrayElement.getArrayList().getElementType();
-            if(elementType instanceof SymbolTypePointer) {
-               if(((SymbolTypePointer) elementType).getArraySpec()==null) {
-                  // Element is not an array - create a string.
-                  Variable strConst = Pass1ExtractInlineStrings.this.createStringConstantVar(getProgramScope(), (ConstantString) programValue.get(), null);
-                  programValue.set(strConst.getRef());
-               }
-            }
          }
       });
       return false;
    }
 
-   private Variable createStringConstantVar(Scope blockScope, ConstantString constantString, String nameHint) {
+   private Variable createStringConstantVar(Scope blockScope, ConstantString constantString, String nameHint, String dataSegment) {
       String name;
       if(nameHint == null) {
          name = blockScope.allocateIntermediateVariableName();
@@ -100,8 +115,9 @@ public class Pass1ExtractInlineStrings extends Pass1Base {
          }
       }
       final long stringLength = constantString.getStringLength();
-      final ConstantInteger arraySize = new ConstantInteger(stringLength, stringLength<256?SymbolType.BYTE : SymbolType.WORD);
-      Variable strConst = Variable.createConstant(name, new SymbolTypePointer(SymbolType.BYTE, new ArraySpec(arraySize), false, false), blockScope, constantString, blockScope.getSegmentData());
+      final ConstantInteger arraySize = new ConstantInteger(stringLength, stringLength < 256 ? SymbolType.BYTE : SymbolType.WORD);
+      String seg = dataSegment != null ? dataSegment : blockScope.getSegmentData();
+      Variable strConst = Variable.createConstant(name, new SymbolTypePointer(SymbolType.BYTE, new ArraySpec(arraySize), false, false), blockScope, constantString, seg);
       blockScope.add(strConst);
       if(getLog().isVerbosePass1CreateSsa()) {
          getLog().append("Creating constant string variable for inline " + strConst.toString(getProgram()) + " \"" + constantString.getValue() + "\"");

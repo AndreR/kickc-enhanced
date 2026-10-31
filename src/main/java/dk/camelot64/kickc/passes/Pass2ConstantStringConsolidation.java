@@ -3,6 +3,7 @@ package dk.camelot64.kickc.passes;
 import dk.camelot64.kickc.model.Program;
 import dk.camelot64.kickc.model.symbols.ArraySpec;
 import dk.camelot64.kickc.model.symbols.ProgramScope;
+import dk.camelot64.kickc.model.symbols.Scope;
 import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.types.SymbolType;
 import dk.camelot64.kickc.model.types.SymbolTypePointer;
@@ -28,25 +29,31 @@ public class Pass2ConstantStringConsolidation extends Pass2SsaOptimization {
     *
     * @return true optimization was performed. false if no optimization was possible.
     */
+   private record StringSegmentKey(ConstantString constantString, String dataSegment) {}
+
    @Override
    public boolean step() {
       boolean modified = false;
-      // Build a map with all constant strings
-      Map<ConstantString, List<Variable>> constantStringMap = new LinkedHashMap<>();
+      // Build a map with all constant strings partitioned by (ConstantString, DataSegment).
+      // This ensures constants in different data segments (e.g. banked ROM/RAM overlays)
+      // are never consolidated across segment boundaries into another segment!
+      Map<StringSegmentKey, List<Variable>> constantStringMap = new LinkedHashMap<>();
       for(Variable constVar : getProgramScope().getAllConstants(true)) {
          ConstantValue constVal = constVar.getInitValue();
          if(constVal instanceof ConstantString) {
             ConstantString constString = (ConstantString) constVal;
-            List<Variable> constantVars = constantStringMap.computeIfAbsent(constString, k -> new ArrayList<>());
+            String segment = constVar.getDataSegment() != null ? constVar.getDataSegment() : Scope.SEGMENT_DATA_DEFAULT;
+            StringSegmentKey key = new StringSegmentKey(constString, segment);
+            List<Variable> constantVars = constantStringMap.computeIfAbsent(key, k -> new ArrayList<>());
             constantVars.add(constVar);
          }
       }
-      // Handle all constant strings with duplicate definitions
-      for(ConstantString constantString : constantStringMap.keySet()) {
-         List<Variable> constantVars = constantStringMap.get(constantString);
+      // Handle all constant strings with duplicate definitions within the same segment
+      for(StringSegmentKey key : constantStringMap.keySet()) {
+         List<Variable> constantVars = constantStringMap.get(key);
          if(constantVars.size() > 1) {
-            // Found duplicate constant strings
-            modified |= handleDuplicateConstantString(constantVars, constantString);
+            // Found duplicate constant strings in the same segment
+            modified |= handleDuplicateConstantString(constantVars, key.constantString());
 
          }
       }
