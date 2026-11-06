@@ -44,7 +44,7 @@
 
 * **Multi-Core Architecture & Compiler Performance Optimizations:**  
   Substantially reduced compilation times for large multi-bank C64 codebases (from >20 minutes down to ~1 minute):
-  * **Parallel Dominator Tree:** 32-core parallel dominator calculation and O(1) graph predecessor indexing.
+  * **Parallel Dominator Tree:** Dynamic multi-core parallel dominator calculation across all available CPU cores/threads and O(1) graph predecessor indexing.
   * **Multi-Core Pass 4 Uplift:** Multi-threaded register uplift synthesis across available CPU cores.
   * **O(1) Fast Lookups:** Fast Statement-to-Block lookup (`StatementInfos.getBlock`), precomputed `LiveRangeInterference` overlap matrix.
   * **Optimized SSA & Alias Passes:** Variable-to-set indexing and fast phi check in `Pass2AliasElimination`, O(1) VarAssignments indexing, memoized `LoopDepthAnalysis`.
