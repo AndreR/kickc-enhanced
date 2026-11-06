@@ -181,6 +181,7 @@ public class Compiler {
       }
 
       // Find encoding
+      StringEncoding.resetCustomEncodings();
       StringEncoding encoding = program.getTargetPlatform().getEncoding();
       if(encoding==null)
          encoding = StringEncoding.SCREENCODE_MIXED;

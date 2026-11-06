@@ -282,10 +282,13 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          case CParser.PRAGMA_ENCODING -> {
             final String encodingName = pragmaParamName(pragmaParamSingle(ctx));
             try {
-               this.currentEncoding = StringEncoding.fromName(encodingName.toUpperCase(Locale.ENGLISH));
+               this.currentEncoding = StringEncoding.fromName(encodingName);
             } catch(IllegalArgumentException e) {
                throw new CompileError("Unknown string encoding " + encodingName, new StatementSource(ctx));
             }
+         }
+         case CParser.PRAGMA_CHARMAP, CParser.PRAGMA_ENCODING_DEF, CParser.PRAGMA_ENCODING_MAP -> {
+            handlePragmaCharmap(ctx);
          }
          case CParser.PRAGMA_CODE_SEG -> this.currentSegmentCode = pragmaParamName(pragmaParamSingle(ctx));
          case CParser.PRAGMA_DATA_SEG -> this.currentSegmentData = pragmaParamName(pragmaParamSingle(ctx));
@@ -394,7 +397,165 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       if(!(paramCtx instanceof KickCParser.PragmaParamStringContext))
          throw new CompileError("Expected a STRING parameter. Found '" + paramCtx.getText() + "'.", new StatementSource(paramCtx.getParent()));
       final String stringLiteral = ((KickCParser.PragmaParamStringContext) paramCtx).STRING().getText();
-      return stringLiteral.substring(1, stringLiteral.length() - 1);
+      int lastQuote = stringLiteral.lastIndexOf('"');
+      return (lastQuote > 0) ? stringLiteral.substring(1, lastQuote) : stringLiteral.substring(1, stringLiteral.length() - 1);
+   }
+
+   private void handlePragmaCharmap(KickCParser.PragmaContext ctx) {
+      List<KickCParser.PragmaParamContext> params = ctx.pragmaParam();
+      if(params.isEmpty()) {
+         throw new CompileError("#pragma " + ctx.NAME().getText() + " requires at least an encoding name and mapping parameters!", new StatementSource(ctx));
+      }
+      String encodingName = pragmaParamName(params.get(0));
+      StringEncoding baseEncoding = this.currentEncoding;
+      int mappingStartIndex = 1;
+
+      if(params.size() > 1 && params.get(1) instanceof KickCParser.PragmaParamNameContext) {
+         String baseName = pragmaParamName(params.get(1));
+         try {
+            baseEncoding = StringEncoding.fromName(baseName);
+         } catch(IllegalArgumentException e) {
+            throw new CompileError("Unknown base encoding '" + baseName + "' in #pragma " + ctx.NAME().getText(), new StatementSource(ctx));
+         }
+         mappingStartIndex = 2;
+      }
+
+      Map<Character, Byte> customMappings = new LinkedHashMap<>();
+      for(int i = mappingStartIndex; i < params.size(); i++) {
+         KickCParser.PragmaParamContext paramCtx = params.get(i);
+         if(paramCtx instanceof KickCParser.PragmaParamStringContext) {
+            String mappingStr = pragmaParamString(paramCtx);
+            parseCharmapString(mappingStr, customMappings, new StatementSource(paramCtx));
+         } else {
+            throw new CompileError("Expected mapping string in #pragma " + ctx.NAME().getText() + ", found: " + paramCtx.getText(), new StatementSource(paramCtx));
+         }
+      }
+
+      StringEncoding.createCustom(encodingName, baseEncoding, encodingName, customMappings);
+   }
+
+   private void parseCharmapString(String mappingStr, Map<Character, Byte> mappings, StatementSource source) {
+      int len = mappingStr.length();
+      int i = 0;
+      while(i < len) {
+         while(i < len && (Character.isWhitespace(mappingStr.charAt(i)) || mappingStr.charAt(i) == ',' || mappingStr.charAt(i) == ';')) {
+            i++;
+         }
+         if(i >= len) break;
+
+         char keyChar;
+         char c = mappingStr.charAt(i);
+         if(c == '\'' || c == '"') {
+            char quote = c;
+            i++;
+            if(i >= len) throw new CompileError("Unclosed quote in charmap key: " + mappingStr, source);
+            if(mappingStr.charAt(i) == '\\') {
+               i++;
+               keyChar = parseEscapeChar(mappingStr, i, source);
+               i += getEscapeLength(mappingStr, i);
+            } else {
+               keyChar = mappingStr.charAt(i);
+               i++;
+            }
+            if(i < len && mappingStr.charAt(i) == quote) {
+               i++;
+            }
+         } else if(c == '\\') {
+            i++;
+            keyChar = parseEscapeChar(mappingStr, i, source);
+            i += getEscapeLength(mappingStr, i);
+         } else {
+            keyChar = c;
+            i++;
+         }
+
+         while(i < len && Character.isWhitespace(mappingStr.charAt(i))) {
+            i++;
+         }
+
+         if(i >= len || (mappingStr.charAt(i) != '=' && mappingStr.charAt(i) != ':')) {
+            throw new CompileError("Expected '=' or ':' after character '" + keyChar + "' in charmap: " + mappingStr, source);
+         }
+         i++;
+
+         while(i < len && Character.isWhitespace(mappingStr.charAt(i))) {
+            i++;
+         }
+         if(i >= len) {
+            throw new CompileError("Missing value for character '" + keyChar + "' in charmap: " + mappingStr, source);
+         }
+
+         int valStart = i;
+         if(mappingStr.charAt(i) == '\'' || mappingStr.charAt(i) == '"') {
+            char quote = mappingStr.charAt(i);
+            i++;
+            char valChar;
+            if(mappingStr.charAt(i) == '\\') {
+               i++;
+               valChar = parseEscapeChar(mappingStr, i, source);
+               i += getEscapeLength(mappingStr, i);
+            } else {
+               valChar = mappingStr.charAt(i);
+               i++;
+            }
+            if(i < len && mappingStr.charAt(i) == quote) {
+               i++;
+            }
+            mappings.put(keyChar, (byte) valChar);
+         } else {
+            while(i < len && !Character.isWhitespace(mappingStr.charAt(i)) && mappingStr.charAt(i) != ',' && mappingStr.charAt(i) != ';') {
+               i++;
+            }
+            String valStr = mappingStr.substring(valStart, i);
+            int intVal;
+            try {
+               if(valStr.startsWith("0x") || valStr.startsWith("0X")) {
+                  intVal = Integer.parseInt(valStr.substring(2), 16);
+               } else if(valStr.startsWith("$")) {
+                  intVal = Integer.parseInt(valStr.substring(1), 16);
+               } else if(valStr.startsWith("%")) {
+                  intVal = Integer.parseInt(valStr.substring(1), 2);
+               } else if(valStr.startsWith("0b") || valStr.startsWith("0B")) {
+                  intVal = Integer.parseInt(valStr.substring(2), 2);
+               } else {
+                  intVal = Integer.parseInt(valStr);
+               }
+            } catch(NumberFormatException e) {
+               throw new CompileError("Invalid number format '" + valStr + "' in charmap: " + mappingStr, source);
+            }
+            if(intVal < -128 || intVal > 255) {
+               throw new CompileError("Value " + intVal + " out of byte range (-128..255) for character '" + keyChar + "' in charmap", source);
+            }
+            mappings.put(keyChar, (byte) intVal);
+         }
+      }
+   }
+
+   private char parseEscapeChar(String str, int index, StatementSource source) {
+      if(index >= str.length()) throw new CompileError("Incomplete escape sequence in charmap", source);
+      char esc = str.charAt(index);
+      return switch(esc) {
+         case 'n' -> '\n';
+         case 'r' -> '\r';
+         case 't' -> '\t';
+         case 'f' -> '\f';
+         case '0' -> '\0';
+         case '\'' -> '\'';
+         case '"' -> '"';
+         case '\\' -> '\\';
+         case 'x' -> {
+            if(index + 2 >= str.length()) throw new CompileError("Incomplete hex escape in charmap", source);
+            yield (char) Integer.parseInt(str.substring(index + 1, index + 3), 16);
+         }
+         default -> esc;
+      };
+   }
+
+   private int getEscapeLength(String str, int index) {
+      if(index < str.length() && str.charAt(index) == 'x') {
+         return 3;
+      }
+      return 1;
    }
 
    /**
@@ -2606,10 +2767,13 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    @Override
    public Object visitExprChar(KickCParser.ExprCharContext ctx) {
       try {
-         String charText = ctx.getText();
-         charText = charText.substring(1, charText.length() - 1);
-         char constChar = currentEncoding.escapeToAscii(charText).charAt(0);
-         return new ConstantChar(constChar, currentEncoding);
+         String fullText = ctx.getText();
+         int lastQuote = fullText.lastIndexOf('\'');
+         String charText = fullText.substring(1, lastQuote);
+         String suffix = fullText.substring(lastQuote + 1);
+         StringEncoding encoding = StringEncoding.fromSuffix(suffix, currentEncoding);
+         char constChar = encoding.escapeToAscii(charText).charAt(0);
+         return new ConstantChar(constChar, encoding);
       } catch(CompileError e) {
          // Rethrow adding source location
          throw new CompileError(e.getMessage(), new StatementSource(ctx));

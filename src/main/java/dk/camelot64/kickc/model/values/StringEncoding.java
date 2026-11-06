@@ -3,20 +3,56 @@ package dk.camelot64.kickc.model.values;
 import dk.camelot64.kickc.model.CompileError;
 import kickass.nonasm.c64.CharToPetsciiConverter;
 
-import java.util.LinkedList;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /** String encoding. */
-public enum StringEncoding {
+public class StringEncoding {
 
-   PETSCII_MIXED("petscii_mixed", "petscii_mixed", "pm", CharToPetsciiConverter.charToPetscii_mixed),
-   PETSCII_UPPER("petscii_upper", "petscii_upper", "pu", CharToPetsciiConverter.charToPetscii_mixed),
-   SCREENCODE_MIXED("screencode_mixed", "screencode_mixed", "sm", CharToPetsciiConverter.charToScreenCode_mixed),
-   SCREENCODE_UPPER("screencode_upper", "screencode_upper", "su", CharToPetsciiConverter.charToScreenCode_upper),
-   ASCII("ascii", "ascii", "as", CharToPetsciiConverter.charToAscii),
-   ATASCII("atascii", null, "at", CharToAtasciiConverter.charToAtascii),
-   SCREENCODE_ATARI("screencode_atari", null, "sa", CharToAtasciiConverter.charToScreenCodeAtari);
+   public static final StringEncoding PETSCII_MIXED = new StringEncoding("petscii_mixed", "petscii_mixed", "pm", CharToPetsciiConverter.charToPetscii_mixed);
+   public static final StringEncoding PETSCII_UPPER = new StringEncoding("petscii_upper", "petscii_upper", "pu", CharToPetsciiConverter.charToPetscii_mixed);
+   public static final StringEncoding SCREENCODE_MIXED = new StringEncoding("screencode_mixed", "screencode_mixed", "sm", CharToPetsciiConverter.charToScreenCode_mixed);
+   public static final StringEncoding SCREENCODE_UPPER = new StringEncoding("screencode_upper", "screencode_upper", "su", CharToPetsciiConverter.charToScreenCode_upper);
+   public static final StringEncoding ASCII = new StringEncoding("ascii", "ascii", "as", CharToPetsciiConverter.charToAscii);
+   public static final StringEncoding ATASCII = new StringEncoding("atascii", null, "at", CharToAtasciiConverter.charToAtascii);
+   public static final StringEncoding SCREENCODE_ATARI = new StringEncoding("screencode_atari", null, "sa", CharToAtasciiConverter.charToScreenCodeAtari);
+
+   private static final List<StringEncoding> STANDARD_ENCODINGS = Arrays.asList(
+      PETSCII_MIXED, PETSCII_UPPER, SCREENCODE_MIXED, SCREENCODE_UPPER, ASCII, ATASCII, SCREENCODE_ATARI
+   );
+
+   private static final Map<String, StringEncoding> ENCODINGS = new LinkedHashMap<>();
+   private static final Map<String, StringEncoding> SUFFIXES = new LinkedHashMap<>();
+
+   static {
+      initStandardEncodings();
+   }
+
+   public static void initStandardEncodings() {
+      ENCODINGS.clear();
+      SUFFIXES.clear();
+      for(StringEncoding enc : STANDARD_ENCODINGS) {
+         register(enc);
+      }
+      // Also register legacy short aliases:
+      SUFFIXES.put("s", SCREENCODE_MIXED);
+      SUFFIXES.put("p", PETSCII_MIXED);
+   }
+
+   public static void resetCustomEncodings() {
+      initStandardEncodings();
+   }
+
+   public static void register(StringEncoding encoding) {
+      ENCODINGS.put(encoding.name.toLowerCase(Locale.ENGLISH), encoding);
+      if(encoding.suffix != null && !encoding.suffix.isEmpty()) {
+         SUFFIXES.put(encoding.suffix.toLowerCase(Locale.ENGLISH), encoding);
+      }
+   }
+
+   public static Collection<StringEncoding> values() {
+      return Collections.unmodifiableCollection(ENCODINGS.values());
+   }
 
    /** Char value used to encode \xnn chars without a value within the chosen encoding. A char C is  encoded as CHAR_SPECIAL_VAL+C */
    public static final char CHAR_SPECIAL_VAL = 64000;
@@ -37,11 +73,39 @@ public enum StringEncoding {
    /** The mapping from character value to integer (byte) value for the encoding. */
    public final Map<Character, Byte> mapping;
 
-   StringEncoding(String name, String asmEncoding, String suffix, Map<Character, Byte> mapping) {
+   /** Characters explicitly overridden or added in this encoding (e.g. via charmap). */
+   private final Set<Character> customChars;
+
+   public StringEncoding(String name, String asmEncoding, String suffix, Map<Character, Byte> mapping) {
+      this(name, asmEncoding, suffix, mapping, null);
+   }
+
+   public StringEncoding(String name, String asmEncoding, String suffix, Map<Character, Byte> mapping, Set<Character> customChars) {
       this.name = name;
       this.asmEncoding = asmEncoding;
       this.suffix = suffix;
       this.mapping = mapping;
+      this.customChars = customChars;
+   }
+
+   /**
+    * Create and register a custom character encoding based on an existing encoding.
+    */
+   public static StringEncoding createCustom(String name, StringEncoding baseEncoding, String suffix, Map<Character, Byte> customMappings) {
+      Map<Character, Byte> combinedMapping = new HashMap<>(baseEncoding.mapping);
+      combinedMapping.putAll(customMappings);
+      Set<Character> customChars = new HashSet<>();
+      if(baseEncoding.customChars != null) {
+         customChars.addAll(baseEncoding.customChars);
+      }
+      customChars.addAll(customMappings.keySet());
+      StringEncoding custom = new StringEncoding(name, baseEncoding.asmEncoding, suffix, combinedMapping, customChars);
+      register(custom);
+      return custom;
+   }
+
+   public boolean isCustomMapped(Character aChar) {
+      return customChars != null && customChars.contains(aChar);
    }
 
    /**
@@ -51,7 +115,14 @@ public enum StringEncoding {
     * @return The encoding
     */
    public static StringEncoding fromName(String name) {
-      return valueOf(name);
+      if(name == null) {
+         throw new IllegalArgumentException("Encoding name cannot be null");
+      }
+      StringEncoding enc = ENCODINGS.get(name.toLowerCase(Locale.ENGLISH));
+      if(enc != null) {
+         return enc;
+      }
+      throw new IllegalArgumentException("Unknown string encoding " + name);
    }
 
    /**
@@ -62,27 +133,34 @@ public enum StringEncoding {
     * @return The encoding specified by the suffix. If not the current source encoding is returned.
     */
    public static StringEncoding fromSuffix(String suffix, StringEncoding defaultEncoding) {
-      if(suffix.contains("pm")) {
-         return PETSCII_MIXED;
-      } else if(suffix.contains("pu")) {
-         return PETSCII_UPPER;
-      } else if(suffix.contains("sm")) {
-         return SCREENCODE_MIXED;
-      } else if(suffix.contains("su")) {
-         return SCREENCODE_UPPER;
-      } else if(suffix.contains("as")) {
-         return ASCII;
-      } else if(suffix.contains("at")) {
-         return ATASCII;
-      } else if(suffix.contains("sa")) {
-         return SCREENCODE_ATARI;
-      } else if(suffix.contains("s")) {
-         return SCREENCODE_MIXED;
-      } else if(suffix.contains("p")) {
-         return PETSCII_MIXED;
-      } else {
+      if(suffix == null || suffix.isEmpty()) {
          return defaultEncoding;
       }
+      String encSuffix = suffix.replaceAll("[zZ]", "");
+      if(encSuffix.isEmpty()) {
+         return defaultEncoding;
+      }
+      // Check direct suffix map:
+      StringEncoding enc = SUFFIXES.get(encSuffix.toLowerCase(Locale.ENGLISH));
+      if(enc != null) {
+         return enc;
+      }
+      // Check encoding name as suffix:
+      enc = ENCODINGS.get(encSuffix.toLowerCase(Locale.ENGLISH));
+      if(enc != null) {
+         return enc;
+      }
+      // Fallback for composite legacy patterns (e.g. if suffix contains legacy codes):
+      if(encSuffix.equalsIgnoreCase("pm")) return PETSCII_MIXED;
+      if(encSuffix.equalsIgnoreCase("pu")) return PETSCII_UPPER;
+      if(encSuffix.equalsIgnoreCase("sm")) return SCREENCODE_MIXED;
+      if(encSuffix.equalsIgnoreCase("su")) return SCREENCODE_UPPER;
+      if(encSuffix.equalsIgnoreCase("as")) return ASCII;
+      if(encSuffix.equalsIgnoreCase("at")) return ATASCII;
+      if(encSuffix.equalsIgnoreCase("sa")) return SCREENCODE_ATARI;
+      if(encSuffix.equalsIgnoreCase("s")) return SCREENCODE_MIXED;
+      if(encSuffix.equalsIgnoreCase("p")) return PETSCII_MIXED;
+      throw new CompileError("Unknown string encoding suffix '" + encSuffix + "'");
    }
 
    /**
@@ -240,8 +318,8 @@ public enum StringEncoding {
          case '\\':
             return "\\\\";
       }
-      if(aChar > 127) {
-         // Encode all large chars - including SPECIAL's
+      if(aChar > 127 || isCustomMapped(aChar)) {
+         // Encode all large chars - including SPECIAL's and custom-mapped chars
          final byte encoded = encodedFromChar(aChar);
          return String.format("\\$%02x", encoded);
       } else
@@ -258,6 +336,24 @@ public enum StringEncoding {
       StringBuilder escaped = new StringBuilder();
       string.chars().forEach(value -> escaped.append(asciiToEscapedEncoded((char) value, false)));
       return escaped.toString();
+   }
+
+   @Override
+   public boolean equals(Object o) {
+      if(this == o) return true;
+      if(o == null || getClass() != o.getClass()) return false;
+      StringEncoding that = (StringEncoding) o;
+      return Objects.equals(name, that.name);
+   }
+
+   @Override
+   public int hashCode() {
+      return Objects.hash(name);
+   }
+
+   @Override
+   public String toString() {
+      return name;
    }
 
 }

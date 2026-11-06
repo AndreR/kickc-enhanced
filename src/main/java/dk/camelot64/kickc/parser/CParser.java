@@ -67,6 +67,12 @@ public class CParser {
      */
     public static final String PRAGMA_ENCODING = "encoding";
     /**
+     * #pragma charmap(name, [base_encoding,] "mapping_str"...) defines a custom character encoding.
+     */
+    public static final String PRAGMA_CHARMAP = "charmap";
+    public static final String PRAGMA_ENCODING_DEF = "encoding_def";
+    public static final String PRAGMA_ENCODING_MAP = "encoding_map";
+    /**
      * #pragma code_seg(...) changes the current code segment. Segments are defined in the linker file.
      */
     public static final String PRAGMA_CODE_SEG = "code_seg";

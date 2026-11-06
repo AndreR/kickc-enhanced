@@ -142,8 +142,8 @@ fragment NAME_START : [a-zA-Z_];
 fragment NAME_CHAR : [a-zA-Z0-9_];
 
 // Strings and chars
-STRING : '"' ('\\"' | ~'"')* '"' [z]?([aps][tsmua]?)?[z]? ;
-CHAR : '\''  ('\\'(['"rfn\\0-9][0-9]?[0-9]?|'x'[0-9a-f][0-9a-f]) | ~'\'' ) '\'';
+STRING : '"' ('\\"' | ~'"')* '"' [a-zA-Z0-9_]* ;
+CHAR : '\''  ('\\'(['"rfn\\0-9][0-9]?[0-9]?|'x'[0-9a-f][0-9a-f]) | ~'\'' ) '\'' [a-zA-Z0-9_]* ;
 
 // White space on hidden channel 1
 WS : [ \t\r\n\u00a0]+ -> channel(1);
