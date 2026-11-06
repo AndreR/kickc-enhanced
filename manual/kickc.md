@@ -1134,9 +1134,9 @@ Support for the 65CE02 and 45GS02 CPUs is achieved by using a modified version o
 
 ### 2.10.5 Character Encoding
 
-You can specify which character encoding the compiler uses to find the numerical value of a character or string by using #pragma encoding(name).
+You can specify which character encoding the compiler uses to find the numerical value of a character or string by using `#pragma encoding(name)`.
 
-The following character encodings are supported:
+The following built-in character encodings are supported:
 - petscii_mixed: Commodore PET Standard Code of Information Interchange mixed case.
 - petscii_upper: Commodore PET Standard Code of Information Interchange uppercase.
 - screencode_mixed: Commodore screen codes mixed case (Default for VIC20, C64, Plus4, MEGA65).
@@ -1144,6 +1144,38 @@ The following character encodings are supported:
 - atascii: ATARI Standard Code for Information Interchange (Default for Atari 2600).
 - screencode_atari: ATARI screen codes (Default for Atari XL).
 - ascii: American Standard Code for Information Interchange.
+
+#### Custom Encodings via #pragma charmap()
+
+You can define custom character encodings by overriding specific characters from an existing base encoding using `#pragma charmap(custom_name, base_encoding, "mapping_rules")`.
+
+Mapping rules map source characters to target byte values (specified in decimal, hexadecimal `0x..`, or as a character literal `'..'`). Rules can be separated by commas, semicolons, spaces, or newlines.
+
+```c
+// Define a custom encoding 'kontor' based on 'ascii' with German umlauts:
+#pragma charmap(kontor, ascii, "ä=27, ö=28, ü=29, Ä=91, Ö=92, Ü=93, ß=94")
+
+// Activate custom encoding globally for subsequent strings and characters:
+#pragma encoding(kontor)
+const char msg[] = "Lübeck und Köln";
+```
+
+#### String & Character Literal Encoding Suffixes
+
+In addition to `#pragma encoding()`, you can apply an encoding to individual string or character literals by suffixing the literal with the encoding name:
+
+```c
+// Explicit encoding suffixes per literal:
+const char s_petscii[] = "Hello"petscii_mixed;
+const char s_ascii[]   = "Hello"ascii;
+const char s_custom[]  = "Häfen"kontor;
+
+// Combine with 'z' suffix for non-zero terminated strings:
+const char s_unterminated[] = "World"kontor_z;
+
+// Character literal suffix:
+char c = 'ä'kontor;
+```
 
 ### 2.10.6 Interrupt Type
 
