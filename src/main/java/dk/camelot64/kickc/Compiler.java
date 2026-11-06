@@ -822,6 +822,7 @@ public class Compiler {
       List<Pass5AsmOptimization> pass5Optimizations = new ArrayList<>();
       pass5Optimizations.add(new Pass5NextJumpElimination(program));
       pass5Optimizations.add(new Pass5UnnecesaryLoadElimination(program));
+      pass5Optimizations.add(new Pass5IllegalOpcodeOptimization(program));
       pass5Optimizations.add(new Pass5RedundantLabelElimination(program));
       pass5Optimizations.add(new Pass5UnusedLabelElimination(program));
       pass5Optimizations.add(new Pass5DoubleJumpElimination(program));
