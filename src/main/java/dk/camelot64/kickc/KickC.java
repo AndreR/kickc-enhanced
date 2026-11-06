@@ -27,7 +27,7 @@ import java.util.stream.Collectors;
 @CommandLine.Command(
       description = "Compiles C source files. " +
             "KickC is a C-compiler creating optimized and readable 6502 assembler code.%n%n" +
-            "See https://gitlab.com/camelot/kickc for detailed information about KickC.",
+            "See https://github.com/AndreR/kickc-enhanced for detailed information about KickC Enhanced.",
       name = "kickc",
       mixinStandardHelpOptions = true,
       headerHeading = "Usage:%n%n",
@@ -35,7 +35,7 @@ import java.util.stream.Collectors;
       descriptionHeading = "%nDescription:%n%n",
       parameterListHeading = "%nParameters:%n",
       optionListHeading = "%nOptions:%n",
-      version = "KickC 0.8.6 BETA"
+      version = "KickC Enhanced 0.9.0"
 )
 public class KickC implements Callable<Integer> {
 
@@ -206,7 +206,8 @@ public class KickC implements Callable<Integer> {
    @Override
    public Integer call() throws Exception {
       System.out.println("//--------------------------------------------------");
-      System.out.println("//   " + getVersion() + " by Jesper Gravgaard   ");
+      System.out.println("//   " + getVersion() + " by Andre Reichelt");
+      System.out.println("//   Original by Jesper Gravgaard");
       System.out.println("//--------------------------------------------------");
 
       Compiler compiler = new Compiler();
