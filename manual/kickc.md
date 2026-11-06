@@ -1152,12 +1152,12 @@ You can define custom character encodings by overriding specific characters from
 Mapping rules map source characters to target byte values (specified in decimal, hexadecimal `0x..`, or as a character literal `'..'`). Rules can be separated by commas, semicolons, spaces, or newlines.
 
 ```c
-// Define a custom encoding 'kontor' based on 'ascii' with German umlauts:
-#pragma charmap(kontor, ascii, "ä=27, ö=28, ü=29, Ä=91, Ö=92, Ü=93, ß=94")
+// Define a custom encoding 'german' based on 'ascii' with German umlauts:
+#pragma charmap(german, ascii, "ä=27, ö=28, ü=29, Ä=91, Ö=92, Ü=93, ß=94")
 
 // Activate custom encoding globally for subsequent strings and characters:
-#pragma encoding(kontor)
-const char msg[] = "Lübeck und Köln";
+#pragma encoding(german)
+const char msg[] = "Schöne Grüße";
 ```
 
 #### String & Character Literal Encoding Suffixes
@@ -1168,13 +1168,13 @@ In addition to `#pragma encoding()`, you can apply an encoding to individual str
 // Explicit encoding suffixes per literal:
 const char s_petscii[] = "Hello"petscii_mixed;
 const char s_ascii[]   = "Hello"ascii;
-const char s_custom[]  = "Häfen"kontor;
+const char s_custom[]  = "Grüße"german;
 
 // Combine with 'z' suffix for non-zero terminated strings:
-const char s_unterminated[] = "World"kontor_z;
+const char s_unterminated[] = "World"german_z;
 
 // Character literal suffix:
-char c = 'ä'kontor;
+char c = 'ä'german;
 ```
 
 ### 2.10.6 Interrupt Type

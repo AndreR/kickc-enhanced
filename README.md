@@ -32,8 +32,8 @@
   Overcomes KickC's historical single-statement `AsmChunk` boundary limitation by using a sequential `LineRef` pipeline across chunk borders in Pass 5.
 
 * **Custom Character Encodings & Literal Suffixes:**  
-  * **`#pragma charmap(custom_name, base_encoding, "mapping_rules")`:** Allows defining project-specific character encodings on the fly (e.g. German umlauts, medieval runes, custom font layouts) without compiler source modifications.
-  * **Encoding Literal Suffixes:** Direct literal suffixes for individual strings and characters (`"Hello"ascii`, `"Burg"kontor`, `'ä'kontor`, `"Lübeck"kontor_z` for non-zero terminated strings).
+  * **`#pragma charmap(custom_name, base_encoding, "mapping_rules")`:** Allows defining project-specific character encodings on the fly (e.g. language-specific umlauts, special symbols, custom font layouts) without compiler source modifications.
+  * **Encoding Literal Suffixes:** Direct literal suffixes for individual strings and characters (`"Hello"ascii`, `"Grüße"german`, `'ä'german`, `"Buffer"german_z` for non-zero terminated strings).
 
 * **Cross-Segment Data Integrity & String Pooling:**  
   * Preserves declared data segments (`#pragma data_seg(...)`) for inline string constants rather than forcing them into the default data segment.
