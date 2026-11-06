@@ -210,11 +210,14 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
             }
 
             // -------------------------------------------------------------
-            // Pattern 0d: Redundant roundtrip transfers TAX; TXA or TAY; TYA
-            // TXA immediately after TAX leaves A and flags unchanged.
+            // Pattern 0d: Redundant roundtrip transfers TAX; TXA, TXA; TAX, TAY; TYA, TYA; TAY
+            // Second transfer immediately after first leaves both registers and Z/N flags unchanged.
             // -------------------------------------------------------------
-            if((mnem1.equals("tax") && mnem2.equals("txa") && mode1.equals(CpuAddressingMode.NON) && mode2.equals(CpuAddressingMode.NON)) ||
-               (mnem1.equals("tay") && mnem2.equals("tya") && mode1.equals(CpuAddressingMode.NON) && mode2.equals(CpuAddressingMode.NON))) {
+            if(((mnem1.equals("tax") && mnem2.equals("txa")) ||
+                (mnem1.equals("txa") && mnem2.equals("tax")) ||
+                (mnem1.equals("tay") && mnem2.equals("tya")) ||
+                (mnem1.equals("tya") && mnem2.equals("tay"))) &&
+               mode1.equals(CpuAddressingMode.NON) && mode2.equals(CpuAddressingMode.NON)) {
                getLog().append("Eliminating redundant transfer " + inst2.getAsm() + " after " + inst1.getAsm());
                ref2.chunk.getLines().remove(inst2);
                passModified = true;

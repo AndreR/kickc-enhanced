@@ -61,6 +61,9 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
          iter++;
          long tStepStart = System.currentTimeMillis();
          stepOptimized = step();
+         if(stepOptimized) {
+            new Pass5DoubleJumpElimination(getProgram()).optimize();
+         }
          long tStepElapsed = System.currentTimeMillis() - tStepStart;
          System.out.println(String.format("      [PASS5 LONG BRANCH iter %d] took %6.2f s (fixed=%b)", iter, tStepElapsed / 1000.0, stepOptimized));
          if(stepOptimized) anyOptimized = true;
@@ -172,6 +175,11 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                anyFixedThisPass = true;
                totalFixed++;
             }
+         }
+         // Collapse any newly created 'jmp __breturn' directly into 'rts' (1 byte instead of 3 bytes)
+         // and re-verify branch distances in the next in-memory pass if anything changed
+         if(new Pass5DoubleJumpElimination(getProgram()).optimize()) {
+            anyFixedThisPass = true;
          }
       }
 

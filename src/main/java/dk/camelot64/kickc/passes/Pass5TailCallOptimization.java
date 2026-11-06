@@ -75,15 +75,17 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
             // Find next executable instruction
             LineRef ref2 = null;
             boolean blocked = false;
+            boolean hasInterveningLabel = false;
             for(int j = i + 1; j < allLines.size(); j++) {
                LineRef candidate = allLines.get(j);
                if(candidate.line instanceof AsmComment || candidate.line instanceof AsmConstant || candidate.line instanceof AsmLabelDecl) {
                   continue;
                }
                if(candidate.line instanceof AsmLabel) {
-                  // A label target exists between JSR and RTS: another branch might jump to RTS. Do not eliminate RTS!
-                  blocked = true;
-                  break;
+                  // A label target exists between JSR and RTS: another branch might jump to RTS.
+                  // We can still convert JSR -> JMP, but must keep the RTS for the label!
+                  hasInterveningLabel = true;
+                  continue;
                }
                if(candidate.line instanceof AsmScopeBegin || candidate.line instanceof AsmScopeEnd) {
                   blocked = true;
@@ -106,7 +108,9 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
             if(inst2.getCpuOpcode().getMnemonic().equals("rts")) {
                getLog().append("Tail Call Optimization: Replacing " + inst1.getAsm() + "; rts with jmp " + inst1.getOperand1());
                inst1.setCpuOpcode(jmpOpcode);
-               ref2.chunk.getLines().remove(inst2);
+               if(!hasInterveningLabel) {
+                  ref2.chunk.getLines().remove(inst2);
+               }
                passModified = true;
                overallModified = true;
                break; // Restart scan after list modification
