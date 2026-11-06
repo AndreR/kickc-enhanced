@@ -93,6 +93,28 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
             }
 
             // -------------------------------------------------------------
+            // Pattern 1b: LDX <mem>; TXA -> LAX <mem>
+            // Stable addressing modes: ZP, ABS, ZPY, ABY, IZX, IZY
+            // -------------------------------------------------------------
+            if(mnem1.equals("ldx") && mnem2.equals("txa") && mode2.equals(CpuAddressingMode.NON)) {
+               if(mode1.equals(CpuAddressingMode.ZP) ||
+                  mode1.equals(CpuAddressingMode.ABS) ||
+                  mode1.equals(CpuAddressingMode.ZPY) ||
+                  mode1.equals(CpuAddressingMode.ABY) ||
+                  mode1.equals(CpuAddressingMode.IZX) ||
+                  mode1.equals(CpuAddressingMode.IZY)) {
+                  CpuOpcode laxOpcode = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lax", mode1, false);
+                  if(laxOpcode != null) {
+                     getLog().append("Replacing " + inst1.getAsm() + "; " + inst2.getAsm() + " with LAX");
+                     inst1.setCpuOpcode(laxOpcode);
+                     lines.remove(nextIdx);
+                     modified = true;
+                     continue;
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
             // Pattern 2: AND #{imm}; LSR -> ALR #{imm}
             // ALR executes A = (A & #{imm}) >> 1 and sets Carry to bit 0.
             // -------------------------------------------------------------
