@@ -192,6 +192,37 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
             }
 
             // -------------------------------------------------------------
+            // Pattern 0c: Redundant EOR #0
+            // EOR #0 leaves A unchanged. If previous instruction already set
+            // Z and N flags (e.g. LDA, PLA, arithmetic, logic), EOR #0 is a pure no-op.
+            // -------------------------------------------------------------
+            if(mnem2.equals("eor") && mode2.equals(CpuAddressingMode.IMM) && isZeroOperand(inst2.getOperand1())) {
+               if(mnem1.equals("lda") || mnem1.equals("pla") || mnem1.equals("txa") || mnem1.equals("tya") ||
+                  mnem1.equals("and") || mnem1.equals("ora") || mnem1.equals("adc") || mnem1.equals("sbc") ||
+                  mnem1.equals("asl") || mnem1.equals("lsr") || mnem1.equals("rol") || mnem1.equals("ror") ||
+                  mnem1.equals("lax") || mnem1.equals("alr")) {
+                  getLog().append("Eliminating redundant " + inst2.getAsm() + " after " + inst1.getAsm());
+                  ref2.chunk.getLines().remove(inst2);
+                  passModified = true;
+                  overallModified = true;
+                  break;
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 0d: Redundant roundtrip transfers TAX; TXA or TAY; TYA
+            // TXA immediately after TAX leaves A and flags unchanged.
+            // -------------------------------------------------------------
+            if((mnem1.equals("tax") && mnem2.equals("txa") && mode1.equals(CpuAddressingMode.NON) && mode2.equals(CpuAddressingMode.NON)) ||
+               (mnem1.equals("tay") && mnem2.equals("tya") && mode1.equals(CpuAddressingMode.NON) && mode2.equals(CpuAddressingMode.NON))) {
+               getLog().append("Eliminating redundant transfer " + inst2.getAsm() + " after " + inst1.getAsm());
+               ref2.chunk.getLines().remove(inst2);
+               passModified = true;
+               overallModified = true;
+               break;
+            }
+
+            // -------------------------------------------------------------
             // Pattern 1: LDA <mem>; TAX -> LAX <mem>
             // Stable addressing modes: ZP, ABS, IZY, ABY, ZPY, IZX
             // (IMM is strictly excluded because LAX #imm is analog/unstable!)
