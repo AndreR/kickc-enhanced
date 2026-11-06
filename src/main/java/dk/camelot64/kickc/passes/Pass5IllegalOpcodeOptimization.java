@@ -158,9 +158,11 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
             // -------------------------------------------------------------
             // Pattern 0b: Redundant LDA <mem> after DEC <mem> / INC <mem>
             // DEC/INC already sets Z and N flags. If followed by a Z/N branch (BEQ/BNE/BMI/BPL)
-            // and the fallthrough instruction overwrites A, LDA is completely dead.
+            // in the same conditional branch chunk (so A is not an SSA assignment) and the
+            // fallthrough instruction overwrites A, LDA is completely dead.
             // -------------------------------------------------------------
             if(inst3 != null && !inst3.isNoOptimize() && branchIdx != -1 &&
+               ref2.chunk == ref3.chunk && ref1.chunk != ref2.chunk &&
                (mnem1.equals("dec") || mnem1.equals("inc")) && mnem2.equals("lda") &&
                inst1.getOperand1() != null && inst1.getOperand1().equals(inst2.getOperand1()) && mode1.equals(mode2)) {
                String mnem3 = inst3.getCpuOpcode() != null ? inst3.getCpuOpcode().getMnemonic() : "";

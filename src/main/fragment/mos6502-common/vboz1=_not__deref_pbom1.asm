@@ -1,8 +1,8 @@
 ldy {m1}
-sty 
+sty $fe
 ldy {m1}+1
-sty 
+sty $ff
 ldy #0
-lda (),y
+lda ($fe),y
 eor #1
 sta {z1}
