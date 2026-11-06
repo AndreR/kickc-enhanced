@@ -133,6 +133,21 @@ public class Pass2ConditionalAndOrRewriting extends Pass2SsaOptimization {
       replacements.put(block.getLabel(), newBlockLabel.getRef());
       replaceLabels(destBlock.getPhiBlock(), replacements);
 
+      // Update the default destination PHI block to copy the phi-value for the new block
+      Graph.Block defaultDestBlock = graph.getBlock(newBlock.getDefaultSuccessor());
+      if(defaultDestBlock.hasPhiBlock()) {
+         StatementPhiBlock defaultDestPhiBlock = defaultDestBlock.getPhiBlock();
+         for(StatementPhiBlock.PhiVariable phiVariable : defaultDestPhiBlock.getPhiVariables()) {
+            for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
+               if(phiRValue.getPredecessor().equals(block.getLabel())) {
+                  // Found phi-variable with current block as predecessor - copy the phi-value for the new block
+                  phiVariable.setrValue(newBlockLabel.getRef(), phiRValue.getrValue());
+                  break;
+               }
+            }
+         }
+      }
+
    }
 
    /**
