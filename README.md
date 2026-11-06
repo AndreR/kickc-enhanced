@@ -20,11 +20,11 @@
   * **`DCP <mem>` & `ISC <mem>`:** Folds decrement/increment memory combined with compare/subtract into single R-M-W opcodes.
   * **Zero/Sign-Flag Predication & Redundant Compare Elimination:** Automatically removes redundant `CMP #0`, `CPX #0`, `CPY #0` before conditional branches when preceding instructions already define Z and N flags.
   * **Redundant Load Elimination:** Removes dead `LDA <mem>` after `DEC/INC <mem>` before branches when fallthrough paths overwrite the accumulator.
-  * **Micro-Peepholes:** Eliminates redundant `EOR #0` (e.g. from boolean casts) and redundant register roundtrips (`TAX; TXA`, `TAY; TYA`).
+  * **Micro-Peepholes:** Eliminates redundant `EOR #0` (e.g. from boolean casts) and redundant register roundtrips (`TAX; TXA`, `TXA; TAX`, `TAY; TYA`, `TYA; TAY`).
   * **Strict Safety:** Excludes unstable/analog opcodes (`SHA`, `SHX`, `SHY`, `TAS`, `ANE`, `LAX #imm`) to guarantee 100% hardware and VIC-II DMA stability.
 
 * **Tail Call Optimization (`Pass5TailCallOptimization`):**  
-  Automatically converts function tail calls (`JSR <target>` followed immediately by `RTS`) into `JMP <target>`, eliminating the unreachable `RTS`. Saves 1 byte and 6 CPU cycles per function exit and prevents unnecessary stack growth.
+  Automatically converts function tail calls (`JSR <target>` followed immediately by `RTS` or labeled `__breturn: RTS`) into `JMP <target>`, and folds long-branch return jumps (`jmp __breturn`) directly into `rts` during `Pass5FixLongBranches`. Saves 1 byte and 6 CPU cycles per function exit and prevents unnecessary stack growth.
 
 * **Sequential Cross-Chunk Peephole Engine:**  
   Overcomes KickC's historical single-statement `AsmChunk` boundary limitation by using a sequential `LineRef` pipeline across chunk borders in Pass 5.
