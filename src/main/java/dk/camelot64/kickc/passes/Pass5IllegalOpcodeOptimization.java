@@ -91,6 +91,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
             }
 
             // Find next executable instruction after inst2 (for branch lookahead)
+            int branchIdx = -1;
             LineRef ref3 = null;
             for(int k = nextIdx + 1; k < allLines.size(); k++) {
                LineRef candidate = allLines.get(k);
@@ -98,6 +99,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                   continue;
                }
                if(candidate.line instanceof AsmInstruction) {
+                  branchIdx = k;
                   ref3 = candidate;
                   break;
                }
@@ -149,6 +151,42 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                      passModified = true;
                      overallModified = true;
                      break;
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 0b: Redundant LDA <mem> after DEC <mem> / INC <mem>
+            // DEC/INC already sets Z and N flags. If followed by a Z/N branch (BEQ/BNE/BMI/BPL)
+            // and the fallthrough instruction overwrites A, LDA is completely dead.
+            // -------------------------------------------------------------
+            if(inst3 != null && !inst3.isNoOptimize() && branchIdx != -1 &&
+               (mnem1.equals("dec") || mnem1.equals("inc")) && mnem2.equals("lda") &&
+               inst1.getOperand1() != null && inst1.getOperand1().equals(inst2.getOperand1()) && mode1.equals(mode2)) {
+               String mnem3 = inst3.getCpuOpcode() != null ? inst3.getCpuOpcode().getMnemonic() : "";
+               boolean isZOrNBranch = mnem3.equals("beq") || mnem3.equals("bne") || mnem3.equals("bmi") || mnem3.equals("bpl");
+               if(isZOrNBranch) {
+                  // Check if fallthrough instruction (after branch inst3) overwrites A
+                  LineRef ref4 = null;
+                  for(int m = branchIdx + 1; m < allLines.size(); m++) {
+                     LineRef cand = allLines.get(m);
+                     if(cand.line instanceof AsmComment || cand.line instanceof AsmConstant || cand.line instanceof AsmLabelDecl) continue;
+                     if(cand.line instanceof AsmInstruction) {
+                        ref4 = cand;
+                        break;
+                     }
+                     break;
+                  }
+                  if(ref4 != null) {
+                     AsmInstruction inst4 = (AsmInstruction) ref4.line;
+                     String mnem4 = inst4.getCpuOpcode() != null ? inst4.getCpuOpcode().getMnemonic() : "";
+                     if(mnem4.equals("lda") || mnem4.equals("pla") || mnem4.equals("txa") || mnem4.equals("tya")) {
+                        getLog().append("Eliminating redundant load " + inst2.getAsm() + " after " + inst1.getAsm() + " before " + inst3.getAsm());
+                        ref2.chunk.getLines().remove(inst2);
+                        passModified = true;
+                        overallModified = true;
+                        break;
+                     }
                   }
                }
             }
