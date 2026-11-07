@@ -44,6 +44,12 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
       return t.equals("$ff") || t.equals("255") || t.equals("0xff");
    }
 
+   private static boolean isZeroOperand(String op) {
+      if(op == null) return false;
+      String t = op.trim();
+      return t.equals("0") || t.equals("#0") || t.equals("$0") || t.equals("#$0") || t.equals("#$00") || t.equals("0x0");
+   }
+
    private static boolean isZpFd(String op) {
       if(op == null) return false;
       String t = op.trim().toLowerCase();
@@ -75,6 +81,8 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
          String currentFe = null;
          String currentFf = null;
          String currentA = null;
+         String currentY = null;
+         boolean derefValid = false;
 
          for(int i = 0; i < allLines.size(); i++) {
             LineRef ref = allLines.get(i);
@@ -85,6 +93,8 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                currentFe = null;
                currentFf = null;
                currentA = null;
+               currentY = null;
+               derefValid = false;
                continue;
             }
 
@@ -111,19 +121,67 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
             String mnem = op.getMnemonic();
             CpuAddressingMode mode = op.getAddressingMode();
 
-            // Branch / Jump / Call boundaries reset tracking
-            if(op.isJump() || mnem.equals("jsr") || mnem.equals("rts") || mnem.equals("rti") || mnem.startsWith("b")) {
+            // Control flow breaks (unconditional jump, subroutine call, returns) reset tracking
+            if(mnem.equals("jmp") || mnem.equals("jsr") || mnem.equals("rts") || mnem.equals("rti")) {
                currentFe = null;
                currentFf = null;
                currentA = null;
+               currentY = null;
+               derefValid = false;
                continue;
             }
 
-            // Track A register value for high-byte after 16-bit additions
+            // Track A register value for high-byte after 16-bit additions and invalidate deref on A modification
             if(mnem.equals("lda") || mnem.equals("adc") || mnem.equals("sbc")) {
                currentA = inst.getOperand1();
-            } else if(mnem.equals("pla") || mnem.equals("txa") || mnem.equals("tya")) {
+               if(!mode.equals(CpuAddressingMode.IZY)) {
+                  derefValid = false;
+               }
+            } else if(mnem.equals("pla") || mnem.equals("txa") || mnem.equals("tya") ||
+                      mnem.equals("and") || mnem.equals("ora") || mnem.equals("eor") ||
+                      mnem.equals("asl") || mnem.equals("lsr") || mnem.equals("rol") || mnem.equals("ror") ||
+                      mnem.equals("alr") || mnem.equals("anc") || mnem.equals("arr") || mnem.equals("axs") ||
+                      mnem.equals("dcp") || mnem.equals("isc") || mnem.equals("rla") || mnem.equals("rra") ||
+                      mnem.equals("slo") || mnem.equals("sre")) {
                currentA = null;
+               derefValid = false;
+            }
+
+            // Track Y register changes
+            if(mnem.equals("ldy") && mode.equals(CpuAddressingMode.IMM) && !inst.isNoOptimize()) {
+               if(currentY != null && currentY.equals(inst.getOperand1())) {
+                  int nextIdx = findNextInstruction(allLines, i + 1);
+                  if(nextIdx != -1) {
+                     AsmInstruction nextInst = (AsmInstruction) allLines.get(nextIdx).line;
+                     if(nextInst.getCpuOpcode() != null && nextInst.getCpuOpcode().getMnemonic().equals("lda") &&
+                        nextInst.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.IZY)) {
+                        getLog().append("Eliminating redundant LDY " + inst.getOperand1() + " (Y already contains " + currentY + ")");
+                        ref.chunk.getLines().remove(inst);
+                        passModified = true;
+                        overallModified = true;
+                        break;
+                     }
+                  }
+               }
+               currentY = inst.getOperand1();
+            } else if(mnem.equals("iny") || mnem.equals("dey") || mnem.equals("tay") || mnem.equals("ply") ||
+                      (mnem.equals("ldy") && !mode.equals(CpuAddressingMode.IMM))) {
+               currentY = null;
+               derefValid = false;
+            }
+
+            // Track / Eliminate redundant indirect LDA ($fe),y
+            if(mnem.equals("lda") && mode.equals(CpuAddressingMode.IZY) && isZpFe(inst.getOperand1()) && !inst.isNoOptimize()) {
+               if(derefValid) {
+                  getLog().append("Eliminating redundant LDA ($fe),y (A already contains dereferenced value)");
+                  ref.chunk.getLines().remove(inst);
+                  passModified = true;
+                  overallModified = true;
+                  break;
+               }
+               if(currentFe != null && currentFf != null && isZeroOperand(currentY)) {
+                  derefValid = true;
+               }
             }
 
             // =========================================================
@@ -275,8 +333,10 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                // CRITICAL: Indirect ZP modes (IZY: ($zp),y, IZX: ($zp,x)) write THROUGH the pointer,
                // NOT to the pointer itself! The pointer in $fe/$ff remains completely intact!
                if(CpuAddressingMode.IZY.equals(mode) || CpuAddressingMode.IZX.equals(mode)) {
+                  derefValid = false;
                   continue;
                }
+               derefValid = false;
 
                String dest = inst.getOperand1();
                if(dest != null) {

@@ -4,7 +4,6 @@ import dk.camelot64.kickc.model.*;
 import dk.camelot64.kickc.model.operators.Operators;
 import dk.camelot64.kickc.model.statements.Statement;
 import dk.camelot64.kickc.model.statements.StatementAssignment;
-import dk.camelot64.kickc.model.statements.StatementSource;
 import dk.camelot64.kickc.model.symbols.Scope;
 import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.types.SymbolType;
@@ -90,36 +89,6 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
          assignment.setrValue1(varValue);
          optimized = true;
       } else if(Operators.MULTIPLY.equals(assignment.getOperator())) {
-         // Check for Booth multiplication: constValue == 2^N - 1 (e.g. 7, 15, 31, 63, 127, 255)
-         // Rewrites x * (2^N - 1) to (x << N) - x
-         long nextPow2 = (long) Math.round(Math.ceil(Math.log(constValue) / Math.log(2)));
-         if(nextPow2 >= 3 && ((1L << nextPow2) - 1) == constValue) {
-            getLog().append("Rewriting multiplication to use shift and subtract: " + assignment.toString(getProgram(), false));
-            stmtIt.previous();
-            SymbolType lValueType = SymbolTypeInference.inferType(getProgramScope(), assignment.getlValue());
-            SymbolType varType = SymbolTypeInference.inferType(getProgramScope(), varValue);
-            SymbolType resultType = varType;
-            if(lValueType.getSizeBytes() > varType.getSizeBytes() || constValue > 255 || (1L << nextPow2) > 255) {
-               resultType = lValueType.getSizeBytes() > varType.getSizeBytes() ? lValueType : SymbolType.WORD;
-            }
-            RValue building = varValue;
-            if(resultType.getSizeBytes() > varType.getSizeBytes()) {
-               Variable varPromote = VariableBuilder.createIntermediate(scope, resultType, getProgram());
-               stmtIt.add(new StatementAssignment((LValue) varPromote.getRef(), varValue, true, assignment.getSource(), Comment.NO_COMMENTS));
-               varValue = varPromote.getRef();
-               building = varPromote.getRef();
-            }
-            Variable varShift = VariableBuilder.createIntermediate(scope, resultType, getProgram());
-            stmtIt.add(new StatementAssignment((LValue) varShift.getRef(), building, Operators.SHIFT_LEFT, new ConstantInteger(nextPow2, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
-            Variable varSub = VariableBuilder.createIntermediate(scope, resultType, getProgram());
-            stmtIt.add(new StatementAssignment((LValue) varSub.getRef(), varShift.getRef(), Operators.MINUS, varValue, true, assignment.getSource(), Comment.NO_COMMENTS));
-            stmtIt.next();
-            assignment.setOperator(null);
-            assignment.setrValue1(null);
-            assignment.setrValue2(varSub.getRef());
-            return true;
-         }
-
          // Multiplication by constant
          getLog().append("Rewriting multiplication to use shift and addition" + assignment.toString(getProgram(), false));
          stmtIt.previous();
@@ -139,11 +108,9 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
          long pow2 = (long) power2;
          long remains = constValue - (1L << pow2);
          long shiftCount = 0;
-         int addCount = 0;
          while(pow2 >= 0) {
             long powVal = 1L << pow2;
             if(remains >= powVal) {
-               addCount++;
                // First add shifts
                Variable varShift = VariableBuilder.createIntermediate(scope, resultType, getProgram());
                stmtIt.add(new StatementAssignment((LValue) varShift.getRef(), building, Operators.SHIFT_LEFT, new ConstantInteger(shiftCount, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
@@ -171,27 +138,6 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
          assignment.setOperator(null);
          assignment.setrValue1(null);
          assignment.setrValue2(building);
-
-         if(addCount >= 3) {
-            StatementSource src = assignment.getSource();
-            String fileName = (src != null && src.getFileName() != null) ? src.getFileName() : null;
-            if(!getProgram().isLibraryFile(fileName)) {
-               int estimatedBytes = resultType.getSizeBytes() == 1 ? (addCount * 6 + (int) power2 * 2 + 4) : (addCount * 12 + (int) power2 * 4 + 6);
-               String loc = (src != null && src.getFileName() != null) ? src.format() : "";
-               String warnMsg = loc + " warning: Inlined multiplication by constant " + constValue + " generated ~" + estimatedBytes + " bytes of shift-and-add code.";
-               System.out.println(warnMsg);
-               if(src != null && src.getCode() != null) {
-                  for(String line : src.getCode().split("\r?\n")) {
-                     line = line.trim();
-                     if(!line.isEmpty()) {
-                        System.out.println("    " + line);
-                     }
-                  }
-               }
-               System.out.println("    Consider using mul8u() from <multiply.h> or a lookup table if code size is critical.");
-               getLog().append(warnMsg);
-            }
-         }
       }
       return optimized;
    }

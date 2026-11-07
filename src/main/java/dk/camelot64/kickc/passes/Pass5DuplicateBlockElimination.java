@@ -6,11 +6,8 @@ import dk.camelot64.kickc.model.Program;
 import java.util.*;
 
 /**
- * Assembler Peephole Optimization: Duplicate Basic Block Elimination (Tail Merging).
- * Identifies identical basic blocks within a procedure scope that end with the same unconditional
- * transfer (jmp <target>, rts, or rti) and where the duplicate block has no fallthrough entry.
- * Rewrites all branch and jump targets pointing to the duplicate block to point to the canonical
- * block instead, and deletes the duplicate block.
+ * Identify and merge identical duplicate basic blocks within procedure scopes.
+ * Handles both directly adjacent twin blocks (zero-rewrite path) and non-adjacent blocks.
  */
 public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
 
@@ -63,6 +60,18 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
       return true;
    }
 
+   private static boolean isDirectlyAdjacent(BasicBlock b1, BasicBlock b2, List<LineRef> sLines) {
+      int idx1 = sLines.indexOf(b1.instructionRefs.get(b1.instructionRefs.size() - 1));
+      int idx2 = sLines.indexOf(b2.labelRef);
+      if(idx1 == -1 || idx2 == -1 || idx2 <= idx1) return false;
+      for(int k = idx1 + 1; k < idx2; k++) {
+         AsmLine l = sLines.get(k).line;
+         if(l instanceof AsmComment || l instanceof AsmConstant || l instanceof AsmLabelDecl) continue;
+         return false;
+      }
+      return true;
+   }
+
    @Override
    public boolean optimize() {
       boolean overallModified = false;
@@ -71,7 +80,6 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
       while(passModified) {
          passModified = false;
 
-         // Build a flat sequential list of all lines across all chunks
          List<LineRef> allLines = new ArrayList<>();
          for(AsmChunk chunk : getAsmProgram().getChunks()) {
             for(AsmLine line : chunk.getLines()) {
@@ -79,7 +87,7 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
             }
          }
 
-         // Group lines by scope
+         // Group lines strictly by local scope
          Map<String, List<LineRef>> scopeLinesMap = new LinkedHashMap<>();
          String currentScope = "";
          for(LineRef ref : allLines) {
@@ -102,6 +110,8 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
                if(lRef.line instanceof AsmLabel) {
                   AsmLabel label = (AsmLabel) lRef.line;
                   String labelName = label.getLabel();
+                  // Only consider compiler-generated local block labels (__b1, __b2, etc.)
+                  if(labelName == null || !labelName.startsWith("__b")) continue;
 
                   // Check if preceded by unconditional transfer
                   boolean hasFallthrough = true;
@@ -129,6 +139,10 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
                      if(jRef.line instanceof AsmInstruction) {
                         AsmInstruction inst = (AsmInstruction) jRef.line;
                         if(inst.isNoOptimize() || inst.getCpuOpcode() == null) {
+                           break;
+                        }
+                        if(inst.getOperand1() != null && inst.getOperand1().startsWith("!")) {
+                           validBlock = false;
                            break;
                         }
                         blockInsts.add(jRef);
@@ -159,6 +173,29 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
             if(blocks.size() < 2) continue;
 
             // Search for duplicate block pairs
+            boolean mergedPair = false;
+
+            // Fast Path: Check directly adjacent duplicate pairs first
+            for(int i = 0; i < blocks.size() - 1; i++) {
+               BasicBlock b1 = blocks.get(i);
+               BasicBlock b2 = blocks.get(i + 1);
+               if(isDirectlyAdjacent(b1, b2, sLines) && areInstructionsIdentical(b1.instructionRefs, b2.instructionRefs)) {
+                  getLog().append("Adjacent tail-merge in " + entry.getKey() + ": collapsing " + b1.labelName + " body into " + b2.labelName);
+                  // Delete b1 instructions, leave b1 label stacked directly on b2 label.
+                  // No jump rewriting needed! Fallthrough into b1 falls into b2, jumps to b1 jump to b2.
+                  for(LineRef instRef : b1.instructionRefs) {
+                     instRef.chunk.getLines().remove(instRef.line);
+                  }
+                  passModified = true;
+                  overallModified = true;
+                  mergedPair = true;
+                  break;
+               }
+            }
+
+            if(mergedPair) break;
+
+            // General Path: Non-adjacent duplicate blocks within this scope
             BasicBlock canonical = null;
             BasicBlock duplicate = null;
 
@@ -166,15 +203,43 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
                BasicBlock b1 = blocks.get(i);
                for(int j = i + 1; j < blocks.size(); j++) {
                   BasicBlock b2 = blocks.get(j);
+                  if(!areInstructionsIdentical(b1.instructionRefs, b2.instructionRefs)) continue;
 
-                  if(!b2.hasFallthroughEntry && areInstructionsIdentical(b1.instructionRefs, b2.instructionRefs)) {
-                     canonical = b1;
-                     duplicate = b2;
-                     break;
-                  } else if(!b1.hasFallthroughEntry && areInstructionsIdentical(b2.instructionRefs, b1.instructionRefs)) {
-                     canonical = b2;
-                     duplicate = b1;
-                     break;
+                  BasicBlock candCanonical = null;
+                  BasicBlock candDuplicate = null;
+
+                  if(!b2.hasFallthroughEntry) {
+                     candCanonical = b1;
+                     candDuplicate = b2;
+                  } else if(!b1.hasFallthroughEntry) {
+                     candCanonical = b2;
+                     candDuplicate = b1;
+                  }
+
+                  if(candCanonical != null && candDuplicate != null) {
+                     // Check safe branch distances for any conditional branch targeting candDuplicate
+                     int targetIdx = sLines.indexOf(candCanonical.labelRef);
+                     boolean safeDistance = true;
+                     for(int k = 0; k < sLines.size(); k++) {
+                        LineRef ref = sLines.get(k);
+                        if(ref.line instanceof AsmInstruction) {
+                           AsmInstruction inst = (AsmInstruction) ref.line;
+                           if(inst.getOperand1() != null && inst.getOperand1().trim().equals(candDuplicate.labelName.trim())) {
+                              String mnem = inst.getCpuOpcode() != null ? inst.getCpuOpcode().getMnemonic() : "";
+                              if(mnem.startsWith("b")) {
+                                 if(Math.abs(k - targetIdx) > 35) {
+                                    safeDistance = false;
+                                    break;
+                                 }
+                              }
+                           }
+                        }
+                     }
+                     if(safeDistance) {
+                        canonical = candCanonical;
+                        duplicate = candDuplicate;
+                        break;
+                     }
                   }
                }
                if(duplicate != null) break;
@@ -184,10 +249,10 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
                String keepLabel = canonical.labelName.trim();
                String removeLabel = duplicate.labelName.trim();
 
-               getLog().append("Merging duplicate basic block " + removeLabel + " into " + keepLabel + " (" + duplicate.instructionRefs.size() + " instructions)");
+               getLog().append("Merging non-adjacent duplicate block in " + entry.getKey() + ": " + removeLabel + " into " + keepLabel);
 
-               // Rewrite all jumps/branches pointing to removeLabel across all chunks
-               for(LineRef ref : allLines) {
+               // Rewrite jumps/branches strictly within this local procedure scope (sLines)
+               for(LineRef ref : sLines) {
                   if(ref.line instanceof AsmInstruction) {
                      AsmInstruction inst = (AsmInstruction) ref.line;
                      if(inst.getOperand1() != null && inst.getOperand1().trim().equals(removeLabel)) {
@@ -196,7 +261,7 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
                   }
                }
 
-               // Remove duplicate basic block lines from their respective chunks
+               // Remove duplicate block lines
                duplicate.labelRef.chunk.getLines().remove(duplicate.labelRef.line);
                for(LineRef instRef : duplicate.instructionRefs) {
                   instRef.chunk.getLines().remove(instRef.line);

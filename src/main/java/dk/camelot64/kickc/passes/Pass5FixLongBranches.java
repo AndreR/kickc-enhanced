@@ -54,13 +54,14 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
       }
 
       // Relaxation pass: relax short branches back to 2-byte branches and eliminate 0-distance trampolines
+      // int relaxedCount = relaxShortBranches();
       int relaxedCount = relaxShortBranches();
       if(relaxedCount > 0) {
          System.out.println(String.format("      [PASS5 RELAX SHORT BRANCHES] relaxed %d trampolines", relaxedCount));
       }
 
       // Perform repeated optimization until no more branches are too long
-      boolean anyOptimized = (preFixedCount > 0);
+      boolean anyOptimized = (preFixedCount > 0) || (relaxedCount > 0);
       boolean stepOptimized = true;
       int iter = 0;
       while(stepOptimized) {
@@ -74,6 +75,16 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
          System.out.println(String.format("      [PASS5 LONG BRANCH iter %d] took %6.2f s (fixed=%b)", iter, tStepElapsed / 1000.0, stepOptimized));
          if(stepOptimized) anyOptimized = true;
       }
+
+      // Second relaxation pass after long branch resolution and code shrinking
+      int postRelaxedCount = relaxShortBranches();
+      if(postRelaxedCount > 0) {
+         System.out.println(String.format("      [PASS5 POST-RELAX SHORT BRANCHES] relaxed %d trampolines", postRelaxedCount));
+         anyOptimized = true;
+         // Verify with KickAssembler that no branch was pushed out of range
+         step();
+      }
+
       return anyOptimized;
    }
 
@@ -320,8 +331,11 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                               String fallthroughLabel = label3.getLabel();
 
                               // Pattern 1: KickC Trampoline [b!xx !L+, jmp TARGET, !L:]
-                              boolean isTrampoline = (branchTarget != null && fallthroughLabel != null &&
-                                 (branchTarget.equals("!" + fallthroughLabel + "+") || branchTarget.equals(fallthroughLabel + "+")));
+                              boolean isTrampoline = (branchTarget != null && fallthroughLabel != null && jmpTarget != null &&
+                                 fallthroughLabel.startsWith("!") && fallthroughLabel.length() > 2 &&
+                                 !fallthroughLabel.contains("+") && !fallthroughLabel.contains("-") &&
+                                 branchTarget.equals(fallthroughLabel + "+") &&
+                                 !jmpTarget.startsWith("!"));
 
                               if(isTrampoline && jmpTarget != null) {
                                  Integer targetOffset = labelOffsets.get(currentScope + "::" + jmpTarget);
@@ -342,7 +356,8 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                               }
 
                               // Pattern 2: Inverted branch over jmp [bxx L, jmp TARGET, L:]
-                              boolean isInvertedBranch = (branchTarget != null && fallthroughLabel != null &&
+                              boolean isInvertedBranch = (branchTarget != null && fallthroughLabel != null && jmpTarget != null &&
+                                 !branchTarget.startsWith("!") && !fallthroughLabel.startsWith("!") && !jmpTarget.startsWith("!") &&
                                  branchTarget.equals(fallthroughLabel));
 
                               if(isInvertedBranch && jmpTarget != null) {
@@ -472,6 +487,9 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
             getLog().append("Fixing long branch [" + asmInstruction.getIndex() + "] " + asmInstruction.toString() + " to " + inverseCpuOpcode.getMnemonic());
          }
          String branchDest = asmInstruction.getOperandJumpTarget();
+         if(branchDest == null || branchDest.startsWith("!")) {
+            return false;
+         }
          asmInstruction.setCpuOpcode(inverseCpuOpcode);
          String newLabel = AsmFormat.asmFix("!" + branchDest);
          asmInstruction.setOperandJumpTarget(newLabel + "+");

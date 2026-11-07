@@ -59,36 +59,6 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
       return false;
    }
 
-   private static String getBaseVar(String op) {
-      if(op == null) return "";
-      int idx = op.indexOf('+');
-      if(idx != -1) return op.substring(0, idx).trim();
-      int minusIdx = op.indexOf('-');
-      if(minusIdx != -1) return op.substring(0, minusIdx).trim();
-      return op.trim();
-   }
-
-   private static int getOffset(String op) {
-      if(op == null) return 0;
-      int idx = op.indexOf('+');
-      if(idx != -1) {
-         try {
-            return Integer.parseInt(op.substring(idx + 1).trim());
-         } catch(Exception e) {
-            return 0;
-         }
-      }
-      int minusIdx = op.indexOf('-');
-      if(minusIdx != -1) {
-         try {
-            return -Integer.parseInt(op.substring(minusIdx + 1).trim());
-         } catch(Exception e) {
-            return 0;
-         }
-      }
-      return 0;
-   }
-
    public static String resolveAlias(String name, Map<String, String> scopeAliases, Map<String, String> globalAliases) {
       if(name == null) return "";
       String current = name.trim();
@@ -106,15 +76,20 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
 
    public static String getCanonical(String op, Map<String, String> scopeAliases, Map<String, String> globalAliases) {
       if(op == null) return "";
-      String base = getBaseVar(op);
-      int offset = getOffset(op);
-      String canonicalBase = resolveAlias(base, scopeAliases, globalAliases);
-      if(offset == 0) {
-         return canonicalBase;
-      } else if(offset > 0) {
-         return canonicalBase + "+" + offset;
+      String trimmed = op.trim();
+      int plusIdx = trimmed.indexOf('+');
+      int minusIdx = trimmed.indexOf('-');
+      int splitIdx = -1;
+      if(plusIdx != -1 && minusIdx != -1) splitIdx = Math.min(plusIdx, minusIdx);
+      else if(plusIdx != -1) splitIdx = plusIdx;
+      else if(minusIdx != -1) splitIdx = minusIdx;
+
+      if(splitIdx == -1) {
+         return resolveAlias(trimmed, scopeAliases, globalAliases);
       } else {
-         return canonicalBase + "-" + (-offset);
+         String base = trimmed.substring(0, splitIdx).trim();
+         String suffix = trimmed.substring(splitIdx).replaceAll("\\s+", "");
+         return resolveAlias(base, scopeAliases, globalAliases) + suffix;
       }
    }
 
@@ -212,15 +187,9 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
             String operand = inst.getOperand1();
 
             // -----------------------------------------------------------------
-            // Control flow instructions reset tracking
+            // Control flow breaks (unconditional jump, subroutine call, returns) reset tracking
             // -----------------------------------------------------------------
-            if(mnem.startsWith("b") || mnem.equals("jmp") || mnem.equals("rts") || mnem.equals("rti")) {
-               aMems.clear();
-               xMems.clear();
-               yMems.clear();
-               continue;
-            }
-            if(mnem.equals("jsr")) {
+            if(mnem.equals("jmp") || mnem.equals("rts") || mnem.equals("rti") || mnem.equals("jsr")) {
                aMems.clear();
                xMems.clear();
                yMems.clear();
@@ -396,7 +365,8 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
             // -----------------------------------------------------------------
             if(mnem.equals("inc") || mnem.equals("dec") || mnem.equals("asl") || mnem.equals("lsr") ||
                mnem.equals("rol") || mnem.equals("ror") || mnem.equals("dcp") || mnem.equals("isc") ||
-               mnem.equals("slo") || mnem.equals("sre") || mnem.equals("rla") || mnem.equals("rra")) {
+               mnem.equals("slo") || mnem.equals("sre") || mnem.equals("rla") || mnem.equals("rra") ||
+               mnem.equals("sax")) {
                if(mode.equals(CpuAddressingMode.NON)) {
                   // Acc shift / rot modifies A
                   aMems.clear();
@@ -420,7 +390,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
             // -----------------------------------------------------------------
             if(mnem.equals("pla") || mnem.equals("adc") || mnem.equals("sbc") || mnem.equals("and") ||
                mnem.equals("ora") || mnem.equals("eor") || mnem.equals("lax") || mnem.equals("alr") ||
-               mnem.equals("anc") || mnem.equals("arr") || mnem.equals("axs")) {
+               mnem.equals("anc") || mnem.equals("arr")) {
                aMems.clear();
                if(mnem.equals("lax")) {
                   xMems.clear();
@@ -436,7 +406,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
             // -----------------------------------------------------------------
             // Instructions modifying X
             // -----------------------------------------------------------------
-            if(mnem.equals("inx") || mnem.equals("dex") || mnem.equals("tsx")) {
+            if(mnem.equals("inx") || mnem.equals("dex") || mnem.equals("tsx") || mnem.equals("axs")) {
                xMems.clear();
                continue;
             }

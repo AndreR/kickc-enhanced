@@ -667,38 +667,19 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
 
             // -------------------------------------------------------------
             // Pattern 0: Redundant CMP #0 / CPX #0 / CPY #0 elimination
-            // When inst1 already sets Z and N flags identically on the register,
-            // and inst3 is a conditional branch testing Z or N (BEQ, BNE, BMI, BPL),
-            // CMP #0 / CPX #0 / CPY #0 is 100% redundant and can be safely removed.
+            // When inst1 is CMP/CPX/CPY #0 and inst2 is BEQ/BNE/BMI/BPL,
+            // and flags are already established on that register (immediately before,
+            // across non-flag-modifying stores, or across all block predecessors),
+            // inst1 is 100% redundant and can be safely removed.
             // -------------------------------------------------------------
-            if(inst3 != null && !inst3.isNoOptimize() && mode2.equals(CpuAddressingMode.IMM) && isZeroOperand(inst2.getOperand1())) {
-               String mnem3 = inst3.getCpuOpcode() != null ? inst3.getCpuOpcode().getMnemonic() : "";
-               boolean isZOrNBranch = mnem3.equals("beq") || mnem3.equals("bne") || mnem3.equals("bmi") || mnem3.equals("bpl");
-               if(isZOrNBranch) {
-                  boolean canEliminate = false;
-                  if(mnem2.equals("cmp")) {
-                     if(mnem1.equals("lda") || mnem1.equals("pla") ||
-                        mnem1.equals("tax") || mnem1.equals("txa") ||
-                        mnem1.equals("tay") || mnem1.equals("tya") ||
-                        mnem1.equals("and") || mnem1.equals("ora") || mnem1.equals("eor") ||
-                        mnem1.equals("lax") || mnem1.equals("alr") || mnem1.equals("anc") ||
-                        ((mnem1.equals("asl") || mnem1.equals("lsr") || mnem1.equals("rol") || mnem1.equals("ror")) && mode1.equals(CpuAddressingMode.NON))) {
-                        canEliminate = true;
-                     }
-                  } else if(mnem2.equals("cpx")) {
-                     if(mnem1.equals("ldx") || mnem1.equals("inx") || mnem1.equals("dex") ||
-                        mnem1.equals("tax") || mnem1.equals("tsx") || mnem1.equals("lax") || mnem1.equals("axs")) {
-                        canEliminate = true;
-                     }
-                  } else if(mnem2.equals("cpy")) {
-                     if(mnem1.equals("ldy") || mnem1.equals("iny") || mnem1.equals("dey") || mnem1.equals("tay")) {
-                        canEliminate = true;
-                     }
-                  }
-
-                  if(canEliminate) {
-                     getLog().append("Eliminating redundant " + inst2.getAsm() + " after " + inst1.getAsm() + " before " + inst3.getAsm());
-                     ref2.chunk.getLines().remove(inst2);
+            if(mode1.equals(CpuAddressingMode.IMM) && isZeroOperand(inst1.getOperand1())) {
+               String reg = mnem1.equals("cmp") ? "A" : (mnem1.equals("cpx") ? "X" : (mnem1.equals("cpy") ? "Y" : null));
+               if(reg != null && inst2 != null && !inst2.isNoOptimize() && inst2.getCpuOpcode() != null) {
+                  String m2 = inst2.getCpuOpcode().getMnemonic();
+                  boolean isZOrNBranch = m2.equals("beq") || m2.equals("bne") || m2.equals("bmi") || m2.equals("bpl");
+                  if(isZOrNBranch && areFlagsEstablishedForReg(allLines, i, reg, currentScope)) {
+                     getLog().append("Eliminating redundant zero comparison " + inst1.getAsm() + " before " + inst2.getAsm());
+                     ref1.chunk.getLines().remove(inst1);
                      passModified = true;
                      overallModified = true;
                      break;
@@ -813,6 +794,89 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
             }
 
             // -------------------------------------------------------------
+            // Pattern 1c: LDA <mem>; STA <dst>; TAX -> LAX <mem>; STA <dst>
+            // Stable addressing modes: ZP, ABS, IZY, ABY, ZPY, IZX
+            // STA modifies neither A nor X nor flags.
+            // -------------------------------------------------------------
+            if(mnem1.equals("lda") && mnem2.equals("sta") &&
+               (mode1.equals(CpuAddressingMode.ZP) || mode1.equals(CpuAddressingMode.ABS) ||
+                mode1.equals(CpuAddressingMode.IZY) || mode1.equals(CpuAddressingMode.ABY) ||
+                mode1.equals(CpuAddressingMode.ZPY) || mode1.equals(CpuAddressingMode.IZX))) {
+               int idx3 = findNextInstruction(allLines, nextIdx + 1);
+               if(idx3 != -1) {
+                  AsmInstruction instNext3 = (AsmInstruction) allLines.get(idx3).line;
+                  if(instNext3.getCpuOpcode() != null && instNext3.getCpuOpcode().getMnemonic().equals("tax") &&
+                     instNext3.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.NON)) {
+                     Map<String, String> aliases = scopeAliasMap.get(currentScope);
+                     if(!isSameLocation(inst1.getOperand1(), inst2.getOperand1(), aliases)) {
+                        CpuOpcode laxOpcode = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lax", mode1, false);
+                        if(laxOpcode != null) {
+                           getLog().append("Replacing " + inst1.getAsm() + "; " + inst2.getAsm() + "; TAX with LAX");
+                           inst1.setCpuOpcode(laxOpcode);
+                           allLines.get(idx3).chunk.getLines().remove(instNext3);
+                           passModified = true;
+                           overallModified = true;
+                           break;
+                        }
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 1d: LDA <mem>; Bxx <target>; TAX -> LAX <mem>; Bxx <target>
+            // When A is loaded, tested by conditional branch, and the fallthrough
+            // immediately moves A to X via TAX. Safe when X is dead along branch target.
+            // -------------------------------------------------------------
+            if(mnem1.equals("lda") && mnem2.startsWith("b") &&
+               (mode1.equals(CpuAddressingMode.ZP) || mode1.equals(CpuAddressingMode.ABS) ||
+                mode1.equals(CpuAddressingMode.IZY) || mode1.equals(CpuAddressingMode.ABY) ||
+                mode1.equals(CpuAddressingMode.ZPY) || mode1.equals(CpuAddressingMode.IZX))) {
+               int idx3 = findNextInstruction(allLines, nextIdx + 1);
+               if(idx3 != -1) {
+                  AsmInstruction instNext3 = (AsmInstruction) allLines.get(idx3).line;
+                  if(instNext3.getCpuOpcode() != null && instNext3.getCpuOpcode().getMnemonic().equals("tax") &&
+                     instNext3.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.NON)) {
+                     String targetLabel = inst2.getOperand1();
+                     int targetIdx = findLabelIndex(allLines, targetLabel, nextIdx);
+                     if(targetIdx != -1 && isXDeadAlongPath(allLines, targetIdx + 1, new HashSet<>(), currentScope, getProgram())) {
+                        CpuOpcode laxOpcode = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lax", mode1, false);
+                        if(laxOpcode != null) {
+                           getLog().append("Lifting TAX into LAX before branch: " + inst1.getAsm() + "; " + inst2.getAsm() + "; TAX");
+                           inst1.setCpuOpcode(laxOpcode);
+                           allLines.get(idx3).chunk.getLines().remove(instNext3);
+                           passModified = true;
+                           overallModified = true;
+                           break;
+                        }
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 1e: LDX <mem>; LDY <mem> -> LAX <mem>; TAY
+            // -------------------------------------------------------------
+            if(mnem1.equals("ldx") && mnem2.equals("ldy") &&
+               inst1.getOperand1() != null && inst1.getOperand1().equals(inst2.getOperand1()) &&
+               (mode1.equals(CpuAddressingMode.ZP) || mode1.equals(CpuAddressingMode.ABS)) &&
+               mode1.equals(mode2)) {
+               if(isADeadAlongPath(allLines, i, new HashSet<>(), currentScope, getProgram())) {
+                  CpuOpcode laxOpcode = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lax", mode1, false);
+                  CpuOpcode tayOpcode = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tay", CpuAddressingMode.NON, false);
+                  if(laxOpcode != null && tayOpcode != null) {
+                     getLog().append("Replacing LDX " + inst1.getOperand1() + "; LDY " + inst2.getOperand1() + " with LAX; TAY");
+                     inst1.setCpuOpcode(laxOpcode);
+                     inst2.setCpuOpcode(tayOpcode);
+                     inst2.setOperand1(null);
+                     passModified = true;
+                     overallModified = true;
+                     break;
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
             // Pattern 2: AND #{imm}; LSR -> ALR #{imm}
             // ALR executes A = (A & #{imm}) >> 1 and sets Carry to bit 0.
             // -------------------------------------------------------------
@@ -826,6 +890,69 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                   passModified = true;
                   overallModified = true;
                   break;
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 2b: LSR; AND #{imm} -> ALR #{(imm << 1)}
+            // ALR executes A = (A & #{(imm << 1)}) >> 1. Equivalent to (A >> 1) & #{imm}.
+            // Safe when bit 7 of #{imm} is 0 and subsequent instruction does not test Carry.
+            // -------------------------------------------------------------
+            if(mnem1.equals("lsr") && mode1.equals(CpuAddressingMode.NON) &&
+               mnem2.equals("and") && mode2.equals(CpuAddressingMode.IMM)) {
+               Integer maskVal = AsmProgramStaticRegisterValues.getImmValue(inst2.getOperand1());
+               if(maskVal != null && (maskVal & 0x80) == 0 && maskVal >= 0 && maskVal <= 127) {
+                  int idx3 = findNextInstruction(allLines, nextIdx + 1);
+                  boolean safeCarry = true;
+                  if(idx3 != -1) {
+                     AsmInstruction instNext3 = (AsmInstruction) allLines.get(idx3).line;
+                     if(instNext3.getCpuOpcode() != null) {
+                        String m3 = instNext3.getCpuOpcode().getMnemonic();
+                        if(m3.equals("bcc") || m3.equals("bcs") || m3.equals("adc") || m3.equals("sbc") || m3.equals("rol") || m3.equals("ror")) {
+                           safeCarry = false;
+                        }
+                     }
+                  }
+                  if(safeCarry) {
+                     CpuOpcode alrOpcode = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("alr", CpuAddressingMode.IMM, false);
+                     if(alrOpcode != null) {
+                        int alrImm = (maskVal << 1) & 0xff;
+                        getLog().append("Replacing LSR; " + inst2.getAsm() + " with ALR #$" + Integer.toHexString(alrImm));
+                        inst1.setCpuOpcode(alrOpcode);
+                        inst1.setOperand1("$" + Integer.toHexString(alrImm));
+                        ref2.chunk.getLines().remove(inst2);
+                        passModified = true;
+                        overallModified = true;
+                        break;
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 2c: LSR; LSR; ASL -> ALR #$fc
+            // ((A >> 2) << 1) clears bits 0 and 1, then shifts right by 1.
+            // ALR #$fc computes (A & $fc) >> 1, identical result in 2 bytes / 2 cycles.
+            // -------------------------------------------------------------
+            if(mnem1.equals("lsr") && mode1.equals(CpuAddressingMode.NON) &&
+               mnem2.equals("lsr") && mode2.equals(CpuAddressingMode.NON)) {
+               int idx3 = findNextInstruction(allLines, nextIdx + 1);
+               if(idx3 != -1) {
+                  AsmInstruction instNext3 = (AsmInstruction) allLines.get(idx3).line;
+                  if(instNext3.getCpuOpcode() != null && instNext3.getCpuOpcode().getMnemonic().equals("asl") &&
+                     instNext3.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.NON)) {
+                     CpuOpcode alrOpcode = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("alr", CpuAddressingMode.IMM, false);
+                     if(alrOpcode != null) {
+                        getLog().append("Replacing LSR; LSR; ASL with ALR #$fc");
+                        inst1.setCpuOpcode(alrOpcode);
+                        inst1.setOperand1("$fc");
+                        ref2.chunk.getLines().remove(inst2);
+                        allLines.get(idx3).chunk.getLines().remove(instNext3);
+                        passModified = true;
+                        overallModified = true;
+                        break;
+                     }
+                  }
                }
             }
 
@@ -951,6 +1078,130 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
       return t.equals("$fe") || t.equals("$$fe") || t.equals("$00fe");
    }
 
+   private static boolean doesInstructionSetZAndN(AsmInstruction inst, String reg) {
+      if(inst == null || inst.getCpuOpcode() == null) return false;
+      String mnem = inst.getCpuOpcode().getMnemonic();
+      CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+      if("A".equals(reg)) {
+         return mnem.equals("lda") || mnem.equals("pla") ||
+                mnem.equals("tax") || mnem.equals("txa") ||
+                mnem.equals("tay") || mnem.equals("tya") ||
+                mnem.equals("and") || mnem.equals("ora") || mnem.equals("eor") ||
+                mnem.equals("lax") || mnem.equals("alr") || mnem.equals("anc") ||
+                ((mnem.equals("asl") || mnem.equals("lsr") || mnem.equals("rol") || mnem.equals("ror")) && mode.equals(CpuAddressingMode.NON));
+      } else if("X".equals(reg)) {
+         return mnem.equals("ldx") || mnem.equals("inx") || mnem.equals("dex") ||
+                mnem.equals("tax") || mnem.equals("tsx") || mnem.equals("lax") || mnem.equals("axs");
+      } else if("Y".equals(reg)) {
+         return mnem.equals("ldy") || mnem.equals("iny") || mnem.equals("dey") || mnem.equals("tay");
+      }
+      return false;
+   }
+
+   private static boolean areFlagsEstablishedForReg(List<LineRef> allLines, int inst2Idx, String reg, String currentScope) {
+      // 1. Scan backwards within the same basic block, skipping non-flag-modifying stores
+      AsmLabel labelHit = null;
+      int labelIdx = -1;
+      for(int p = inst2Idx - 1; p >= 0; p--) {
+         AsmLine line = allLines.get(p).line;
+         if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
+         if(line instanceof AsmLabel) {
+            labelHit = (AsmLabel) line;
+            labelIdx = p;
+            break;
+         }
+         if(line instanceof AsmScopeBegin || line instanceof AsmScopeEnd || line instanceof AsmInlineKickAsm) {
+            return false;
+         }
+         if(line instanceof AsmInstruction) {
+            AsmInstruction prev = (AsmInstruction) line;
+            if(prev.getCpuOpcode() == null) return false;
+            String mnem = prev.getCpuOpcode().getMnemonic();
+            if(mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty")) {
+               continue; // Stores do not modify flags on 6502
+            }
+            return doesInstructionSetZAndN(prev, reg);
+         }
+      }
+
+      // 2. If we hit a label at the block entry, check all incoming predecessors to this label
+      if(labelHit != null && currentScope != null && !currentScope.isEmpty()) {
+         String targetLabel = labelHit.getLabel();
+         List<Integer> predIndices = new ArrayList<>();
+
+         // Check fallthrough immediately before labelHit
+         for(int p = labelIdx - 1; p >= 0; p--) {
+            AsmLine line = allLines.get(p).line;
+            if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
+            if(line instanceof AsmInstruction) {
+               AsmInstruction prevInst = (AsmInstruction) line;
+               if(prevInst.getCpuOpcode() != null) {
+                  String pm = prevInst.getCpuOpcode().getMnemonic();
+                  if(!pm.equals("jmp") && !pm.equals("rts") && !pm.equals("rti")) {
+                     predIndices.add(p);
+                  }
+               }
+            }
+            break;
+         }
+
+         // Check jumps/branches to targetLabel strictly within currentScope
+         String scanScope = null;
+         for(int k = 0; k < allLines.size(); k++) {
+            LineRef ref = allLines.get(k);
+            if(ref.line instanceof AsmScopeBegin) {
+               scanScope = ((AsmScopeBegin) ref.line).getLabel();
+               continue;
+            } else if(ref.line instanceof AsmScopeEnd) {
+               scanScope = null;
+               continue;
+            }
+            if(scanScope == null || !scanScope.equals(currentScope)) {
+               continue;
+            }
+            if(ref.line instanceof AsmInstruction) {
+               AsmInstruction inst = (AsmInstruction) ref.line;
+               if(inst.getCpuOpcode() != null && inst.getCpuOpcode().isJump()) {
+                  String dest = inst.getOperandJumpTarget();
+                  if(dest != null && (dest.equals(targetLabel) || dest.equals("!" + targetLabel + "+") || dest.equals(targetLabel + "+"))) {
+                     predIndices.add(k);
+                  }
+               }
+            }
+         }
+
+         if(predIndices.isEmpty()) return false;
+
+         for(int predIdx : predIndices) {
+            boolean predOk = false;
+            for(int p = predIdx; p >= 0; p--) {
+               AsmLine line = allLines.get(p).line;
+               if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
+               if(line instanceof AsmInstruction) {
+                  AsmInstruction pi = (AsmInstruction) line;
+                  if(pi.getCpuOpcode() == null) break;
+                  String pm = pi.getCpuOpcode().getMnemonic();
+                  if(pm.equals("jmp") || pm.startsWith("b")) {
+                     continue; // Look before jump/branch
+                  }
+                  if(pm.equals("sta") || pm.equals("stx") || pm.equals("sty")) {
+                     continue; // Stores do not modify flags
+                  }
+                  if(doesInstructionSetZAndN(pi, reg)) {
+                     predOk = true;
+                  }
+                  break;
+               }
+               break;
+            }
+            if(!predOk) return false;
+         }
+         return true;
+      }
+
+      return false;
+   }
+
    private static boolean isFfOperand(String op) {
       if(op == null) return false;
       String t = op.trim().toLowerCase();
@@ -1063,6 +1314,59 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                   int targetIdx = findLabelIndex(allLines, target.trim(), m);
                   if(targetIdx != -1) {
                      return isADeadAlongPath(allLines, targetIdx + 1, visitedLabels, currentScope, program);
+                  }
+               }
+               return false;
+            }
+            if(mnem.startsWith("b")) {
+               return false;
+            }
+            continue;
+         }
+         break;
+      }
+      return false;
+   }
+
+   private static boolean isXDeadAlongPath(List<LineRef> allLines, int startIdx, Set<String> visitedLabels, String currentScope, dk.camelot64.kickc.model.Program program) {
+      for(int m = startIdx; m < allLines.size(); m++) {
+         LineRef cand = allLines.get(m);
+         if(cand.line instanceof AsmComment || cand.line instanceof AsmConstant || cand.line instanceof AsmLabelDecl) continue;
+         if(cand.line instanceof AsmLabel) continue;
+         if(cand.line instanceof AsmInstruction) {
+            AsmInstruction inst = (AsmInstruction) cand.line;
+            CpuOpcode op = inst.getCpuOpcode();
+            if(op == null) return false;
+            String mnem = op.getMnemonic();
+            if(mnem.equals("ldx") || mnem.equals("tax") || mnem.equals("tsx") || mnem.equals("lax")) {
+               return true;
+            }
+            if(mnem.equals("stx") || mnem.equals("cpx") || mnem.equals("inx") || mnem.equals("dex") ||
+               mnem.equals("txa") || mnem.equals("txs") || mnem.equals("axs") || mnem.equals("sax") ||
+               mnem.equals("phx")) {
+               return false;
+            }
+            if(mnem.equals("jsr")) {
+               return true;
+            }
+            if(mnem.equals("rts")) {
+               if(currentScope != null && program != null) {
+                  dk.camelot64.kickc.model.symbols.Symbol sym = program.getScope().getLocalSymbol(currentScope);
+                  if(sym instanceof dk.camelot64.kickc.model.symbols.Procedure) {
+                     dk.camelot64.kickc.model.symbols.Procedure proc = (dk.camelot64.kickc.model.symbols.Procedure) sym;
+                     if(dk.camelot64.kickc.model.types.SymbolType.VOID.equals(proc.getReturnType())) {
+                        return true;
+                     }
+                  }
+               }
+               return false;
+            }
+            if(mnem.equals("jmp")) {
+               String target = inst.getOperand1();
+               if(target != null && visitedLabels.add(target.trim())) {
+                  int targetIdx = findLabelIndex(allLines, target.trim(), m);
+                  if(targetIdx != -1) {
+                     return isXDeadAlongPath(allLines, targetIdx + 1, visitedLabels, currentScope, program);
                   }
                }
                return false;
