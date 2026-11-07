@@ -23,32 +23,188 @@ public class AsmProgramStaticRegisterValues {
    }
 
    public static Integer getImmValue(String parameter) {
-      Integer immValue = null;
-      if(parameter != null) {
-         if(parameter.startsWith("<")) {
-            try {
-               int parValue = Integer.parseInt(parameter.substring(1));
-               return 0xff & parValue;
-            } catch(NumberFormatException e) {
-               // ignore
-            }
-         } else if(parameter.startsWith(">")) {
-            try {
-               int parValue = Integer.parseInt(parameter.substring(1));
-               return 0xff & ((parValue & 0xffff) / 0x100);
-            } catch(NumberFormatException e) {
-               // ignore
-            }
-         } else {
-            try {
-               immValue = Integer.parseInt(parameter);
-               return immValue;
-            } catch(NumberFormatException e) {
-               // ignore
+      if(parameter == null) return null;
+      try {
+         String p = parameter.trim();
+         if(p.startsWith("#")) p = p.substring(1).trim();
+         if(p.isEmpty()) return null;
+         Long val = evalImmExpr(p);
+         if(val != null) {
+            return (int)(val & 0xffffffffL);
+         }
+      } catch(Exception e) {
+         // ignore
+      }
+      return null;
+   }
+
+   private static boolean isBalanced(String s) {
+      int depth = 0;
+      for(int i = 0; i < s.length(); i++) {
+         char c = s.charAt(i);
+         if(c == '(') depth++;
+         else if(c == ')') {
+            depth--;
+            if(depth < 0) return false;
+         }
+      }
+      return depth == 0;
+   }
+
+   private static int findLastOperator(String s, char op) {
+      int depth = 0;
+      for(int i = s.length() - 1; i >= 0; i--) {
+         char c = s.charAt(i);
+         if(c == ')') depth++;
+         else if(c == '(') depth--;
+         else if(depth == 0 && c == op) return i;
+      }
+      return -1;
+   }
+
+   private static int findLastShiftOperator(String s) {
+      int depth = 0;
+      for(int i = s.length() - 2; i >= 0; i--) {
+         char c = s.charAt(i);
+         char next = s.charAt(i + 1);
+         if(c == ')') depth++;
+         else if(c == '(') depth--;
+         else if(depth == 0) {
+            if((c == '>' && next == '>') || (c == '<' && next == '<')) {
+               return i;
             }
          }
       }
-      return immValue;
+      return -1;
+   }
+
+   private static int findLastAddSubOperator(String s) {
+      int depth = 0;
+      for(int i = s.length() - 1; i > 0; i--) {
+         char c = s.charAt(i);
+         if(c == ')') depth++;
+         else if(c == '(') depth--;
+         else if(depth == 0 && (c == '+' || c == '-')) {
+            char prev = s.charAt(i - 1);
+            if(prev != '+' && prev != '-' && prev != '*' && prev != '/' && prev != '<' && prev != '>' && prev != '&' && prev != '|' && prev != '^') {
+               return i;
+            }
+         }
+      }
+      return -1;
+   }
+
+   private static int findLastMulDivOperator(String s) {
+      int depth = 0;
+      for(int i = s.length() - 1; i >= 0; i--) {
+         char c = s.charAt(i);
+         if(c == ')') depth++;
+         else if(c == '(') depth--;
+         else if(depth == 0 && (c == '*' || c == '/')) {
+            return i;
+         }
+      }
+      return -1;
+   }
+
+   private static Long evalImmExpr(String s) {
+      s = s.trim();
+      if(s.isEmpty()) return null;
+      if(s.startsWith("(") && s.endsWith(")") && isBalanced(s.substring(1, s.length() - 1))) {
+         return evalImmExpr(s.substring(1, s.length() - 1));
+      }
+      if(s.startsWith("<")) {
+         Long sub = evalImmExpr(s.substring(1));
+         return sub != null ? (sub & 0xffL) : null;
+      }
+      if(s.startsWith(">")) {
+         Long sub = evalImmExpr(s.substring(1));
+         return sub != null ? ((sub >> 8) & 0xffL) : null;
+      }
+      if(s.startsWith("~")) {
+         Long sub = evalImmExpr(s.substring(1));
+         return sub != null ? (~sub & 0xffffffffL) : null;
+      }
+      int opIdx = findLastOperator(s, '|');
+      if(opIdx > 0) {
+         Long left = evalImmExpr(s.substring(0, opIdx));
+         Long right = evalImmExpr(s.substring(opIdx + 1));
+         return (left != null && right != null) ? (left | right) : null;
+      }
+      opIdx = findLastOperator(s, '^');
+      if(opIdx > 0) {
+         Long left = evalImmExpr(s.substring(0, opIdx));
+         Long right = evalImmExpr(s.substring(opIdx + 1));
+         return (left != null && right != null) ? (left ^ right) : null;
+      }
+      opIdx = findLastOperator(s, '&');
+      if(opIdx > 0) {
+         Long left = evalImmExpr(s.substring(0, opIdx));
+         Long right = evalImmExpr(s.substring(opIdx + 1));
+         return (left != null && right != null) ? (left & right) : null;
+      }
+      int shiftIdx = findLastShiftOperator(s);
+      if(shiftIdx > 0) {
+         boolean isRight = s.charAt(shiftIdx) == '>';
+         Long left = evalImmExpr(s.substring(0, shiftIdx));
+         Long right = evalImmExpr(s.substring(shiftIdx + 2));
+         if(left != null && right != null) {
+            return isRight ? (left >> right) : (left << right);
+         }
+         return null;
+      }
+      opIdx = findLastAddSubOperator(s);
+      if(opIdx > 0) {
+         char op = s.charAt(opIdx);
+         Long left = evalImmExpr(s.substring(0, opIdx));
+         Long right = evalImmExpr(s.substring(opIdx + 1));
+         if(left != null && right != null) {
+            return op == '+' ? (left + right) : (left - right);
+         }
+         return null;
+      }
+      opIdx = findLastMulDivOperator(s);
+      if(opIdx > 0) {
+         char op = s.charAt(opIdx);
+         Long left = evalImmExpr(s.substring(0, opIdx));
+         Long right = evalImmExpr(s.substring(opIdx + 1));
+         if(left != null && right != null && right != 0) {
+            return op == '*' ? (left * right) : (left / right);
+         }
+         return null;
+      }
+      return parsePrimaryToken(s);
+   }
+
+   private static Long parsePrimaryToken(String s) {
+      s = s.trim();
+      if(s.isEmpty()) return null;
+      if(s.startsWith("+")) s = s.substring(1).trim();
+      boolean neg = false;
+      if(s.startsWith("-")) {
+         neg = true;
+         s = s.substring(1).trim();
+      }
+      Long val = null;
+      try {
+         if(s.startsWith("$")) {
+            val = Long.parseLong(s.substring(1), 16);
+         } else if(s.startsWith("0x") || s.startsWith("0X")) {
+            val = Long.parseLong(s.substring(2), 16);
+         } else if(s.startsWith("%")) {
+            val = Long.parseLong(s.substring(1), 2);
+         } else if(s.startsWith("'") && s.endsWith("'") && s.length() == 3) {
+            val = (long) s.charAt(1);
+         } else {
+            val = Long.parseLong(s);
+         }
+      } catch(NumberFormatException e) {
+         return null;
+      }
+      if(val != null && neg) {
+         val = -val;
+      }
+      return val;
    }
 
    public static boolean matchImm(String immVal1, String immVal2) {

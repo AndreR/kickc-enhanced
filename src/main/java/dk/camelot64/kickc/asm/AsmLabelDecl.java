@@ -5,7 +5,6 @@ public class AsmLabelDecl extends AsmLine {
    private final String name;
    private final String value;
 
-
    public AsmLabelDecl(String name, String value) {
       this.name = name;
       this.value = value;
@@ -21,10 +20,16 @@ public class AsmLabelDecl extends AsmLine {
       return 0;
    }
 
+   public String getName() {
+      return name;
+   }
+
+   public String getValue() {
+      return value;
+   }
+
    @Override
    public String getAsm() {
       return ".label " + name + " = " + value;
    }
-
-
 }

@@ -40,7 +40,22 @@ public class SymbolTypeInference {
          ConstantBinary constBin = (ConstantBinary) rValue;
          SymbolType leftType = inferType(symbols, constBin.getLeft());
          SymbolType rightType = inferType(symbols, constBin.getRight());
-         final SymbolType binaryType = constBin.getOperator().inferType(leftType, rightType);
+         SymbolType binaryType = constBin.getOperator().inferType(leftType, rightType);
+         if(constBin.getOperator() instanceof dk.camelot64.kickc.model.operators.OperatorShiftLeft) {
+            try {
+               ConstantLiteral lit = constBin.calculateLiteral(symbols);
+               if(lit instanceof ConstantInteger) {
+                  long val = ((ConstantInteger) lit).getInteger();
+                  if(val > 0xffffL) {
+                     binaryType = SymbolType.DWORD;
+                  } else if(val > 0xffL || val < 0) {
+                     binaryType = SymbolType.WORD;
+                  }
+               }
+            } catch(Exception e) {
+               // Cannot calculate statically
+            }
+         }
          return binaryType.getQualified(false, true);
       } else if(rValue instanceof ValueList) {
          return SymbolType.VAR;

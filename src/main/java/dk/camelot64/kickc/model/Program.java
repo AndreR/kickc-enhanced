@@ -13,7 +13,9 @@ import dk.camelot64.kickc.passes.calcs.*;
 import dk.camelot64.kickc.passes.utils.ProcedureUtils;
 import dk.camelot64.kickc.passes.Pass2ConstantIdentification;
 
+import java.io.File;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
 
 /** A KickC Intermediate Compiler Language (ICL) Program */
@@ -29,6 +31,8 @@ public class Program {
    private List<String> includePaths;
    /** Paths used for library files. PASS 0 (STATIC) */
    private List<String> libraryPaths;
+   /** All library C-files loaded. PASS 0-4 (STATIC) */
+   private List<String> libraryFiles;
    /** Paths used for target files. PASS 0 (STATIC) */
    private List<String> targetPlatformPaths;
    /** All loaded H/C-files. PASS 0 (STATIC) */
@@ -111,6 +115,7 @@ public class Program {
       this.log = new CompileLog();
       this.includePaths = new ArrayList<>();
       this.libraryPaths = new ArrayList<>();
+      this.libraryFiles = new ArrayList<>();
       this.targetPlatformPaths = new ArrayList<>();
       this.loadedFiles = new ArrayList<>();
       this.asmResourceFiles = new ArrayList<>();
@@ -123,7 +128,6 @@ public class Program {
     */
    public void endPass1() {
       this.includePaths = null;
-      this.libraryPaths = null;
       this.targetPlatformPaths = null;
       this.loadedFiles = null;
       this.procedureModifiedVars = null;
@@ -134,6 +138,8 @@ public class Program {
     * Clears all data that is only used in PASS 2-4
     */
    public void endPass4() {
+      this.libraryPaths = null;
+      this.libraryFiles = null;
       this.mainFileComments = null;
       this.callGraph = null;
       this.variableReferenceInfos = null;
@@ -263,6 +269,31 @@ public class Program {
 
    public List<String> getLibraryPaths() {
       return libraryPaths;
+   }
+
+   public List<String> getLibraryFiles() {
+      return libraryFiles;
+   }
+
+   public boolean isLibraryFile(String fileName) {
+      if(fileName == null || libraryPaths == null) return false;
+      try {
+         Path path = Paths.get(fileName).toAbsolutePath().normalize();
+         String normPath = path.toString().toLowerCase();
+         for(String libPath : libraryPaths) {
+            Path normLibPath = Paths.get(libPath).toAbsolutePath().normalize();
+            String normLibStr = normLibPath.toString().toLowerCase();
+            if(!normLibStr.endsWith(File.separator)) {
+               normLibStr += File.separator;
+            }
+            if(normPath.startsWith(normLibStr)) {
+               return true;
+            }
+         }
+      } catch(Exception e) {
+         // Ignore invalid paths
+      }
+      return false;
    }
 
    public List<String> getTargetPlatformPaths() {

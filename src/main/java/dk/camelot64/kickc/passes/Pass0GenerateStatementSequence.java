@@ -657,7 +657,12 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
     */
    private Procedure declareProcedure(boolean defineProcedure, ParserRuleContext ctx, StatementSource statementSource) {
 
-      Procedure procedure = new Procedure(varDecl.getVarName(), (SymbolTypeProcedure) varDecl.getEffectiveType(), program.getScope(), currentSegmentCode, currentSegmentData, currentCallingConvention, currentBank);
+      boolean isLibrary = program.isLibraryFile(statementSource != null ? statementSource.getFileName() : null);
+      String segCode = isLibrary ? Scope.SEGMENT_CODE_DEFAULT : currentSegmentCode;
+      String segData = isLibrary ? Scope.SEGMENT_DATA_DEFAULT : currentSegmentData;
+      Bank bank = isLibrary ? Bank.COMMON : currentBank;
+
+      Procedure procedure = new Procedure(varDecl.getVarName(), (SymbolTypeProcedure) varDecl.getEffectiveType(), program.getScope(), segCode, segData, currentCallingConvention, bank);
       addDirectives(procedure, varDecl.getDeclDirectives());
       // Check if the declaration matches any existing declaration!
       final Symbol existingSymbol = program.getScope().getSymbol(procedure.getRef());
@@ -709,19 +714,19 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             if(parameter.name == null)
                throw new CompileError("Illegal unnamed parameter.", statementSource);
 
-            VariableBuilder varBuilder = new VariableBuilder(parameter.name, getCurrentScope(), true, false, parameter.type, null, currentSegmentData, program.getTargetPlatform().getVariableBuilderConfig());
+            VariableBuilder varBuilder = new VariableBuilder(parameter.name, getCurrentScope(), true, false, parameter.type, null, segData, program.getTargetPlatform().getVariableBuilderConfig());
             final Variable paramVar = varBuilder.build();
             parameterList.add(paramVar);
          }
          procedure.setParameters(parameterList);
-         procedure.setSegmentData(currentSegmentData);
-         procedure.setSegmentCode(currentSegmentCode);
-         if(procedure.getBank().isCommon()) {
-            procedure.setBank(currentBank);
+         procedure.setSegmentData(segData);
+         procedure.setSegmentCode(segCode);
+         if(procedure.getBank().isCommon() || isLibrary) {
+            procedure.setBank(bank);
          }
          // Add return variable
          if(!SymbolType.VOID.equals(procedure.getReturnType())) {
-            final VariableBuilder builder = new VariableBuilder("return", procedure, false, false, procedure.getReturnType(), varDecl.getDeclDirectives(), currentSegmentData, program.getTargetPlatform().getVariableBuilderConfig());
+            final VariableBuilder builder = new VariableBuilder("return", procedure, false, false, procedure.getReturnType(), varDecl.getDeclDirectives(), segData, program.getTargetPlatform().getVariableBuilderConfig());
             builder.build();
          }
          // exit the procedure
@@ -1196,7 +1201,8 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             final List<Directive> effectiveDirectives = varDecl.getDeclDirectives();
             final List<Comment> declComments = varDecl.getDeclComments();
             varDecl.exitVar();
-            VariableBuilder varBuilder = new VariableBuilder(varName, getCurrentScope(), false, false, effectiveType, effectiveDirectives, currentSegmentData, program.getTargetPlatform().getVariableBuilderConfig());
+            String segData = program.isLibraryFile(declSource != null ? declSource.getFileName() : null) ? Scope.SEGMENT_DATA_DEFAULT : currentSegmentData;
+            VariableBuilder varBuilder = new VariableBuilder(varName, getCurrentScope(), false, false, effectiveType, effectiveDirectives, segData, program.getTargetPlatform().getVariableBuilderConfig());
             Variable variable = varBuilder.build();
             if(isStructMember && (initializer != null))
                throw new CompileError("Initializer not supported inside structs " + effectiveType.toCDecl(), declSource);
@@ -1305,7 +1311,8 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       ConstantArrayKickAsm constantArrayKickAsm = new ConstantArrayKickAsm(((SymbolTypePointer) varDecl.getEffectiveType()).getElementType(), kasm.kickAsmCode, kasm.uses, ((SymbolTypePointer) effectiveType).getArraySpec().getArraySize());
       // Add a constant variable
       Scope scope = getCurrentScope();
-      VariableBuilder varBuilder = new VariableBuilder(varName, scope, false, false, varDecl.getEffectiveType(), varDecl.getDeclDirectives(), currentSegmentData, program.getTargetPlatform().getVariableBuilderConfig());
+      String segData = program.isLibraryFile(statementSource != null ? statementSource.getFileName() : null) ? Scope.SEGMENT_DATA_DEFAULT : currentSegmentData;
+      VariableBuilder varBuilder = new VariableBuilder(varName, scope, false, false, varDecl.getEffectiveType(), varDecl.getDeclDirectives(), segData, program.getTargetPlatform().getVariableBuilderConfig());
       Variable variable = varBuilder.build();
       // Set constant value
       variable.setInitValue(getConstInitValue(constantArrayKickAsm, null, statementSource));
@@ -1854,7 +1861,8 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       String varName = varDecl.getVarName();
       Variable lValue;
       if(varType != null) {
-         VariableBuilder varBuilder = new VariableBuilder(varName, blockScope, false, false, varType, varDecl.getDeclDirectives(), currentSegmentData, program.getTargetPlatform().getVariableBuilderConfig());
+         String segData = program.isLibraryFile(statementSource != null ? statementSource.getFileName() : null) ? Scope.SEGMENT_DATA_DEFAULT : currentSegmentData;
+         VariableBuilder varBuilder = new VariableBuilder(varName, blockScope, false, false, varType, varDecl.getDeclDirectives(), segData, program.getTargetPlatform().getVariableBuilderConfig());
          lValue = varBuilder.build();
       } else {
          lValue = getCurrentScope().findVariable(varName);

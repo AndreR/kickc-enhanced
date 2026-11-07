@@ -53,8 +53,11 @@ public class ConstantBinary implements ConstantValue {
    @Override
    public ConstantLiteral calculateLiteral(ProgramScope scope) {
       ConstantLiteral literal = operator.calculateLiteral(left.calculateLiteral(scope), right.calculateLiteral(scope));
-      if(literal instanceof ConstantInteger && SymbolType.NUMBER.equals(literal.getType(scope))) {
-         ((ConstantInteger) literal).setType(getType(scope));
+      if(literal instanceof ConstantInteger) {
+         SymbolType currentType = getType(scope);
+         if(SymbolType.NUMBER.equals(literal.getType(scope)) || (currentType != null && currentType.getSizeBytes() > literal.getType(scope).getSizeBytes())) {
+            ((ConstantInteger) literal).setType(currentType);
+         }
       }
       return literal;
    }
@@ -63,7 +66,23 @@ public class ConstantBinary implements ConstantValue {
    public SymbolType getType(ProgramScope scope) {
       SymbolType leftType = SymbolTypeInference.inferType(scope, left);
       SymbolType rightType = SymbolTypeInference.inferType(scope, right);
-      return operator.inferType(leftType, rightType);
+      SymbolType binaryType = operator.inferType(leftType, rightType);
+      if(operator instanceof dk.camelot64.kickc.model.operators.OperatorShiftLeft) {
+         try {
+            ConstantLiteral lit = operator.calculateLiteral(left.calculateLiteral(scope), right.calculateLiteral(scope));
+            if(lit instanceof ConstantInteger) {
+               long val = ((ConstantInteger) lit).getInteger();
+               if(val > 0xffffL) {
+                  return SymbolType.DWORD;
+               } else if(val > 0xffL || val < 0) {
+                  return SymbolType.WORD;
+               }
+            }
+         } catch(Exception e) {
+            // Cannot calculate statically
+         }
+      }
+      return binaryType;
    }
 
    @Override
