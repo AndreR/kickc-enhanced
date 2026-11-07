@@ -20,13 +20,23 @@
   * **`SAX <mem>`:** Added native Zero-Page fragment (`vbuz1=vbuaa_band_vbuxx.asm`) storing `A & X` directly into zero-page cells in 3 cycles.
   * **`ALR #{imm}`:** Collapses `AND #{imm}; LSR A` into a single 2-byte, 2-cycle instruction.
   * **`DCP <mem>` & `ISC <mem>`:** Folds decrement/increment memory combined with compare/subtract into single R-M-W opcodes.
+  * **Accumulator Shift Folding & Zero-Extension:** Direct lowering of 16-to-8 bit right-shifts by 2 (`lsr; lsr`) via the accumulator, and redundant 16-bit zero-extension before shift removal.
   * **Zero/Sign-Flag Predication & Redundant Compare Elimination:** Automatically removes redundant `CMP #0`, `CPX #0`, `CPY #0` before conditional branches when preceding instructions already define Z and N flags.
   * **Redundant Load Elimination:** Removes dead `LDA <mem>` after `DEC/INC <mem>` before branches when fallthrough paths overwrite the accumulator.
   * **Micro-Peepholes:** Eliminates redundant `EOR #0` (e.g. from boolean casts) and redundant register roundtrips (`TAX; TXA`, `TXA; TAX`, `TAY; TYA`, `TYA; TAY`).
   * **Strict Safety:** Excludes unstable/analog opcodes (`SHA`, `SHX`, `SHY`, `TAS`, `ANE`, `LAX #imm`) to guarantee 100% hardware and VIC-II DMA stability.
 
-* **Tail Call Optimization (`Pass5TailCallOptimization`):**  
-  Automatically converts function tail calls (`JSR <target>` followed immediately by `RTS` or labeled `__breturn: RTS`) into `JMP <target>`, and folds long-branch return jumps (`jmp __breturn`) directly into `rts` during `Pass5FixLongBranches`. Saves 1 byte and 6 CPU cycles per function exit and prevents unnecessary stack growth.
+* **Tail Call & Return Trampoline Optimization (`Pass5TailCallOptimization` & `Pass5FixLongBranches`):**  
+  * Automatically converts function tail calls (`JSR <target>` followed immediately by `RTS` or labeled `__breturn: RTS`) into `JMP <target>`.
+  * **Return Trampoline Relaxation:** Detects conditional long branch trampolines jumping to function return points (`rts` / `__breturn`) and replaces them directly with inverted local branches and return instructions, saving code size and CPU cycles across large programs.
+
+* **Dead Store & Dead Load-and-Store Pair Elimination with `CanonicalResolver` (`Pass5DeadStoreElimination`):**  
+  * Eliminates dead stores to procedure-local SSA temporaries and unused function return values in linear $O(1)$ time.
+  * **Recursive `CanonicalResolver`:** Resolves all scope-local and global `.label Name = Target` definitions, symbol alias chains, and byte offsets (`+1`, `+2`, etc.) to canonical keys and physical addresses, ensuring variables accessed under different SSA/alias names are safely recognized as live.
+  * **Register A & Flag Safety:** Employs precise `readsRegisterA` tracking to preserve necessary loads when subsequent instructions (e.g. `sta LiveVar`) consume register A, only removing loads when A and status flags are provably overwritten without prior reads.
+
+* **Static Register Tracking Across Anonymous Forward Labels (`AsmProgramStaticRegisterValues`):**  
+  * Tracks static values of registers `A`, `X`, and `Y` across local forward-only anonymous labels (`!:`) when skipped intermediate instructions (such as 16-bit pointer high-byte increments `inc ptr / bne !+ / inc ptr+1 / !:`) do not touch the tracked registers. Eliminates redundant loads in inner loops.
 
 * **Sequential Cross-Chunk Peephole Engine:**  
   Overcomes KickC's historical single-statement `AsmChunk` boundary limitation by using a sequential `LineRef` pipeline across chunk borders in Pass 5.

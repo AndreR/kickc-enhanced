@@ -12,7 +12,7 @@ The prerequisites for locally building KickC are the following
 
 The steps to building KickC are
 
-1.  Download, Fork or Clone the source code from https://gitlab.com/camelot/kickc 
+1.  Download, Fork or Clone the source code from https://gitlab.com/camelot/kickc or https://github.com/AndreR/kickc-enhanced 
 2.  Build and package the KickC compiler by entering the source directory and executing `mvn package`. 
     If you want to skip the time-consuming tests you can add the option `-DskipTests`.
 3. The zipped release is placed in `target/kickc-release.zip`. You can now unzip it to a folder of your choice to start using the compiler.
