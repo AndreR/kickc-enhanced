@@ -22,6 +22,24 @@ import java.util.regex.Pattern;
  */
 public class Pass5FixLongBranches extends Pass5AsmOptimization {
 
+   private int retLabelCounter = 0;
+
+   private static class RtsRef {
+      final LineRef ref;
+      final int offset;
+      String label;
+      final boolean isStandalone;
+      boolean isTargeted;
+
+      RtsRef(LineRef ref, int offset, String label, boolean isStandalone) {
+         this.ref = ref;
+         this.offset = offset;
+         this.label = label;
+         this.isStandalone = isStandalone;
+         this.isTargeted = false;
+      }
+   }
+
    private static class BranchToFix {
       final AsmChunk chunk;
       final AsmInstruction instr;
@@ -256,22 +274,40 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
             }
          }
 
-         // Phase 1: Collect label offsets per scope
+         // Phase 1: Collect label offsets, RTS instructions, and targeted labels per scope
          Map<String, Integer> labelOffsets = new HashMap<>();
+         Map<String, List<RtsRef>> scopeRts = new HashMap<>();
+         Set<String> targetedLabels = new HashSet<>();
          String currentScope = null;
          boolean inCode = true;
          int currentOffset = 0;
+         String lastNonAnonLabel = null;
 
          for(LineRef ref : allLines) {
+            if(ref.line instanceof AsmInstruction) {
+               AsmInstruction instr = (AsmInstruction) ref.line;
+               String target = instr.getOperandJumpTarget();
+               if(target != null) targetedLabels.add(target);
+               String op1 = instr.getOperand1();
+               if(op1 != null && !op1.startsWith("#") && !op1.startsWith("<") && !op1.startsWith(">")) {
+                  targetedLabels.add(op1);
+               }
+            }
+         }
+
+         for(int lIdx = 0; lIdx < allLines.size(); lIdx++) {
+            LineRef ref = allLines.get(lIdx);
             AsmLine line = ref.line;
             if(line instanceof AsmScopeBegin) {
                currentScope = ((AsmScopeBegin) line).getLabel();
                inCode = true;
                currentOffset = 0;
+               lastNonAnonLabel = null;
             } else if(line instanceof AsmScopeEnd) {
                currentScope = null;
                inCode = true;
                currentOffset = 0;
+               lastNonAnonLabel = null;
             } else if(currentScope != null) {
                if(line instanceof AsmSegment) {
                   String seg = ((AsmSegment) line).getName();
@@ -285,7 +321,33 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                      String label = ((AsmLabel) line).getLabel();
                      if(!label.startsWith("!")) {
                         labelOffsets.put(currentScope + "::" + label, currentOffset);
+                        lastNonAnonLabel = label;
                      }
+                  } else if(line instanceof AsmInstruction) {
+                     AsmInstruction instr = (AsmInstruction) line;
+                     if(instr.getCpuOpcode() != null && "rts".equals(instr.getCpuOpcode().getMnemonic())) {
+                        boolean isPartTrampoline = false;
+                        for(int prevIdx = lIdx - 1; prevIdx >= 0; prevIdx--) {
+                           AsmLine prevLine = allLines.get(prevIdx).line;
+                           if(prevLine instanceof AsmComment) continue;
+                           if(prevLine instanceof AsmInstruction) {
+                              AsmInstruction prevInstr = (AsmInstruction) prevLine;
+                              if(prevInstr.getCpuOpcode() != null && invertBranch(prevInstr.getCpuOpcode()) != null) {
+                                 String bTarget = prevInstr.getOperandJumpTarget();
+                                 if(bTarget != null && bTarget.startsWith("!")) {
+                                    isPartTrampoline = true;
+                                 }
+                              }
+                           }
+                           break;
+                        }
+                        RtsRef rtsRef = new RtsRef(ref, currentOffset, lastNonAnonLabel, !isPartTrampoline);
+                        if(lastNonAnonLabel != null && targetedLabels.contains(lastNonAnonLabel)) {
+                           rtsRef.isTargeted = true;
+                        }
+                        scopeRts.computeIfAbsent(currentScope, k -> new ArrayList<>()).add(rtsRef);
+                     }
+                     lastNonAnonLabel = null;
                   }
                   currentOffset += line.getLineBytes();
                }
@@ -373,6 +435,122 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                                        anyRelaxed = true;
                                        totalRelaxed++;
                                        break;
+                                    }
+                                 }
+                              }
+                           } else if(instr2.getCpuOpcode() != null && "rts".equals(instr2.getCpuOpcode().getMnemonic())) {
+                              String branchTarget = instr1.getOperandJumpTarget();
+                              String fallthroughLabel = label3.getLabel();
+
+                              boolean isReturnTrampoline = (branchTarget != null && fallthroughLabel != null &&
+                                 fallthroughLabel.startsWith("!") && fallthroughLabel.length() > 2 &&
+                                 !fallthroughLabel.contains("+") && !fallthroughLabel.contains("-") &&
+                                 branchTarget.equals(fallthroughLabel + "+"));
+
+                              if(isReturnTrampoline) {
+                                 boolean rtsIsTargeted = false;
+                                 List<RtsRef> currentScopeRtsList = scopeRts.get(currentScope);
+                                 if(currentScopeRtsList != null) {
+                                    for(RtsRef r : currentScopeRtsList) {
+                                       if(r.ref.line == ref2.line && r.isTargeted) {
+                                          rtsIsTargeted = true;
+                                          break;
+                                       }
+                                    }
+                                 }
+
+                                 if(!rtsIsTargeted) {
+                                    // Sub-case 1: Check if followed by jmp TARGET
+                                    int idx4 = findNextInstruction(allLines, idx3 + 1);
+                                    if(idx4 != -1) {
+                                       LineRef ref4 = allLines.get(idx4);
+                                       if(ref4.line instanceof AsmInstruction) {
+                                          AsmInstruction instr4 = (AsmInstruction) ref4.line;
+                                          if(instr4.getCpuOpcode() != null && "jmp".equals(instr4.getCpuOpcode().getMnemonic())) {
+                                             String jmpTarget = instr4.getOperand1();
+                                             if(jmpTarget != null && !jmpTarget.startsWith("!")) {
+                                                Integer targetOffset = labelOffsets.get(currentScope + "::" + jmpTarget);
+                                                if(targetOffset != null) {
+                                                   int branchPc = currentOffset + 2;
+                                                   int distance = targetOffset - branchPc;
+                                                   if(distance >= -120 && distance <= 120) {
+                                                      getLog().append("Relaxing branch-rts-jmp to " + instr1.getCpuOpcode().getMnemonic() + " " + jmpTarget + " and rts");
+                                                      instr1.setOperandJumpTarget(jmpTarget);
+                                                      ref3.chunk.getLines().remove(ref3.line);
+                                                      ref4.chunk.getLines().remove(ref4.line);
+                                                      anyRelaxed = true;
+                                                      totalRelaxed++;
+                                                      break;
+                                                   }
+                                                }
+                                             }
+                                          }
+                                       }
+                                    }
+
+                                    // Sub-case 2: Relax return trampoline to __breturn
+                                    Integer breturnOffset = labelOffsets.get(currentScope + "::__breturn");
+                                    if(breturnOffset != null) {
+                                       int branchPc = currentOffset + 2;
+                                       int distance = breturnOffset - branchPc;
+                                       if(distance >= -120 && distance <= 120) {
+                                          getLog().append("Relaxing return trampoline to " + inv1.getMnemonic() + " __breturn");
+                                          instr1.setCpuOpcode(inv1);
+                                          instr1.setOperandJumpTarget("__breturn");
+                                          ref2.chunk.getLines().remove(ref2.line);
+                                          ref3.chunk.getLines().remove(ref3.line);
+                                          anyRelaxed = true;
+                                          totalRelaxed++;
+                                          break;
+                                       }
+                                    }
+
+                                    // Sub-case 3: Relax return trampoline to another RTS in currentScope
+                                    if(currentScopeRtsList != null) {
+                                       RtsRef bestRts = null;
+                                       int bestDist = 999999;
+                                       for(RtsRef r : currentScopeRtsList) {
+                                          if(r.ref.line == ref2.line) continue;
+                                          int branchPc = currentOffset + 2;
+                                          int dist = r.offset - branchPc;
+                                          if(dist >= -120 && dist <= 120) {
+                                             if(r.isStandalone && Math.abs(dist) < Math.abs(bestDist)) {
+                                                bestDist = dist;
+                                                bestRts = r;
+                                             }
+                                          }
+                                       }
+                                       if(bestRts == null) {
+                                          for(RtsRef r : currentScopeRtsList) {
+                                             if(r.ref.line == ref2.line) continue;
+                                             int branchPc = currentOffset + 2;
+                                             int dist = r.offset - branchPc;
+                                             if(dist > 0 && dist <= 120) {
+                                                if(Math.abs(dist) < Math.abs(bestDist)) {
+                                                   bestDist = dist;
+                                                   bestRts = r;
+                                                }
+                                             }
+                                          }
+                                       }
+
+                                       if(bestRts != null) {
+                                          String targetLabel = bestRts.label;
+                                          if(targetLabel == null) {
+                                             targetLabel = "__rts_" + (++retLabelCounter);
+                                             bestRts.label = targetLabel;
+                                             bestRts.ref.chunk.addLineBefore(bestRts.ref.line, new AsmLabel(targetLabel));
+                                          }
+                                          bestRts.isTargeted = true;
+                                          getLog().append("Relaxing return trampoline to " + inv1.getMnemonic() + " " + targetLabel);
+                                          instr1.setCpuOpcode(inv1);
+                                          instr1.setOperandJumpTarget(targetLabel);
+                                          ref2.chunk.getLines().remove(ref2.line);
+                                          ref3.chunk.getLines().remove(ref3.line);
+                                          anyRelaxed = true;
+                                          totalRelaxed++;
+                                          break;
+                                       }
                                     }
                                  }
                               }

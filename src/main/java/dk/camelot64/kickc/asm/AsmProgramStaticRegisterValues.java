@@ -4,8 +4,7 @@ import dk.camelot64.cpufamily6502.CpuAddressingMode;
 import dk.camelot64.cpufamily6502.CpuClobber;
 import dk.camelot64.cpufamily6502.CpuOpcode;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Perform static analysis of an ASM program infering information about the values of registers entering each instruction
@@ -15,6 +14,27 @@ public class AsmProgramStaticRegisterValues {
    private AsmProgram program;
 
    private Map<AsmInstruction, AsmRegisterValues> values;
+   private Map<String, List<AsmRegisterValues>> forwardBranches = new HashMap<>();
+   private boolean lastInstructionWasUnconditionalControlFlow = false;
+
+   private static boolean areImmOrEqual(String s1, String s2) {
+      if(s1 == null || s2 == null) return false;
+      if(s1.equals(s2)) return true;
+      return matchImm(s1, s2);
+   }
+
+   private static AsmRegisterValues mergeRegisterValues(AsmRegisterValues v1, AsmRegisterValues v2) {
+      AsmRegisterValues res = new AsmRegisterValues();
+      if(areImmOrEqual(v1.getA(), v2.getA())) res.setA(v1.getA());
+      if(areImmOrEqual(v1.getX(), v2.getX())) res.setX(v1.getX());
+      if(areImmOrEqual(v1.getY(), v2.getY())) res.setY(v1.getY());
+      if(areImmOrEqual(v1.getZ(), v2.getZ())) res.setZ(v1.getZ());
+      if(v1.getaMem() != null && v1.getaMem().equals(v2.getaMem())) res.setaMem(v1.getaMem());
+      if(v1.getxMem() != null && v1.getxMem().equals(v2.getxMem())) res.setxMem(v1.getxMem());
+      if(v1.getyMem() != null && v1.getyMem().equals(v2.getyMem())) res.setyMem(v1.getyMem());
+      if(v1.getzMem() != null && v1.getzMem().equals(v2.getzMem())) res.setzMem(v1.getzMem());
+      return res;
+   }
 
    public AsmProgramStaticRegisterValues(AsmProgram program) {
       this.program = program;
@@ -225,6 +245,8 @@ public class AsmProgramStaticRegisterValues {
 
    private void initValues() {
       AsmRegisterValues current = new AsmRegisterValues();
+      forwardBranches.clear();
+      lastInstructionWasUnconditionalControlFlow = false;
       for(AsmChunk chunk : program.getChunks()) {
          for(AsmLine line : chunk.getLines()) {
             current = updateStaticRegisterValues(current, line);
@@ -233,16 +255,35 @@ public class AsmProgramStaticRegisterValues {
    }
 
    private AsmRegisterValues updateStaticRegisterValues(AsmRegisterValues current, AsmLine line) {
-      if(line instanceof AsmLabel) {
+      if(line instanceof AsmScopeBegin || line instanceof AsmScopeEnd) {
+         forwardBranches.clear();
+         lastInstructionWasUnconditionalControlFlow = false;
          current = new AsmRegisterValues();
-      } else if(line instanceof AsmScopeBegin) {
-         current = new AsmRegisterValues();
-      } else if(line instanceof AsmScopeEnd) {
-         current = new AsmRegisterValues();
+      } else if(line instanceof AsmLabel) {
+         String lbl = ((AsmLabel) line).getLabel();
+         if(forwardBranches.containsKey(lbl)) {
+            List<AsmRegisterValues> branchStates = forwardBranches.remove(lbl);
+            AsmRegisterValues merged = null;
+            if(!lastInstructionWasUnconditionalControlFlow) {
+               merged = current;
+            }
+            for(AsmRegisterValues bs : branchStates) {
+               if(merged == null) {
+                  merged = bs;
+               } else {
+                  merged = mergeRegisterValues(merged, bs);
+               }
+            }
+            current = (merged != null) ? merged : new AsmRegisterValues();
+         } else {
+            current = new AsmRegisterValues();
+         }
+         lastInstructionWasUnconditionalControlFlow = false;
       } else if(line instanceof AsmInlineKickAsm) {
          current = new AsmRegisterValues(current);
          final CpuClobber cpuClobber = ((AsmInlineKickAsm) line).getClobber();
          handleClobber(current, cpuClobber);
+         lastInstructionWasUnconditionalControlFlow = false;
       } else if(line instanceof AsmInstruction) {
          AsmInstruction instruction = (AsmInstruction) line;
          values.put(instruction, current);
@@ -374,6 +415,19 @@ public class AsmProgramStaticRegisterValues {
          if(mnemnonic.equals("clc")) {
             current.setFlagC(Boolean.FALSE);
          }
+         if(cpuOpcode.isJump() && instruction.getOperandJumpTarget() != null) {
+            String target = instruction.getOperandJumpTarget();
+            if(target.startsWith("!") && target.endsWith("+")) {
+               String labelTarget = target.substring(0, target.length() - 1);
+               AsmRegisterValues snapshot = new AsmRegisterValues(current);
+               snapshot.setFlagC(null);
+               snapshot.setFlagZ(null);
+               snapshot.setFlagN(null);
+               snapshot.setFlagV(null);
+               forwardBranches.computeIfAbsent(labelTarget, k -> new ArrayList<>()).add(snapshot);
+            }
+         }
+         lastInstructionWasUnconditionalControlFlow = mnemnonic.equals("jmp") || mnemnonic.equals("rts") || mnemnonic.equals("rti");
       }
       return current;
    }

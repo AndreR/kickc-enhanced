@@ -432,6 +432,101 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
             }
             if(passModified) break;
 
+            // 2c. Dead Load-and-Store Pair Elimination:
+            // Eliminates dead stores from function returns (e.g. div32u16u.return+2, strlen.return+1)
+            // where the stored variable/offset is NEVER read in the procedure scope, and register A
+            // is subsequently overwritten without reading A or flags.
+            // Optimized with pre-collected scope read-set for O(1) checks.
+            Set<String> allReadVarsInScope = new HashSet<>();
+            for(LineRef rl : sLines) {
+               if(rl.line instanceof AsmInstruction) {
+                  AsmInstruction ri = (AsmInstruction) rl.line;
+                  if(ri.getCpuOpcode() != null) {
+                     String rm = ri.getCpuOpcode().getMnemonic();
+                     if(!rm.equals("sta") && !rm.equals("stx") && !rm.equals("sty")) {
+                        String op = ri.getOperand1();
+                        if(op != null) allReadVarsInScope.add(op);
+                     }
+                  }
+               } else if(rl.line instanceof AsmInlineKickAsm) {
+                  allReadVarsInScope.add(((AsmInlineKickAsm) rl.line).getAsm());
+               } else if(rl.line instanceof AsmLabelDecl) {
+                  allReadVarsInScope.add(((AsmLabelDecl) rl.line).getValue());
+               }
+            }
+
+            for(int k = 0; k < sLines.size(); k++) {
+               AsmLine l1 = sLines.get(k).line;
+               if(!(l1 instanceof AsmInstruction)) continue;
+               AsmInstruction inst1 = (AsmInstruction) l1;
+               if(inst1.isNoOptimize() || inst1.getCpuOpcode() == null) continue;
+               if(!("lda".equals(inst1.getCpuOpcode().getMnemonic()))) continue;
+
+               int nextStoreIdx = -1;
+               for(int n = k + 1; n < sLines.size(); n++) {
+                  AsmLine nl = sLines.get(n).line;
+                  if(nl instanceof AsmComment || nl instanceof AsmConstant || nl instanceof AsmLabelDecl) continue;
+                  if(nl instanceof AsmInstruction) {
+                     AsmInstruction ni = (AsmInstruction) nl;
+                     if(ni.getCpuOpcode() != null && "sta".equals(ni.getCpuOpcode().getMnemonic())) {
+                        CpuAddressingMode nm = ni.getCpuOpcode().getAddressingMode();
+                        if(nm.equals(CpuAddressingMode.ZP) || nm.equals(CpuAddressingMode.ABS)) {
+                           nextStoreIdx = n;
+                        }
+                     }
+                  }
+                  break;
+               }
+
+               if(nextStoreIdx != -1) {
+                  AsmInstruction inst2 = (AsmInstruction) sLines.get(nextStoreIdx).line;
+                  String destOp = inst2.getOperand1();
+                  if(destOp != null && isSsaTemp(destOp) && !Pass5RedundantStoreAndReloadElimination.isHardwareAddress(destOp)) {
+                     boolean isRead = false;
+                     for(String rv : allReadVarsInScope) {
+                        if(isExactVarMatch(rv, destOp) || rv.contains(destOp)) {
+                           isRead = true;
+                           break;
+                        }
+                     }
+
+                     if(!isRead) {
+                        boolean overwritten = false;
+                        boolean safeToEliminate = true;
+                        for(int f = nextStoreIdx + 1; f < sLines.size(); f++) {
+                           AsmLine fl = sLines.get(f).line;
+                           if(fl instanceof AsmComment || fl instanceof AsmConstant || fl instanceof AsmLabelDecl) continue;
+                           if(fl instanceof AsmLabel || fl instanceof AsmScopeBegin || fl instanceof AsmScopeEnd || fl instanceof AsmInlineKickAsm) {
+                              safeToEliminate = false; break;
+                           }
+                           if(fl instanceof AsmInstruction) {
+                              AsmInstruction fi = (AsmInstruction) fl;
+                              if(fi.getCpuOpcode() == null) { safeToEliminate = false; break; }
+                              String fm = fi.getCpuOpcode().getMnemonic();
+                              if(fi.getCpuOpcode().isJump()) { safeToEliminate = false; break; }
+                              if(fm.startsWith("b")) { safeToEliminate = false; break; }
+                              if(overwritesRegister(fi, "A")) {
+                                 overwritten = true; break;
+                              }
+                              if(doesInstructionModifyA(fi) || fm.equals("tax") || fm.equals("tay") || fm.equals("cmp")) {
+                                 safeToEliminate = false; break;
+                              }
+                           }
+                        }
+
+                        if(safeToEliminate && overwritten) {
+                           getLog().append("Eliminating dead load-and-store pair: " + inst1.getAsm() + " ; " + inst2.getAsm());
+                           sLines.get(k).chunk.getLines().remove(inst1);
+                           sLines.get(nextStoreIdx).chunk.getLines().remove(inst2);
+                           passModified = true;
+                           overallModified = true;
+                           k = nextStoreIdx;
+                        }
+                     }
+                  }
+               }
+            }
+
             // 3. Scan scope for any READ / ALIAS / ADDRESS-OF / HARDWARE-ADDR references to candidates
             Set<String> readVars = new HashSet<>();
             for(LineRef ref : sLines) {

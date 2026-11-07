@@ -88,6 +88,19 @@ public class AsmChunk {
     * @param line The line to look for. If it is not found an Exception is thrown
     * @param add The line to add
     */
+   public void addLineBefore(AsmLine line, AsmLine add) {
+      ListIterator<AsmLine> it = lines.listIterator();
+      while(it.hasNext()) {
+         AsmLine asmLine = it.next();
+         if(line.equals(asmLine)) {
+            it.previous();
+            it.add(add);
+            return;
+         }
+      }
+      throw new NoSuchElementException("Item not found " + line);
+   }
+
    public void addLineAfter(AsmLine line, AsmLine add) {
       ListIterator<AsmLine> it = lines.listIterator();
       while(it.hasNext()) {

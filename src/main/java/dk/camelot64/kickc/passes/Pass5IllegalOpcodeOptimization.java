@@ -772,6 +772,137 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
             }
 
             // -------------------------------------------------------------
+            // Pattern 0f: 16-bit Zero-Extension before Left Shift
+            // sta V; lda #0; sta V+1; asl W; rol W+1
+            // ->
+            // asl; sta V; lda #0; rol; sta V+1
+            // -------------------------------------------------------------
+            if(mnem1.equals("sta") && (mode1.equals(CpuAddressingMode.ZP) || mode1.equals(CpuAddressingMode.ABS))) {
+               String opV = inst1.getOperand1();
+               int idx2 = findNextInstruction(allLines, i + 1);
+               if(idx2 != -1) {
+                  LineRef r2 = allLines.get(idx2);
+                  AsmInstruction in2 = (AsmInstruction) r2.line;
+                  if(in2.getCpuOpcode() != null && "lda".equals(in2.getCpuOpcode().getMnemonic()) &&
+                     AsmProgramStaticRegisterValues.matchImm(in2.getOperand1(), "0")) {
+                     int idx3 = findNextInstruction(allLines, idx2 + 1);
+                     if(idx3 != -1) {
+                        LineRef r3 = allLines.get(idx3);
+                        AsmInstruction in3 = (AsmInstruction) r3.line;
+                        if(in3.getCpuOpcode() != null && "sta".equals(in3.getCpuOpcode().getMnemonic()) &&
+                           isSameLocation(in3.getOperand1(), opV + "+1", scopeAliasMap.get(currentScope))) {
+                           int idx4 = findNextInstruction(allLines, idx3 + 1);
+                           if(idx4 != -1) {
+                              LineRef r4 = allLines.get(idx4);
+                              AsmInstruction in4 = (AsmInstruction) r4.line;
+                              if(in4.getCpuOpcode() != null && "asl".equals(in4.getCpuOpcode().getMnemonic()) &&
+                                 isSameLocation(in4.getOperand1(), opV, scopeAliasMap.get(currentScope))) {
+                                 int idx5 = findNextInstruction(allLines, idx4 + 1);
+                                 if(idx5 != -1) {
+                                    LineRef r5 = allLines.get(idx5);
+                                    AsmInstruction in5 = (AsmInstruction) r5.line;
+                                    if(in5.getCpuOpcode() != null && "rol".equals(in5.getCpuOpcode().getMnemonic()) &&
+                                       isSameLocation(in5.getOperand1(), opV + "+1", scopeAliasMap.get(currentScope))) {
+                                       getLog().append("Optimizing 16-bit zero-extension before shift: " + opV);
+                                       CpuOpcode aslAcc = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("asl", CpuAddressingMode.NON, false);
+                                       CpuOpcode rolAcc = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("rol", CpuAddressingMode.NON, false);
+                                       AsmInstruction staV = new AsmInstruction(inst1.getCpuOpcode(), opV, null, null);
+                                       inst1.setCpuOpcode(aslAcc);
+                                       inst1.setOperand1(null);
+                                       ref1.chunk.addLineAfter(inst1, staV);
+                                       in4.setCpuOpcode(rolAcc);
+                                       in4.setOperand1(null);
+                                       in5.setCpuOpcode(in3.getCpuOpcode());
+                                       in5.setOperand1(in3.getOperand1());
+                                       r3.chunk.getLines().remove(in3);
+                                       passModified = true;
+                                       overallModified = true;
+                                       break;
+                                    }
+                                 }
+                              }
+                           }
+                        }
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 0g: 16-to-8 Bit Right Shift by 2 folding
+            // lda HI; lsr; sta T+1; lda LO; ror; sta T; lsr T+1; ror T; lda T; sta DEST
+            // ->
+            // lda HI; lsr; lda LO; ror; lsr; sta DEST
+            // -------------------------------------------------------------
+            if(mnem1.equals("lda") && (mode1.equals(CpuAddressingMode.ZP) || mode1.equals(CpuAddressingMode.ABS))) {
+               int idx2 = findNextInstruction(allLines, i + 1);
+               if(idx2 != -1) {
+                  LineRef r2 = allLines.get(idx2);
+                  AsmInstruction in2 = (AsmInstruction) r2.line;
+                  if(in2.getCpuOpcode() != null && "lsr".equals(in2.getCpuOpcode().getMnemonic()) &&
+                     in2.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.NON)) {
+                     int idx3 = findNextInstruction(allLines, idx2 + 1);
+                     if(idx3 != -1) {
+                        LineRef r3 = allLines.get(idx3);
+                        AsmInstruction in3 = (AsmInstruction) r3.line;
+                        if(in3.getCpuOpcode() != null && "sta".equals(in3.getCpuOpcode().getMnemonic())) {
+                           String opT1 = in3.getOperand1();
+                           if(opT1 != null && opT1.endsWith("+1")) {
+                              String opT = opT1.substring(0, opT1.length() - 2);
+                              int idx4 = findNextInstruction(allLines, idx3 + 1);
+                              int idx5 = (idx4 != -1) ? findNextInstruction(allLines, idx4 + 1) : -1;
+                              int idx6 = (idx5 != -1) ? findNextInstruction(allLines, idx5 + 1) : -1;
+                              int idx7 = (idx6 != -1) ? findNextInstruction(allLines, idx6 + 1) : -1;
+                              int idx8 = (idx7 != -1) ? findNextInstruction(allLines, idx7 + 1) : -1;
+                              int idx9 = (idx8 != -1) ? findNextInstruction(allLines, idx8 + 1) : -1;
+                              int idx10 = (idx9 != -1) ? findNextInstruction(allLines, idx9 + 1) : -1;
+                              if(idx10 != -1) {
+                                 AsmInstruction inst4 = (AsmInstruction) allLines.get(idx4).line;
+                                 AsmInstruction inst5 = (AsmInstruction) allLines.get(idx5).line;
+                                 AsmInstruction inst6 = (AsmInstruction) allLines.get(idx6).line;
+                                 AsmInstruction inst7 = (AsmInstruction) allLines.get(idx7).line;
+                                 AsmInstruction inst8 = (AsmInstruction) allLines.get(idx8).line;
+                                 AsmInstruction inst9 = (AsmInstruction) allLines.get(idx9).line;
+                                 AsmInstruction inst10 = (AsmInstruction) allLines.get(idx10).line;
+
+                                 if(inst4.getCpuOpcode() != null && "lda".equals(inst4.getCpuOpcode().getMnemonic()) &&
+                                    inst5.getCpuOpcode() != null && "ror".equals(inst5.getCpuOpcode().getMnemonic()) &&
+                                    inst5.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.NON) &&
+                                    inst6.getCpuOpcode() != null && "sta".equals(inst6.getCpuOpcode().getMnemonic()) &&
+                                    isSameLocation(inst6.getOperand1(), opT, scopeAliasMap.get(currentScope)) &&
+                                    inst7.getCpuOpcode() != null && "lsr".equals(inst7.getCpuOpcode().getMnemonic()) &&
+                                    isSameLocation(inst7.getOperand1(), opT1, scopeAliasMap.get(currentScope)) &&
+                                    inst8.getCpuOpcode() != null && "ror".equals(inst8.getCpuOpcode().getMnemonic()) &&
+                                    isSameLocation(inst8.getOperand1(), opT, scopeAliasMap.get(currentScope)) &&
+                                    inst9.getCpuOpcode() != null && "lda".equals(inst9.getCpuOpcode().getMnemonic()) &&
+                                    isSameLocation(inst9.getOperand1(), opT, scopeAliasMap.get(currentScope)) &&
+                                    inst10.getCpuOpcode() != null && "sta".equals(inst10.getCpuOpcode().getMnemonic())) {
+
+                                    getLog().append("Folding 16-to-8 bit right-shift by 2: " + inst10.getOperand1());
+                                    CpuOpcode lsrAcc = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lsr", CpuAddressingMode.NON, false);
+                                    inst7.setCpuOpcode(lsrAcc);
+                                    inst7.setOperand1(null);
+                                    inst8.setCpuOpcode(inst10.getCpuOpcode());
+                                    inst8.setOperand1(inst10.getOperand1());
+
+                                    allLines.get(idx3).chunk.getLines().remove(in3);
+                                    allLines.get(idx6).chunk.getLines().remove(inst6);
+                                    allLines.get(idx9).chunk.getLines().remove(inst9);
+                                    allLines.get(idx10).chunk.getLines().remove(inst10);
+
+                                    passModified = true;
+                                    overallModified = true;
+                                    break;
+                                 }
+                              }
+                           }
+                        }
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
             // Pattern 1: LDA <mem>; TAX -> LAX <mem>
             // Stable addressing modes: ZP, ABS, IZY, ABY, ZPY, IZX
             // (IMM is strictly excluded because LAX #imm is analog/unstable!)
