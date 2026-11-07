@@ -87,7 +87,7 @@ char keyboard_events[8];
 // Keyboard event buffer size. The number of events currently in the event buffer
 char keyboard_events_size = 0;
 // Current keyboard modifiers (left shift, right shift, ctrl, commodore)
-char keyboard_modifiers = 0;
+volatile char keyboard_modifiers = 0;
 // Left shift is pressed
 const char KEY_MODIFIER_LSHIFT = 1;
 // Right shift is pressed

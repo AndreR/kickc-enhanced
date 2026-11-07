@@ -113,7 +113,7 @@ char keyboard_key_pressed(char key);
 char keyboard_get_keycode(char ch);
 
 /// Current keyboard modifiers (left shift, right shift, ctrl, commodore)
-extern char keyboard_modifiers;
+extern volatile char keyboard_modifiers;
 /// Left shift is pressed
 extern const char KEY_MODIFIER_LSHIFT;
 /// Right shift is pressed
