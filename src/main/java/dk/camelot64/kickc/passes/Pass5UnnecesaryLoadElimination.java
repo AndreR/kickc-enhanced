@@ -41,7 +41,9 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                   String immValue = instruction.getOperand1();
                   AsmProgramStaticRegisterValues.AsmRegisterValues instructionValues = staticValues.getValues(instruction);
                   if(AsmProgramStaticRegisterValues.matchImm(instructionValues.getA(), immValue)) {
-                     modified = remove(lineIt);
+                     if(canRemoveRegister(lines, lineIt.previousIndex(), "A")) {
+                        modified = remove(lineIt);
+                     }
                   } else if(AsmProgramStaticRegisterValues.matchImm(instructionValues.getX(), immValue)) {
                      getLog().append("Replacing instruction " + instruction + " with TXA");
                      instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("txa", CpuAddressingMode.NON, false));
@@ -60,7 +62,9 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                   String memValue = instruction.getOperand1();
                   AsmProgramStaticRegisterValues.AsmRegisterValues instructionValues = staticValues.getValues(instruction);
                   if(instructionValues.getaMem() != null && instructionValues.getaMem().equals(memValue)) {
-                     modified = remove(lineIt);
+                     if(canRemoveRegister(lines, lineIt.previousIndex(), "A")) {
+                        modified = remove(lineIt);
+                     }
                   } else if(instructionValues.getxMem() != null && instructionValues.getxMem().equals(memValue)) {
                      getLog().append("Replacing instruction " + instruction + " with TXA");
                      instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("txa", CpuAddressingMode.NON, false));
@@ -79,7 +83,9 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                   String immValue = instruction.getOperand1();
                   AsmProgramStaticRegisterValues.AsmRegisterValues instructionValues = staticValues.getValues(instruction);
                   if(AsmProgramStaticRegisterValues.matchImm(instructionValues.getX(), immValue)) {
-                     modified = remove(lineIt);
+                     if(canRemoveRegister(lines, lineIt.previousIndex(), "X")) {
+                        modified = remove(lineIt);
+                     }
                   } else if(AsmProgramStaticRegisterValues.matchImm(instructionValues.getA(), immValue)) {
                      getLog().append("Replacing instruction " + instruction + " with TAX");
                      instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tax", CpuAddressingMode.NON, false));
@@ -90,7 +96,9 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                   String memValue = instruction.getOperand1();
                   AsmProgramStaticRegisterValues.AsmRegisterValues instructionValues = staticValues.getValues(instruction);
                   if(instructionValues.getxMem() != null && instructionValues.getxMem().equals(memValue)) {
-                     modified = remove(lineIt);
+                     if(canRemoveRegister(lines, lineIt.previousIndex(), "X")) {
+                        modified = remove(lineIt);
+                     }
                   } else if(instructionValues.getaMem() != null && instructionValues.getaMem().equals(memValue)) {
                      getLog().append("Replacing instruction " + instruction + " with TAX");
                      instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tax", CpuAddressingMode.NON, false));
@@ -101,7 +109,9 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                   String immValue = instruction.getOperand1();
                   AsmProgramStaticRegisterValues.AsmRegisterValues instructionValues = staticValues.getValues(instruction);
                   if(AsmProgramStaticRegisterValues.matchImm(instructionValues.getY(), immValue)) {
-                     modified = remove(lineIt);
+                     if(canRemoveRegister(lines, lineIt.previousIndex(), "Y")) {
+                        modified = remove(lineIt);
+                     }
                   } else if(AsmProgramStaticRegisterValues.matchImm(instructionValues.getA(), immValue)) {
                      getLog().append("Replacing instruction " + instruction + " with TAY");
                      instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tay", CpuAddressingMode.NON, false));
@@ -112,7 +122,9 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                   String memValue = instruction.getOperand1();
                   AsmProgramStaticRegisterValues.AsmRegisterValues instructionValues = staticValues.getValues(instruction);
                   if(instructionValues.getyMem() != null && instructionValues.getyMem().equals(memValue)) {
-                     modified = remove(lineIt);
+                     if(canRemoveRegister(lines, lineIt.previousIndex(), "Y")) {
+                        modified = remove(lineIt);
+                     }
                   } else if(instructionValues.getaMem() != null && instructionValues.getaMem().equals(memValue)) {
                      getLog().append("Replacing instruction " + instruction + " with TAY");
                      instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tay", CpuAddressingMode.NON, false));
@@ -159,4 +171,52 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
       return modified;
    }
 
+
+   private static boolean areFlagsNeededAfter(List<AsmLine> lines, int currentIdx) {
+      for(int k = currentIdx + 1; k < lines.size(); k++) {
+         AsmLine line = lines.get(k);
+         if(line instanceof dk.camelot64.kickc.asm.AsmComment || line instanceof dk.camelot64.kickc.asm.AsmConstant || line instanceof dk.camelot64.kickc.asm.AsmLabelDecl) continue;
+         if(line instanceof dk.camelot64.kickc.asm.AsmLabel || line instanceof dk.camelot64.kickc.asm.AsmScopeBegin || line instanceof dk.camelot64.kickc.asm.AsmScopeEnd || line instanceof dk.camelot64.kickc.asm.AsmInlineKickAsm) {
+            return true;
+         }
+         if(line instanceof AsmInstruction) {
+            AsmInstruction inst = (AsmInstruction) line;
+            if(inst.getCpuOpcode() == null) return true;
+            String mnem = inst.getCpuOpcode().getMnemonic();
+            if(mnem.equals("beq") || mnem.equals("bne") || mnem.equals("bmi") || mnem.equals("bpl") ||
+               mnem.equals("bcc") || mnem.equals("bcs") || mnem.equals("bvc") || mnem.equals("bvs")) {
+               return true;
+            }
+            if(mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty") || mnem.equals("nop")) {
+               continue;
+            }
+            return false;
+         }
+      }
+      return false;
+   }
+
+   private static boolean areFlagsEstablishedForReg(List<AsmLine> lines, int currentIdx, String reg) {
+      for(int p = currentIdx - 1; p >= 0; p--) {
+         AsmLine line = lines.get(p);
+         if(line instanceof dk.camelot64.kickc.asm.AsmComment || line instanceof dk.camelot64.kickc.asm.AsmConstant || line instanceof dk.camelot64.kickc.asm.AsmLabelDecl) continue;
+         if(line instanceof dk.camelot64.kickc.asm.AsmLabel || line instanceof dk.camelot64.kickc.asm.AsmScopeBegin || line instanceof dk.camelot64.kickc.asm.AsmScopeEnd || line instanceof dk.camelot64.kickc.asm.AsmInlineKickAsm) {
+            return false;
+         }
+         if(line instanceof AsmInstruction) {
+            AsmInstruction prev = (AsmInstruction) line;
+            if(prev.getCpuOpcode() == null) return false;
+            String mnem = prev.getCpuOpcode().getMnemonic();
+            if(mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty") || mnem.equals("nop")) {
+               continue;
+            }
+            return Pass5IllegalOpcodeOptimization.doesInstructionSetZAndN(prev, reg);
+         }
+      }
+      return false;
+   }
+
+   private static boolean canRemoveRegister(List<AsmLine> lines, int currentIdx, String reg) {
+      return !areFlagsNeededAfter(lines, currentIdx) || areFlagsEstablishedForReg(lines, currentIdx, reg);
+   }
 }

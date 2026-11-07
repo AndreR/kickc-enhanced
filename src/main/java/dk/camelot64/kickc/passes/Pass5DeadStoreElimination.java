@@ -68,13 +68,25 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
       return base.matches("__\\d+");
    }
 
+   private static boolean doesInstructionModifyA(AsmInstruction inst) {
+      if(inst == null || inst.getCpuOpcode() == null) return false;
+      String mnem = inst.getCpuOpcode().getMnemonic();
+      CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+      return mnem.equals("lda") || mnem.equals("pla") || mnem.equals("txa") || mnem.equals("tya") ||
+             mnem.equals("adc") || mnem.equals("sbc") || mnem.equals("and") || mnem.equals("ora") ||
+             mnem.equals("eor") || mnem.equals("lax") || mnem.equals("alr") || mnem.equals("anc") ||
+             mnem.equals("arr") || mnem.equals("axs") || mnem.equals("dcp") || mnem.equals("isc") ||
+             mnem.equals("rla") || mnem.equals("rra") || mnem.equals("slo") || mnem.equals("sre") ||
+             ((mnem.equals("asl") || mnem.equals("lsr") || mnem.equals("rol") || mnem.equals("ror")) && mode.equals(CpuAddressingMode.NON));
+   }
+
    private static boolean overwritesRegister(AsmInstruction inst, String reg) {
       if(inst == null || inst.getCpuOpcode() == null) return false;
       String mnem = inst.getCpuOpcode().getMnemonic();
       if(reg.equals("A")) {
-         return mnem.equals("lda") || mnem.equals("pla") || mnem.equals("jsr");
+         return mnem.equals("lda") || mnem.equals("pla") || mnem.equals("lax") || mnem.equals("jsr");
       } else if(reg.equals("X")) {
-         return mnem.equals("ldx") || mnem.equals("jsr");
+         return mnem.equals("ldx") || mnem.equals("lax") || mnem.equals("jsr");
       } else if(reg.equals("Y")) {
          return mnem.equals("ldy") || mnem.equals("jsr");
       }
@@ -318,6 +330,9 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                                  if(doesInstructionReferenceVar(mi, target) || doesInstructionReferenceVar(mi, v)) {
                                     safe = false; break;
                                  }
+                                 if(doesInstructionModifyA(mi)) {
+                                    safe = false; break;
+                                 }
                               }
                            }
 
@@ -330,6 +345,85 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                               passModified = true;
                               overallModified = true;
                               break;
+                           }
+                        }
+                     }
+                  }
+               } else if(!hasComplexRef && writeIndices.size() == 2 && readIndices.size() == 2) {
+                  // 16-bit word transient forwarding:
+                  // sta v (w0), ... sta v+1 (w1), ... lda v (r0), sta.z dest (s0), lda v+1 (r1), sta.z dest+1 (s1)
+                  int w0 = writeIndices.get(0);
+                  int w1 = writeIndices.get(1);
+                  int r0 = readIndices.get(0);
+                  int r1 = readIndices.get(1);
+                  if(w0 < w1 && w1 < r0 && r0 < r1) {
+                     AsmInstruction w0Inst = (AsmInstruction) sLines.get(w0).line;
+                     AsmInstruction w1Inst = (AsmInstruction) sLines.get(w1).line;
+                     AsmInstruction r0Inst = (AsmInstruction) sLines.get(r0).line;
+                     AsmInstruction r1Inst = (AsmInstruction) sLines.get(r1).line;
+                     String w0Op = w0Inst.getOperand1();
+                     String w1Op = w1Inst.getOperand1();
+                     String r0Op = r0Inst.getOperand1();
+                     String r1Op = r1Inst.getOperand1();
+                     if(w0Op != null && w1Op != null && r0Op != null && r1Op != null &&
+                        w0Op.equals(v) && w1Op.equals(v + "+1") && r0Op.equals(v) && r1Op.equals(v + "+1")) {
+                        int s0 = -1;
+                        for(int n = r0 + 1; n < r1; n++) {
+                           AsmLine nl = sLines.get(n).line;
+                           if(nl instanceof AsmComment || nl instanceof AsmConstant || nl instanceof AsmLabelDecl) continue;
+                           if(nl instanceof AsmInstruction) {
+                              AsmInstruction ni = (AsmInstruction) nl;
+                              if(ni.getCpuOpcode() != null && "sta".equals(ni.getCpuOpcode().getMnemonic())) s0 = n;
+                           }
+                           break;
+                        }
+                        int s1 = -1;
+                        for(int n = r1 + 1; n < sLines.size(); n++) {
+                           AsmLine nl = sLines.get(n).line;
+                           if(nl instanceof AsmComment || nl instanceof AsmConstant || nl instanceof AsmLabelDecl) continue;
+                           if(nl instanceof AsmInstruction) {
+                              AsmInstruction ni = (AsmInstruction) nl;
+                              if(ni.getCpuOpcode() != null && "sta".equals(ni.getCpuOpcode().getMnemonic())) s1 = n;
+                           }
+                           break;
+                        }
+                        if(s0 != -1 && s1 != -1) {
+                           AsmInstruction s0Inst = (AsmInstruction) sLines.get(s0).line;
+                           AsmInstruction s1Inst = (AsmInstruction) sLines.get(s1).line;
+                           String target0 = s0Inst.getOperand1();
+                           String target1 = s1Inst.getOperand1();
+                           if(target0 != null && target1 != null && target1.equals(target0 + "+1") &&
+                              !Pass5RedundantStoreAndReloadElimination.isHardwareAddress(target0)) {
+                              boolean safe = true;
+                              for(int m = w0 + 1; m < r0; m++) {
+                                 AsmLine ml = sLines.get(m).line;
+                                 if(ml instanceof AsmLabel || ml instanceof AsmScopeBegin || ml instanceof AsmScopeEnd || ml instanceof AsmInlineKickAsm) {
+                                    safe = false; break;
+                                 }
+                                 if(ml instanceof AsmInstruction) {
+                                    AsmInstruction mi = (AsmInstruction) ml;
+                                    if(mi.getCpuOpcode() == null || mi.getCpuOpcode().isJump() || mi.getCpuOpcode().getMnemonic().equals("jsr")) {
+                                       safe = false; break;
+                                    }
+                                    if(doesInstructionReferenceVar(mi, target0) || doesInstructionReferenceVar(mi, target1)) {
+                                       safe = false; break;
+                                    }
+                                 }
+                              }
+                              if(safe) {
+                                 getLog().append("Forwarding 16-bit transient temporary " + v + " -> " + target0);
+                                 w0Inst.setOperand1(target0);
+                                 w0Inst.setCpuOpcode(s0Inst.getCpuOpcode());
+                                 w1Inst.setOperand1(target1);
+                                 w1Inst.setCpuOpcode(s1Inst.getCpuOpcode());
+                                 sLines.get(r0).chunk.getLines().remove(r0Inst);
+                                 sLines.get(s0).chunk.getLines().remove(s0Inst);
+                                 sLines.get(r1).chunk.getLines().remove(r1Inst);
+                                 sLines.get(s1).chunk.getLines().remove(s1Inst);
+                                 passModified = true;
+                                 overallModified = true;
+                                 break;
+                              }
                            }
                         }
                      }
@@ -443,11 +537,11 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                      if(prevInst.getCpuOpcode() != null && nextInst.getCpuOpcode() != null) {
                         String prevMnem = prevInst.getCpuOpcode().getMnemonic();
                         CpuAddressingMode prevMode = prevInst.getCpuOpcode().getAddressingMode();
-                        boolean isMatchingImmLoad = (reg.equals("A") && prevMnem.equals("lda") && prevMode.equals(CpuAddressingMode.IMM)) ||
-                                                   (reg.equals("X") && prevMnem.equals("ldx") && prevMode.equals(CpuAddressingMode.IMM)) ||
-                                                   (reg.equals("Y") && prevMnem.equals("ldy") && prevMode.equals(CpuAddressingMode.IMM));
+                        boolean isMatchingLoad = (reg.equals("A") && prevMnem.equals("lda") && (prevMode.equals(CpuAddressingMode.IMM) || prevMode.equals(CpuAddressingMode.ZP) || prevMode.equals(CpuAddressingMode.ABS))) ||
+                                                 (reg.equals("X") && prevMnem.equals("ldx") && (prevMode.equals(CpuAddressingMode.IMM) || prevMode.equals(CpuAddressingMode.ZP) || prevMode.equals(CpuAddressingMode.ABS))) ||
+                                                 (reg.equals("Y") && prevMnem.equals("ldy") && (prevMode.equals(CpuAddressingMode.IMM) || prevMode.equals(CpuAddressingMode.ZP) || prevMode.equals(CpuAddressingMode.ABS)));
 
-                        if(isMatchingImmLoad && overwritesRegister(nextInst, reg)) {
+                        if(isMatchingLoad && !Pass5RedundantStoreAndReloadElimination.isHardwareAddress(prevInst.getOperand1()) && overwritesRegister(nextInst, reg)) {
                            canEliminatePrevLoad = true;
                         }
                      }

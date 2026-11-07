@@ -747,6 +747,31 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
             }
 
             // -------------------------------------------------------------
+            // Pattern 0e: Dead Overwritten Load
+            // If inst1 is LDA/LDX/LDY (non-hardware IMM/ZP/ABS) and inst2 immediately
+            // overwrites that register without reading flags or register, inst1 is dead.
+            // -------------------------------------------------------------
+            boolean isDeadOverwrittenLoad = false;
+            if(!inst1.isNoOptimize() && !inst2.isNoOptimize() &&
+               (mode1.equals(CpuAddressingMode.IMM) || mode1.equals(CpuAddressingMode.ZP) || mode1.equals(CpuAddressingMode.ABS)) &&
+               !Pass5RedundantStoreAndReloadElimination.isHardwareAddress(inst1.getOperand1())) {
+               if(mnem1.equals("lda") && (mnem2.equals("lda") || mnem2.equals("pla") || mnem2.equals("lax"))) {
+                  isDeadOverwrittenLoad = true;
+               } else if(mnem1.equals("ldx") && (mnem2.equals("ldx") || mnem2.equals("lax"))) {
+                  isDeadOverwrittenLoad = true;
+               } else if(mnem1.equals("ldy") && (mnem2.equals("ldy") || mnem2.equals("ply"))) {
+                  isDeadOverwrittenLoad = true;
+               }
+            }
+            if(isDeadOverwrittenLoad) {
+               getLog().append("Eliminating dead overwritten load " + inst1.getAsm() + " before " + inst2.getAsm());
+               ref1.chunk.getLines().remove(inst1);
+               passModified = true;
+               overallModified = true;
+               break;
+            }
+
+            // -------------------------------------------------------------
             // Pattern 1: LDA <mem>; TAX -> LAX <mem>
             // Stable addressing modes: ZP, ABS, IZY, ABY, ZPY, IZX
             // (IMM is strictly excluded because LAX #imm is analog/unstable!)
@@ -1078,7 +1103,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
       return t.equals("$fe") || t.equals("$$fe") || t.equals("$00fe");
    }
 
-   private static boolean doesInstructionSetZAndN(AsmInstruction inst, String reg) {
+   public static boolean doesInstructionSetZAndN(AsmInstruction inst, String reg) {
       if(inst == null || inst.getCpuOpcode() == null) return false;
       String mnem = inst.getCpuOpcode().getMnemonic();
       CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
@@ -1181,8 +1206,11 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                   AsmInstruction pi = (AsmInstruction) line;
                   if(pi.getCpuOpcode() == null) break;
                   String pm = pi.getCpuOpcode().getMnemonic();
-                  if(pm.equals("jmp") || pm.startsWith("b")) {
-                     continue; // Look before jump/branch
+                  if(pm.equals("jmp")) {
+                     continue; // Look before unconditional jump
+                  }
+                  if(pm.startsWith("b")) {
+                     break; // Branches test different conditions; flags are NOT established!
                   }
                   if(pm.equals("sta") || pm.equals("stx") || pm.equals("sty")) {
                      continue; // Stores do not modify flags

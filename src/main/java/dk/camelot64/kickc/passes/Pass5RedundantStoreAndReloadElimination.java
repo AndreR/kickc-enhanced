@@ -59,6 +59,50 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
       return false;
    }
 
+   public static boolean areFlagsNeededAfter(List<LineRef> allLines, int loadIdx) {
+      for(int k = loadIdx + 1; k < allLines.size(); k++) {
+         AsmLine line = allLines.get(k).line;
+         if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
+         if(line instanceof AsmLabel || line instanceof AsmScopeBegin || line instanceof AsmScopeEnd || line instanceof AsmInlineKickAsm) {
+            return true;
+         }
+         if(line instanceof AsmInstruction) {
+            AsmInstruction inst = (AsmInstruction) line;
+            if(inst.getCpuOpcode() == null) return true;
+            String mnem = inst.getCpuOpcode().getMnemonic();
+            if(mnem.equals("beq") || mnem.equals("bne") || mnem.equals("bmi") || mnem.equals("bpl") ||
+               mnem.equals("bcc") || mnem.equals("bcs") || mnem.equals("bvc") || mnem.equals("bvs")) {
+               return true;
+            }
+            if(mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty") || mnem.equals("nop")) {
+               continue;
+            }
+            return false;
+         }
+      }
+      return false;
+   }
+
+   public static boolean areFlagsEstablishedForReg(List<LineRef> allLines, int loadIdx, String reg, String currentScope) {
+      for(int p = loadIdx - 1; p >= 0; p--) {
+         AsmLine line = allLines.get(p).line;
+         if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
+         if(line instanceof AsmLabel || line instanceof AsmScopeBegin || line instanceof AsmScopeEnd || line instanceof AsmInlineKickAsm) {
+            return false;
+         }
+         if(line instanceof AsmInstruction) {
+            AsmInstruction prev = (AsmInstruction) line;
+            if(prev.getCpuOpcode() == null) return false;
+            String mnem = prev.getCpuOpcode().getMnemonic();
+            if(mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty") || mnem.equals("nop")) {
+               continue; // Non-flag-modifying instructions
+            }
+            return Pass5IllegalOpcodeOptimization.doesInstructionSetZAndN(prev, reg);
+         }
+      }
+      return false;
+   }
+
    public static String resolveAlias(String name, Map<String, String> scopeAliases, Map<String, String> globalAliases) {
       if(name == null) return "";
       String current = name.trim();
@@ -204,11 +248,13 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                   if(!isHardwareAddress(operand)) {
                      String canon = getCanonical(operand, localAliases, globalAliasMap);
                      if(aMems.contains(canon)) {
-                        getLog().append("Eliminating redundant load " + inst.getAsm() + " (A already contains " + canon + ")");
-                        ref.chunk.getLines().remove(inst);
-                        passModified = true;
-                        overallModified = true;
-                        break;
+                        if(!areFlagsNeededAfter(allLines, i) || areFlagsEstablishedForReg(allLines, i, "A", currentScope)) {
+                           getLog().append("Eliminating redundant load " + inst.getAsm() + " (A already contains " + canon + ")");
+                           ref.chunk.getLines().remove(inst);
+                           passModified = true;
+                           overallModified = true;
+                           break;
+                        }
                      }
                      aMems.clear();
                      aMems.add(canon);
@@ -252,11 +298,13 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                   if(!isHardwareAddress(operand)) {
                      String canon = getCanonical(operand, localAliases, globalAliasMap);
                      if(xMems.contains(canon)) {
-                        getLog().append("Eliminating redundant load " + inst.getAsm() + " (X already contains " + canon + ")");
-                        ref.chunk.getLines().remove(inst);
-                        passModified = true;
-                        overallModified = true;
-                        break;
+                        if(!areFlagsNeededAfter(allLines, i) || areFlagsEstablishedForReg(allLines, i, "X", currentScope)) {
+                           getLog().append("Eliminating redundant load " + inst.getAsm() + " (X already contains " + canon + ")");
+                           ref.chunk.getLines().remove(inst);
+                           passModified = true;
+                           overallModified = true;
+                           break;
+                        }
                      }
                      xMems.clear();
                      xMems.add(canon);
@@ -298,11 +346,13 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                   if(!isHardwareAddress(operand)) {
                      String canon = getCanonical(operand, localAliases, globalAliasMap);
                      if(yMems.contains(canon)) {
-                        getLog().append("Eliminating redundant load " + inst.getAsm() + " (Y already contains " + canon + ")");
-                        ref.chunk.getLines().remove(inst);
-                        passModified = true;
-                        overallModified = true;
-                        break;
+                        if(!areFlagsNeededAfter(allLines, i) || areFlagsEstablishedForReg(allLines, i, "Y", currentScope)) {
+                           getLog().append("Eliminating redundant load " + inst.getAsm() + " (Y already contains " + canon + ")");
+                           ref.chunk.getLines().remove(inst);
+                           passModified = true;
+                           overallModified = true;
+                           break;
+                        }
                      }
                      yMems.clear();
                      yMems.add(canon);

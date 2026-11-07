@@ -82,6 +82,7 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
          String currentFf = null;
          String currentA = null;
          String currentY = null;
+         String derefY = null;
          boolean derefValid = false;
 
          for(int i = 0; i < allLines.size(); i++) {
@@ -172,15 +173,16 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
 
             // Track / Eliminate redundant indirect LDA ($fe),y
             if(mnem.equals("lda") && mode.equals(CpuAddressingMode.IZY) && isZpFe(inst.getOperand1()) && !inst.isNoOptimize()) {
-               if(derefValid) {
+               if(derefValid && currentY != null && currentY.equals(derefY)) {
                   getLog().append("Eliminating redundant LDA ($fe),y (A already contains dereferenced value)");
                   ref.chunk.getLines().remove(inst);
                   passModified = true;
                   overallModified = true;
                   break;
                }
-               if(currentFe != null && currentFf != null && isZeroOperand(currentY)) {
+               if(currentFe != null && currentFf != null && currentY != null) {
                   derefValid = true;
+                  derefY = currentY;
                }
             }
 
