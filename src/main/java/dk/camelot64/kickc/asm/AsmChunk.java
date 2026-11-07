@@ -125,6 +125,8 @@ public class AsmChunk {
       return source;
    }
 
+   public String getFragment() { return fragment; }
+
    public void setFragment(String fragment) {
       this.fragment = fragment;
    }

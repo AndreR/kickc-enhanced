@@ -1,7 +1,7 @@
-sty $fd
-ldy {m1}
-sty $fe
-ldy {m1}+1
-sty $ff
-ldy $fd
+pha
+lda {m1}
+sta $fe
+lda {m1}+1
+sta $ff
+pla
 sta ($fe),y
