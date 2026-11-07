@@ -53,6 +53,12 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
          System.out.println(String.format("      [PASS5 PRE-FIX LONG BRANCHES] fixed %d branches in %4.2f s", preFixedCount, tPreElapsed / 1000.0));
       }
 
+      // Relaxation pass: relax short branches back to 2-byte branches and eliminate 0-distance trampolines
+      int relaxedCount = relaxShortBranches();
+      if(relaxedCount > 0) {
+         System.out.println(String.format("      [PASS5 RELAX SHORT BRANCHES] relaxed %d trampolines", relaxedCount));
+      }
+
       // Perform repeated optimization until no more branches are too long
       boolean anyOptimized = (preFixedCount > 0);
       boolean stepOptimized = true;
@@ -184,6 +190,187 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
       }
 
       return totalFixed;
+   }
+
+   private static class LineRef {
+      final AsmChunk chunk;
+      final AsmLine line;
+
+      LineRef(AsmChunk chunk, AsmLine line) {
+         this.chunk = chunk;
+         this.line = line;
+      }
+   }
+
+   private static int findNextInstruction(List<LineRef> allLines, int start) {
+      for(int i = start; i < allLines.size(); i++) {
+         LineRef ref = allLines.get(i);
+         if(ref.line instanceof AsmComment || ref.line instanceof AsmConstant || ref.line instanceof AsmLabelDecl) {
+            continue;
+         }
+         if(ref.line instanceof AsmInstruction) {
+            return i;
+         }
+         return -1;
+      }
+      return -1;
+   }
+
+   private static int findNextNonComment(List<LineRef> allLines, int start) {
+      for(int i = start; i < allLines.size(); i++) {
+         LineRef ref = allLines.get(i);
+         if(ref.line instanceof AsmComment || ref.line instanceof AsmConstant || ref.line instanceof AsmLabelDecl) {
+            continue;
+         }
+         return i;
+      }
+      return -1;
+   }
+
+   /**
+    * Post-pass to relax (shorten) long branch trampolines back to 2-byte relative branches
+    * across chunk boundaries if the target has come within [-120..+120] bytes.
+    * Also folds inverted branches over single jmp instructions: bxx L; jmp TARGET; L: -> b!xx TARGET.
+    */
+   private int relaxShortBranches() {
+      int totalRelaxed = 0;
+      boolean anyRelaxed = true;
+      while(anyRelaxed) {
+         anyRelaxed = false;
+
+         List<LineRef> allLines = new ArrayList<>();
+         for(AsmChunk chunk : getAsmProgram().getChunks()) {
+            for(AsmLine line : chunk.getLines()) {
+               allLines.add(new LineRef(chunk, line));
+            }
+         }
+
+         // Phase 1: Collect label offsets per scope
+         Map<String, Integer> labelOffsets = new HashMap<>();
+         String currentScope = null;
+         boolean inCode = true;
+         int currentOffset = 0;
+
+         for(LineRef ref : allLines) {
+            AsmLine line = ref.line;
+            if(line instanceof AsmScopeBegin) {
+               currentScope = ((AsmScopeBegin) line).getLabel();
+               inCode = true;
+               currentOffset = 0;
+            } else if(line instanceof AsmScopeEnd) {
+               currentScope = null;
+               inCode = true;
+               currentOffset = 0;
+            } else if(currentScope != null) {
+               if(line instanceof AsmSegment) {
+                  String seg = ((AsmSegment) line).getName();
+                  if(seg != null && seg.toLowerCase().contains("data")) {
+                     inCode = false;
+                  } else {
+                     inCode = true;
+                  }
+               } else if(inCode) {
+                  if(line instanceof AsmLabel) {
+                     String label = ((AsmLabel) line).getLabel();
+                     if(!label.startsWith("!")) {
+                        labelOffsets.put(currentScope + "::" + label, currentOffset);
+                     }
+                  }
+                  currentOffset += line.getLineBytes();
+               }
+            }
+         }
+
+         // Phase 2: Find and relax trampolines across chunk boundaries
+         currentScope = null;
+         inCode = true;
+         currentOffset = 0;
+
+         for(int i = 0; i < allLines.size(); i++) {
+            LineRef ref1 = allLines.get(i);
+            AsmLine line1 = ref1.line;
+
+            if(line1 instanceof AsmScopeBegin) {
+               currentScope = ((AsmScopeBegin) line1).getLabel();
+               inCode = true;
+               currentOffset = 0;
+            } else if(line1 instanceof AsmScopeEnd) {
+               currentScope = null;
+               inCode = true;
+               currentOffset = 0;
+            } else if(currentScope != null && inCode) {
+               if(line1 instanceof AsmInstruction) {
+                  AsmInstruction instr1 = (AsmInstruction) line1;
+                  CpuOpcode inv1 = invertBranch(instr1.getCpuOpcode());
+                  if(inv1 != null) {
+                     int idx2 = findNextInstruction(allLines, i + 1);
+                     int idx3 = (idx2 != -1) ? findNextNonComment(allLines, idx2 + 1) : -1;
+
+                     if(idx2 != -1 && idx3 != -1) {
+                        LineRef ref2 = allLines.get(idx2);
+                        LineRef ref3 = allLines.get(idx3);
+
+                        if(ref2.line instanceof AsmInstruction && ref3.line instanceof AsmLabel) {
+                           AsmInstruction instr2 = (AsmInstruction) ref2.line;
+                           AsmLabel label3 = (AsmLabel) ref3.line;
+
+                           if(instr2.getCpuOpcode() != null && "jmp".equals(instr2.getCpuOpcode().getMnemonic())) {
+                              String branchTarget = instr1.getOperandJumpTarget();
+                              String jmpTarget = instr2.getOperand1();
+                              String fallthroughLabel = label3.getLabel();
+
+                              // Pattern 1: KickC Trampoline [b!xx !L+, jmp TARGET, !L:]
+                              boolean isTrampoline = (branchTarget != null && fallthroughLabel != null &&
+                                 (branchTarget.equals("!" + fallthroughLabel + "+") || branchTarget.equals(fallthroughLabel + "+")));
+
+                              if(isTrampoline && jmpTarget != null) {
+                                 Integer targetOffset = labelOffsets.get(currentScope + "::" + jmpTarget);
+                                 if(targetOffset != null) {
+                                    int branchPc = currentOffset + 2;
+                                    int distance = targetOffset - branchPc;
+                                    if(distance >= -120 && distance <= 120) {
+                                       getLog().append("Relaxing long branch trampoline to " + inv1.getMnemonic() + " " + jmpTarget);
+                                       instr1.setCpuOpcode(inv1);
+                                       instr1.setOperandJumpTarget(jmpTarget);
+                                       ref2.chunk.getLines().remove(ref2.line);
+                                       ref3.chunk.getLines().remove(ref3.line);
+                                       anyRelaxed = true;
+                                       totalRelaxed++;
+                                       break;
+                                    }
+                                 }
+                              }
+
+                              // Pattern 2: Inverted branch over jmp [bxx L, jmp TARGET, L:]
+                              boolean isInvertedBranch = (branchTarget != null && fallthroughLabel != null &&
+                                 branchTarget.equals(fallthroughLabel));
+
+                              if(isInvertedBranch && jmpTarget != null) {
+                                 Integer targetOffset = labelOffsets.get(currentScope + "::" + jmpTarget);
+                                 if(targetOffset != null) {
+                                    int branchPc = currentOffset + 2;
+                                    int distance = targetOffset - branchPc;
+                                    if(distance >= -120 && distance <= 120) {
+                                       getLog().append("Folding inverted branch over jmp to " + inv1.getMnemonic() + " " + jmpTarget);
+                                       instr1.setCpuOpcode(inv1);
+                                       instr1.setOperandJumpTarget(jmpTarget);
+                                       ref2.chunk.getLines().remove(ref2.line);
+                                       anyRelaxed = true;
+                                       totalRelaxed++;
+                                       break;
+                                    }
+                                 }
+                              }
+                           }
+                        }
+                     }
+                  }
+               }
+               currentOffset += line1.getLineBytes();
+            }
+         }
+      }
+      return totalRelaxed;
    }
 
    /**

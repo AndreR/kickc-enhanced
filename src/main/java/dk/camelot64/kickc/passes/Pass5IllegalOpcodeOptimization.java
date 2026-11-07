@@ -7,7 +7,11 @@ import dk.camelot64.kickc.model.Program;
 import dk.camelot64.kickc.model.TargetCpu;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Assembler Peephole Optimization for stable NMOS 6510 Unintended (Illegal) Opcodes
@@ -49,14 +53,30 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
 
          // Build a flat sequential list of all lines across all chunks
          List<LineRef> allLines = new ArrayList<>();
+         Map<String, Map<String, String>> scopeAliasMap = new HashMap<>();
+         String scanScope = "";
          for(AsmChunk chunk : getAsmProgram().getChunks()) {
             for(AsmLine line : chunk.getLines()) {
                allLines.add(new LineRef(chunk, line));
+               if(line instanceof AsmScopeBegin) {
+                  scanScope = ((AsmScopeBegin) line).getLabel();
+               } else if(line instanceof AsmScopeEnd) {
+                  scanScope = "";
+               } else if(line instanceof AsmLabelDecl) {
+                  AsmLabelDecl decl = (AsmLabelDecl) line;
+                  scopeAliasMap.computeIfAbsent(scanScope, k -> new HashMap<>()).put(decl.getName(), decl.getValue());
+               }
             }
          }
+         String currentScope = "";
 
          for(int i = 0; i < allLines.size(); i++) {
             LineRef ref1 = allLines.get(i);
+            if(ref1.line instanceof AsmScopeBegin) {
+               currentScope = ((AsmScopeBegin) ref1.line).getLabel();
+            } else if(ref1.line instanceof AsmScopeEnd) {
+               currentScope = "";
+            }
             if(!(ref1.line instanceof AsmInstruction)) {
                continue;
             }
@@ -115,6 +135,537 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
             CpuAddressingMode mode2 = op2.getAddressingMode();
 
             // -------------------------------------------------------------
+            // Pattern 0a: Unsigned CMP #1 / CPX #1 / CPY #1 before BCC / BCS
+            // On unsigned numbers: (x < 1) <==> (x == 0) and (x >= 1) <==> (x != 0).
+            // CMP #1; BCC -> CMP #0; BEQ (and CMP #0 eliminated if previous inst sets Z)
+            // CMP #1; BCS -> CMP #0; BNE (and CMP #0 eliminated if previous inst sets Z)
+            // -------------------------------------------------------------
+            if(inst3 != null && !inst3.isNoOptimize() && mode2.equals(CpuAddressingMode.IMM) && isOneOperand(inst2.getOperand1())) {
+               String mnem3 = inst3.getCpuOpcode() != null ? inst3.getCpuOpcode().getMnemonic() : "";
+               if(mnem3.equals("bcc") || mnem3.equals("bcs")) {
+                  // Ensure no other branch immediately follows inst3 on the fallthrough path
+                  int afterBranchIdx = findNextInstruction(allLines, branchIdx + 1);
+                  if(afterBranchIdx != -1) {
+                     AsmInstruction instAfter = (AsmInstruction) allLines.get(afterBranchIdx).line;
+                     if(instAfter.getCpuOpcode() != null) {
+                        String mnemAfter = instAfter.getCpuOpcode().getMnemonic();
+                        if(mnemAfter.startsWith("b")) {
+                           continue;
+                        }
+                     }
+                  }
+                  String newBranchMnem = mnem3.equals("bcc") ? "beq" : "bne";
+                  CpuOpcode newBranchOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(newBranchMnem, CpuAddressingMode.REL, false);
+                  if(newBranchOp != null) {
+                     boolean canEliminateCmp = false;
+                     if(mnem2.equals("cmp")) {
+                        if(mnem1.equals("lda") || mnem1.equals("pla") ||
+                           mnem1.equals("tax") || mnem1.equals("txa") ||
+                           mnem1.equals("tay") || mnem1.equals("tya") ||
+                           mnem1.equals("and") || mnem1.equals("ora") || mnem1.equals("eor") ||
+                           mnem1.equals("lax") || mnem1.equals("alr") || mnem1.equals("anc") ||
+                           ((mnem1.equals("asl") || mnem1.equals("lsr") || mnem1.equals("rol") || mnem1.equals("ror")) && mode1.equals(CpuAddressingMode.NON))) {
+                           canEliminateCmp = true;
+                        }
+                     } else if(mnem2.equals("cpx")) {
+                        if(mnem1.equals("ldx") || mnem1.equals("inx") || mnem1.equals("dex") ||
+                           mnem1.equals("tax") || mnem1.equals("tsx") || mnem1.equals("lax") || mnem1.equals("axs")) {
+                           canEliminateCmp = true;
+                        }
+                     } else if(mnem2.equals("cpy")) {
+                        if(mnem1.equals("ldy") || mnem1.equals("iny") || mnem1.equals("dey") || mnem1.equals("tay")) {
+                           canEliminateCmp = true;
+                        }
+                     }
+
+                     if(canEliminateCmp) {
+                        getLog().append("Eliminating redundant " + inst2.getAsm() + " and converting " + mnem3 + " to " + newBranchMnem);
+                        inst3.setCpuOpcode(newBranchOp);
+                        ref2.chunk.getLines().remove(inst2);
+                        passModified = true;
+                        overallModified = true;
+                        break;
+                     } else {
+                        getLog().append("Converting " + inst2.getAsm() + "; " + mnem3 + " to CMP #0; " + newBranchMnem);
+                        inst2.setOperand1("0");
+                        inst3.setCpuOpcode(newBranchOp);
+                        passModified = true;
+                        overallModified = true;
+                        break;
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 0e: 8-to-16 cast followed by << 8 on same variable
+            // sta X; lda #0; sta X+1; lda Y; sta Y+1; lda #0; sta Y (where X == Y)
+            // -> sta Y+1; lda #0; sta Y
+            // -------------------------------------------------------------
+            if(mnem1.equals("sta")) {
+               int i2 = findNextInstruction(allLines, i + 1);
+               int i3 = i2 != -1 ? findNextInstruction(allLines, i2 + 1) : -1;
+               int i4 = i3 != -1 ? findNextInstruction(allLines, i3 + 1) : -1;
+               int i5 = i4 != -1 ? findNextInstruction(allLines, i4 + 1) : -1;
+               int i6 = i5 != -1 ? findNextInstruction(allLines, i5 + 1) : -1;
+               int i7 = i6 != -1 ? findNextInstruction(allLines, i6 + 1) : -1;
+               if(i7 != -1) {
+                  AsmInstruction instA = (AsmInstruction) allLines.get(i2).line;
+                  AsmInstruction instB = (AsmInstruction) allLines.get(i3).line;
+                  AsmInstruction instC = (AsmInstruction) allLines.get(i4).line;
+                  AsmInstruction instD = (AsmInstruction) allLines.get(i5).line;
+                  AsmInstruction instE = (AsmInstruction) allLines.get(i6).line;
+                  AsmInstruction instF = (AsmInstruction) allLines.get(i7).line;
+
+                  if(instA.getCpuOpcode() != null && instA.getCpuOpcode().getMnemonic().equals("lda") && isZeroOperand(instA.getOperand1()) &&
+                     instB.getCpuOpcode() != null && instB.getCpuOpcode().getMnemonic().equals("sta") &&
+                     instC.getCpuOpcode() != null && instC.getCpuOpcode().getMnemonic().equals("lda") &&
+                     instD.getCpuOpcode() != null && instD.getCpuOpcode().getMnemonic().equals("sta") &&
+                     instE.getCpuOpcode() != null && instE.getCpuOpcode().getMnemonic().equals("lda") && isZeroOperand(instE.getOperand1()) &&
+                     instF.getCpuOpcode() != null && instF.getCpuOpcode().getMnemonic().equals("sta")) {
+
+                     Map<String, String> aliases = scopeAliasMap.get(currentScope);
+                     String var1 = getBaseVar(inst1.getOperand1());
+                     String varB = getBaseVar(instB.getOperand1());
+                     String varC = getBaseVar(instC.getOperand1());
+                     String varD = getBaseVar(instD.getOperand1());
+                     String varF = getBaseVar(instF.getOperand1());
+
+                     if(getOffset(inst1.getOperand1()) == 0 && getOffset(instB.getOperand1()) == 1 &&
+                        getOffset(instC.getOperand1()) == 0 && getOffset(instD.getOperand1()) == 1 && getOffset(instF.getOperand1()) == 0 &&
+                        isSameLocation(var1, varB, aliases) &&
+                        isSameLocation(varC, varD, aliases) &&
+                        isSameLocation(varC, varF, aliases) &&
+                        isSameLocation(var1, varC, aliases)) {
+
+                        getLog().append("Folding 8-to-16 cast and << 8 on " + varC);
+                        inst1.setOperand1(instD.getOperand1());
+                        instB.setOperand1(instF.getOperand1());
+                        allLines.get(i4).chunk.getLines().remove(instC);
+                        allLines.get(i5).chunk.getLines().remove(instD);
+                        allLines.get(i6).chunk.getLines().remove(instE);
+                        allLines.get(i7).chunk.getLines().remove(instF);
+                        passModified = true;
+                        overallModified = true;
+                        break;
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 0f: Register shuffle cascade
+            // tay; txa; sty.z ZP; ldx.z ZP; tay; txa; sty.z TARGET
+            // -> stx.z TARGET (when ZP is scratch $fe/$ff)
+            // -------------------------------------------------------------
+            if(mnem1.equals("tay")) {
+               int i2 = findNextInstruction(allLines, i + 1);
+               int i3 = i2 != -1 ? findNextInstruction(allLines, i2 + 1) : -1;
+               int i4 = i3 != -1 ? findNextInstruction(allLines, i3 + 1) : -1;
+               int i5 = i4 != -1 ? findNextInstruction(allLines, i4 + 1) : -1;
+               int i6 = i5 != -1 ? findNextInstruction(allLines, i5 + 1) : -1;
+               int i7 = i6 != -1 ? findNextInstruction(allLines, i6 + 1) : -1;
+               if(i7 != -1) {
+                  AsmInstruction instA = (AsmInstruction) allLines.get(i2).line;
+                  AsmInstruction instB = (AsmInstruction) allLines.get(i3).line;
+                  AsmInstruction instC = (AsmInstruction) allLines.get(i4).line;
+                  AsmInstruction instD = (AsmInstruction) allLines.get(i5).line;
+                  AsmInstruction instE = (AsmInstruction) allLines.get(i6).line;
+                  AsmInstruction instF = (AsmInstruction) allLines.get(i7).line;
+
+                  if(instA.getCpuOpcode() != null && instA.getCpuOpcode().getMnemonic().equals("txa") &&
+                     instB.getCpuOpcode() != null && instB.getCpuOpcode().getMnemonic().equals("sty") &&
+                     instC.getCpuOpcode() != null && instC.getCpuOpcode().getMnemonic().equals("ldx") &&
+                     instD.getCpuOpcode() != null && instD.getCpuOpcode().getMnemonic().equals("tay") &&
+                     instE.getCpuOpcode() != null && instE.getCpuOpcode().getMnemonic().equals("txa") &&
+                     instF.getCpuOpcode() != null && instF.getCpuOpcode().getMnemonic().equals("sty")) {
+
+                     String opScratch = instB.getOperand1();
+                     if(opScratch != null && opScratch.equals(instC.getOperand1())) {
+                        String targetOp = instF.getOperand1();
+                        CpuAddressingMode targetMode = instF.getCpuOpcode().getAddressingMode();
+                        CpuOpcode stxOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("stx", targetMode, false);
+                        if(stxOp != null) {
+                           getLog().append("Collapsing register shuffle cascade to STX " + targetOp);
+                           inst1.setCpuOpcode(stxOp);
+                           inst1.setOperand1(targetOp);
+                           allLines.get(i2).chunk.getLines().remove(instA);
+                           allLines.get(i3).chunk.getLines().remove(instB);
+                           allLines.get(i4).chunk.getLines().remove(instC);
+                           allLines.get(i5).chunk.getLines().remove(instD);
+                           allLines.get(i6).chunk.getLines().remove(instE);
+                           allLines.get(i7).chunk.getLines().remove(instF);
+                           passModified = true;
+                           overallModified = true;
+                           break;
+                        }
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 0g: Right-shift high-byte extraction before RTS or store
+            // lda.z X+1; sta.z TEMP; lda #0; sta.z TEMP+1; lda.z TEMP; (rts | sta DEST)
+            // -> lda.z X+1; (rts | sta DEST)
+            // -------------------------------------------------------------
+            if(mnem1.equals("lda") && getOffset(inst1.getOperand1()) == 1) {
+               int i2 = findNextInstruction(allLines, i + 1);
+               int i3 = i2 != -1 ? findNextInstruction(allLines, i2 + 1) : -1;
+               int i4 = i3 != -1 ? findNextInstruction(allLines, i3 + 1) : -1;
+               int i5 = i4 != -1 ? findNextInstruction(allLines, i4 + 1) : -1;
+               int i6 = i5 != -1 ? findNextInstruction(allLines, i5 + 1) : -1;
+               if(i6 != -1) {
+                  AsmInstruction instA = (AsmInstruction) allLines.get(i2).line;
+                  AsmInstruction instB = (AsmInstruction) allLines.get(i3).line;
+                  AsmInstruction instC = (AsmInstruction) allLines.get(i4).line;
+                  AsmInstruction instD = (AsmInstruction) allLines.get(i5).line;
+                  AsmInstruction instE = (AsmInstruction) allLines.get(i6).line;
+
+                  if(instA.getCpuOpcode() != null && instA.getCpuOpcode().getMnemonic().equals("sta") &&
+                     instB.getCpuOpcode() != null && instB.getCpuOpcode().getMnemonic().equals("lda") && isZeroOperand(instB.getOperand1()) &&
+                     instC.getCpuOpcode() != null && instC.getCpuOpcode().getMnemonic().equals("sta") &&
+                     instD.getCpuOpcode() != null && instD.getCpuOpcode().getMnemonic().equals("lda") &&
+                     instE.getCpuOpcode() != null) {
+
+                     Map<String, String> aliases = scopeAliasMap.get(currentScope);
+                     String base1 = getBaseVar(inst1.getOperand1());
+                     String baseA = getBaseVar(instA.getOperand1());
+                     String baseC = getBaseVar(instC.getOperand1());
+                     String baseD = getBaseVar(instD.getOperand1());
+
+                     if(getOffset(instA.getOperand1()) == 0 && getOffset(instC.getOperand1()) == 1 && getOffset(instD.getOperand1()) == 0 &&
+                        isSameLocation(baseA, baseC, aliases) && isSameLocation(baseA, baseD, aliases)) {
+
+                        if(instE.getCpuOpcode().getMnemonic().equals("rts")) {
+                           getLog().append("Eliminating redundant right-shift intermediate stores before RTS");
+                           allLines.get(i2).chunk.getLines().remove(instA);
+                           allLines.get(i3).chunk.getLines().remove(instB);
+                           allLines.get(i4).chunk.getLines().remove(instC);
+                           allLines.get(i5).chunk.getLines().remove(instD);
+                           passModified = true;
+                           overallModified = true;
+                           break;
+                        } else if(instE.getCpuOpcode().getMnemonic().equals("sta")) {
+                           getLog().append("Forwarding right-shift high-byte load directly to STA " + instE.getOperand1());
+                           allLines.get(i2).chunk.getLines().remove(instA);
+                           allLines.get(i3).chunk.getLines().remove(instB);
+                           allLines.get(i4).chunk.getLines().remove(instC);
+                           allLines.get(i5).chunk.getLines().remove(instD);
+                           passModified = true;
+                           overallModified = true;
+                           break;
+                        }
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 0h: Elimination of intermediate $fd store/reload
+            // ldy <IDX>; sty.z $fd; ldy <PTR>; sty.z $fe; ldy <PTR>+1; sty.z $ff; ldy.z $fd; (sta|lda) ($fe),y
+            // -> ldy <PTR>; sty.z $fe; ldy <PTR>+1; sty.z $ff; ldy <IDX>; (sta|lda) ($fe),y
+            // Eliminates $fd register usage, saves 4 bytes and 6-7 CPU cycles.
+            // -------------------------------------------------------------
+            if(mnem1.equals("ldy")) {
+               int i2 = findNextInstruction(allLines, i + 1);
+               int i3 = i2 != -1 ? findNextInstruction(allLines, i2 + 1) : -1;
+               int i4 = i3 != -1 ? findNextInstruction(allLines, i3 + 1) : -1;
+               int i5 = i4 != -1 ? findNextInstruction(allLines, i4 + 1) : -1;
+               int i6 = i5 != -1 ? findNextInstruction(allLines, i5 + 1) : -1;
+               int i7 = i6 != -1 ? findNextInstruction(allLines, i6 + 1) : -1;
+               int i8 = i7 != -1 ? findNextInstruction(allLines, i7 + 1) : -1;
+               if(i8 != -1) {
+                  AsmInstruction instA = (AsmInstruction) allLines.get(i2).line;
+                  AsmInstruction instB = (AsmInstruction) allLines.get(i3).line;
+                  AsmInstruction instC = (AsmInstruction) allLines.get(i4).line;
+                  AsmInstruction instD = (AsmInstruction) allLines.get(i5).line;
+                  AsmInstruction instE = (AsmInstruction) allLines.get(i6).line;
+                  AsmInstruction instF = (AsmInstruction) allLines.get(i7).line;
+                  AsmInstruction instG = (AsmInstruction) allLines.get(i8).line;
+
+                  if(instA.getCpuOpcode() != null && instA.getCpuOpcode().getMnemonic().equals("sty") && isFdOperand(instA.getOperand1()) &&
+                     instB.getCpuOpcode() != null && instB.getCpuOpcode().getMnemonic().equals("ldy") &&
+                     instC.getCpuOpcode() != null && instC.getCpuOpcode().getMnemonic().equals("sty") && isFeOperand(instC.getOperand1()) &&
+                     instD.getCpuOpcode() != null && instD.getCpuOpcode().getMnemonic().equals("ldy") &&
+                     instE.getCpuOpcode() != null && instE.getCpuOpcode().getMnemonic().equals("sty") && isFfOperand(instE.getOperand1()) &&
+                     instF.getCpuOpcode() != null && instF.getCpuOpcode().getMnemonic().equals("ldy") && isFdOperand(instF.getOperand1()) &&
+                     instG.getCpuOpcode() != null && (instG.getCpuOpcode().getMnemonic().equals("sta") || instG.getCpuOpcode().getMnemonic().equals("lda")) &&
+                     instG.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.IZY)) {
+
+                     String idxOp = inst1.getOperand1();
+                     CpuAddressingMode idxMode = inst1.getCpuOpcode().getAddressingMode();
+                     if(!isFeOperand(idxOp) && !isFfOperand(idxOp) && !isFdOperand(idxOp)) {
+                        getLog().append("Eliminating $fd intermediate save/restore for indirect indexed deref");
+                        inst1.setCpuOpcode(instB.getCpuOpcode());
+                        inst1.setOperand1(instB.getOperand1());
+                        instA.setCpuOpcode(instC.getCpuOpcode());
+                        instA.setOperand1(instC.getOperand1());
+                        instB.setCpuOpcode(instD.getCpuOpcode());
+                        instB.setOperand1(instD.getOperand1());
+                        instC.setCpuOpcode(instE.getCpuOpcode());
+                        instC.setOperand1(instE.getOperand1());
+                        CpuOpcode ldyIdxOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("ldy", idxMode, false);
+                        instD.setCpuOpcode(ldyIdxOp);
+                        instD.setOperand1(idxOp);
+                        allLines.get(i6).chunk.getLines().remove(instE);
+                        allLines.get(i7).chunk.getLines().remove(instF);
+                        passModified = true;
+                        overallModified = true;
+                        break;
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 0i: 8-to-16 cast followed by << 6 on same variable
+            // sta X; lda #0; sta X+1; lda Y+1; lsr; sta $ff; lda Y; ror; sta Y+1; lda #0; ror; sta Y; lsr $ff; ror Y+1; ror Y
+            // (where X == Y)
+            // -> sta Y+1; lda #0; lsr Y+1; ror; lsr Y+1; ror; sta Y
+            // -------------------------------------------------------------
+            if(mnem1.equals("sta") && getOffset(inst1.getOperand1()) == 0) {
+               int i2 = findNextInstruction(allLines, i + 1);
+               int i3 = i2 != -1 ? findNextInstruction(allLines, i2 + 1) : -1;
+               int i4 = i3 != -1 ? findNextInstruction(allLines, i3 + 1) : -1;
+               int i5 = i4 != -1 ? findNextInstruction(allLines, i4 + 1) : -1;
+               int i6 = i5 != -1 ? findNextInstruction(allLines, i5 + 1) : -1;
+               int i7 = i6 != -1 ? findNextInstruction(allLines, i6 + 1) : -1;
+               int i8 = i7 != -1 ? findNextInstruction(allLines, i7 + 1) : -1;
+               int i9 = i8 != -1 ? findNextInstruction(allLines, i8 + 1) : -1;
+               int i10 = i9 != -1 ? findNextInstruction(allLines, i9 + 1) : -1;
+               int i11 = i10 != -1 ? findNextInstruction(allLines, i10 + 1) : -1;
+               int i12 = i11 != -1 ? findNextInstruction(allLines, i11 + 1) : -1;
+               int i13 = i12 != -1 ? findNextInstruction(allLines, i12 + 1) : -1;
+               int i14 = i13 != -1 ? findNextInstruction(allLines, i13 + 1) : -1;
+               int i15 = i14 != -1 ? findNextInstruction(allLines, i14 + 1) : -1;
+               if(i15 != -1) {
+                  AsmInstruction instA = (AsmInstruction) allLines.get(i2).line;
+                  AsmInstruction instB = (AsmInstruction) allLines.get(i3).line;
+                  AsmInstruction instC = (AsmInstruction) allLines.get(i4).line;
+                  AsmInstruction instD = (AsmInstruction) allLines.get(i5).line;
+                  AsmInstruction instE = (AsmInstruction) allLines.get(i6).line;
+                  AsmInstruction instF = (AsmInstruction) allLines.get(i7).line;
+                  AsmInstruction instG = (AsmInstruction) allLines.get(i8).line;
+                  AsmInstruction instH = (AsmInstruction) allLines.get(i9).line;
+                  AsmInstruction instI = (AsmInstruction) allLines.get(i10).line;
+                  AsmInstruction instJ = (AsmInstruction) allLines.get(i11).line;
+                  AsmInstruction instK = (AsmInstruction) allLines.get(i12).line;
+                  AsmInstruction instL = (AsmInstruction) allLines.get(i13).line;
+                  AsmInstruction instM = (AsmInstruction) allLines.get(i14).line;
+                  AsmInstruction instN = (AsmInstruction) allLines.get(i15).line;
+
+                  if(instA.getCpuOpcode() != null && instA.getCpuOpcode().getMnemonic().equals("lda") && isZeroOperand(instA.getOperand1()) &&
+                     instB.getCpuOpcode() != null && instB.getCpuOpcode().getMnemonic().equals("sta") && getOffset(instB.getOperand1()) == 1 &&
+                     instC.getCpuOpcode() != null && instC.getCpuOpcode().getMnemonic().equals("lda") && getOffset(instC.getOperand1()) == 1 &&
+                     instD.getCpuOpcode() != null && instD.getCpuOpcode().getMnemonic().equals("lsr") &&
+                     instE.getCpuOpcode() != null && instE.getCpuOpcode().getMnemonic().equals("sta") && isFfOperand(instE.getOperand1()) &&
+                     instF.getCpuOpcode() != null && instF.getCpuOpcode().getMnemonic().equals("lda") && getOffset(instF.getOperand1()) == 0 &&
+                     instG.getCpuOpcode() != null && instG.getCpuOpcode().getMnemonic().equals("ror") &&
+                     instH.getCpuOpcode() != null && instH.getCpuOpcode().getMnemonic().equals("sta") && getOffset(instH.getOperand1()) == 1 &&
+                     instI.getCpuOpcode() != null && instI.getCpuOpcode().getMnemonic().equals("lda") && isZeroOperand(instI.getOperand1()) &&
+                     instJ.getCpuOpcode() != null && instJ.getCpuOpcode().getMnemonic().equals("ror") &&
+                     instK.getCpuOpcode() != null && instK.getCpuOpcode().getMnemonic().equals("sta") && getOffset(instK.getOperand1()) == 0 &&
+                     instL.getCpuOpcode() != null && instL.getCpuOpcode().getMnemonic().equals("lsr") && isFfOperand(instL.getOperand1()) &&
+                     instM.getCpuOpcode() != null && instM.getCpuOpcode().getMnemonic().equals("ror") && getOffset(instM.getOperand1()) == 1 &&
+                     instN.getCpuOpcode() != null && instN.getCpuOpcode().getMnemonic().equals("ror") && getOffset(instN.getOperand1()) == 0) {
+
+                     Map<String, String> aliases = scopeAliasMap.get(currentScope);
+                     String var1 = getBaseVar(inst1.getOperand1());
+                     String varB = getBaseVar(instB.getOperand1());
+                     String varC = getBaseVar(instC.getOperand1());
+                     String varF = getBaseVar(instF.getOperand1());
+                     String varH = getBaseVar(instH.getOperand1());
+                     String varK = getBaseVar(instK.getOperand1());
+                     String varM = getBaseVar(instM.getOperand1());
+                     String varN = getBaseVar(instN.getOperand1());
+
+                     if(isSameLocation(var1, varB, aliases) && isSameLocation(var1, varC, aliases) &&
+                        isSameLocation(var1, varF, aliases) && isSameLocation(var1, varH, aliases) &&
+                        isSameLocation(var1, varK, aliases) && isSameLocation(var1, varM, aliases) &&
+                        isSameLocation(var1, varN, aliases)) {
+
+                        getLog().append("Folding 8-to-16 cast and << 6 on " + varC);
+                        inst1.setOperand1(instH.getOperand1());
+                        CpuOpcode lsrOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lsr", instH.getCpuOpcode().getAddressingMode(), false);
+                        instB.setCpuOpcode(lsrOp);
+                        instB.setOperand1(instH.getOperand1());
+                        CpuOpcode rorNonOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("ror", CpuAddressingMode.NON, false);
+                        instC.setCpuOpcode(rorNonOp);
+                        instC.setOperand1(null);
+                        instD.setCpuOpcode(lsrOp);
+                        instD.setOperand1(instH.getOperand1());
+                        instE.setCpuOpcode(rorNonOp);
+                        instE.setOperand1(null);
+                        instF.setCpuOpcode(instK.getCpuOpcode());
+                        instF.setOperand1(instK.getOperand1());
+
+                        allLines.get(i8).chunk.getLines().remove(instG);
+                        allLines.get(i9).chunk.getLines().remove(instH);
+                        allLines.get(i10).chunk.getLines().remove(instI);
+                        allLines.get(i11).chunk.getLines().remove(instJ);
+                        allLines.get(i12).chunk.getLines().remove(instK);
+                        allLines.get(i13).chunk.getLines().remove(instL);
+                        allLines.get(i14).chunk.getLines().remove(instM);
+                        allLines.get(i15).chunk.getLines().remove(instN);
+                        passModified = true;
+                        overallModified = true;
+                        break;
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 0j: Redundant TXA after LAX
+            // LAX loads identical value into both A and X.
+            // If TXA follows directly or after non-destructive STA/STX, TXA is a pure no-op.
+            // -------------------------------------------------------------
+            if(mnem1.equals("lax")) {
+               int i2 = findNextInstruction(allLines, i + 1);
+               if(i2 != -1) {
+                  AsmInstruction instA = (AsmInstruction) allLines.get(i2).line;
+                  if(instA.getCpuOpcode() != null) {
+                     String mnemA = instA.getCpuOpcode().getMnemonic();
+                     if(mnemA.equals("txa")) {
+                        getLog().append("Eliminating redundant TXA after LAX");
+                        allLines.get(i2).chunk.getLines().remove(instA);
+                        passModified = true;
+                        overallModified = true;
+                        break;
+                     } else if(mnemA.equals("sta") || mnemA.equals("stx")) {
+                        int i3 = findNextInstruction(allLines, i2 + 1);
+                        if(i3 != -1) {
+                           AsmInstruction instB = (AsmInstruction) allLines.get(i3).line;
+                           if(instB.getCpuOpcode() != null && instB.getCpuOpcode().getMnemonic().equals("txa")) {
+                              getLog().append("Eliminating redundant TXA after LAX and store");
+                              allLines.get(i3).chunk.getLines().remove(instB);
+                              passModified = true;
+                              overallModified = true;
+                              break;
+                           }
+                        }
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 0k: Redundant TXA elimination
+            // If A already contains the value of X and neither A nor X has been modified
+            // (across STA/STX/STY/LDY/etc.), any subsequent TXA is completely redundant.
+            // -------------------------------------------------------------
+            if(mnem1.equals("txa")) {
+               for(int k = nextIdx; k < allLines.size(); k++) {
+                  LineRef cand = allLines.get(k);
+                  if(cand.line instanceof AsmComment || cand.line instanceof AsmConstant || cand.line instanceof AsmLabelDecl) continue;
+                  if(cand.line instanceof AsmLabel || cand.line instanceof AsmScopeBegin || cand.line instanceof AsmScopeEnd) break;
+                  if(cand.line instanceof AsmInstruction) {
+                     AsmInstruction instK = (AsmInstruction) cand.line;
+                     CpuOpcode opK = instK.getCpuOpcode();
+                     if(opK == null) break;
+                     String mnemK = opK.getMnemonic();
+                     if(mnemK.equals("txa")) {
+                        getLog().append("Eliminating redundant secondary TXA");
+                        cand.chunk.getLines().remove(instK);
+                        passModified = true;
+                        overallModified = true;
+                        break;
+                     }
+                     if(mnemK.equals("lda") || mnemK.equals("pla") || mnemK.equals("tax") || mnemK.equals("tay") ||
+                        mnemK.equals("adc") || mnemK.equals("sbc") || mnemK.equals("and") || mnemK.equals("ora") ||
+                        mnemK.equals("eor") || mnemK.equals("asl") || mnemK.equals("lsr") || mnemK.equals("rol") ||
+                        mnemK.equals("ror") || mnemK.equals("alr") || mnemK.equals("anc") || mnemK.equals("arr") ||
+                        mnemK.equals("axs") || mnemK.equals("dcp") || mnemK.equals("isc") || mnemK.equals("rla") ||
+                        mnemK.equals("rra") || mnemK.equals("slo") || mnemK.equals("sre") || mnemK.equals("lax") ||
+                        mnemK.equals("jsr") || mnemK.equals("rti") || mnemK.equals("rts") || mnemK.equals("jmp") || mnemK.startsWith("b")) {
+                        break;
+                     }
+                     if(mnemK.equals("ldx") || mnemK.equals("inx") || mnemK.equals("dex") || mnemK.equals("tsx")) {
+                        break;
+                     }
+                     continue;
+                  }
+                  break;
+               }
+               if(passModified) break;
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 0l: 16-bit transitive copy chain fold
+            // lda SRC; sta D1; lda SRC+1; sta D1+1; lda D1; sta D2; lda D1+1; sta D2+1
+            // -> lda SRC; sta D1; sta D2; lda SRC+1; sta D1+1; sta D2+1
+            // -------------------------------------------------------------
+            if(mnem1.equals("lda") && getOffset(inst1.getOperand1()) == 0) {
+               int i2 = findNextInstruction(allLines, i + 1);
+               int i3 = i2 != -1 ? findNextInstruction(allLines, i2 + 1) : -1;
+               int i4 = i3 != -1 ? findNextInstruction(allLines, i3 + 1) : -1;
+               int i5 = i4 != -1 ? findNextInstruction(allLines, i4 + 1) : -1;
+               int i6 = i5 != -1 ? findNextInstruction(allLines, i5 + 1) : -1;
+               int i7 = i6 != -1 ? findNextInstruction(allLines, i6 + 1) : -1;
+               int i8 = i7 != -1 ? findNextInstruction(allLines, i7 + 1) : -1;
+               if(i8 != -1) {
+                  AsmInstruction instA = (AsmInstruction) allLines.get(i2).line;
+                  AsmInstruction instB = (AsmInstruction) allLines.get(i3).line;
+                  AsmInstruction instC = (AsmInstruction) allLines.get(i4).line;
+                  AsmInstruction instD = (AsmInstruction) allLines.get(i5).line;
+                  AsmInstruction instE = (AsmInstruction) allLines.get(i6).line;
+                  AsmInstruction instF = (AsmInstruction) allLines.get(i7).line;
+                  AsmInstruction instG = (AsmInstruction) allLines.get(i8).line;
+
+                  if(instA.getCpuOpcode() != null && instA.getCpuOpcode().getMnemonic().equals("sta") && getOffset(instA.getOperand1()) == 0 &&
+                     instB.getCpuOpcode() != null && instB.getCpuOpcode().getMnemonic().equals("lda") && getOffset(instB.getOperand1()) == 1 &&
+                     instC.getCpuOpcode() != null && instC.getCpuOpcode().getMnemonic().equals("sta") && getOffset(instC.getOperand1()) == 1 &&
+                     instD.getCpuOpcode() != null && instD.getCpuOpcode().getMnemonic().equals("lda") && getOffset(instD.getOperand1()) == 0 &&
+                     instE.getCpuOpcode() != null && instE.getCpuOpcode().getMnemonic().equals("sta") && getOffset(instE.getOperand1()) == 0 &&
+                     instF.getCpuOpcode() != null && instF.getCpuOpcode().getMnemonic().equals("lda") && getOffset(instF.getOperand1()) == 1 &&
+                     instG.getCpuOpcode() != null && instG.getCpuOpcode().getMnemonic().equals("sta") && getOffset(instG.getOperand1()) == 1) {
+
+                     Map<String, String> aliases = scopeAliasMap.get(currentScope);
+                     String baseSrcLo = getBaseVar(inst1.getOperand1());
+                     String baseSrcHi = getBaseVar(instB.getOperand1());
+                     String baseD1Lo = getBaseVar(instA.getOperand1());
+                     String baseD1Hi = getBaseVar(instC.getOperand1());
+                     String baseD1ReadLo = getBaseVar(instD.getOperand1());
+                     String baseD1ReadHi = getBaseVar(instF.getOperand1());
+                     String baseD2Lo = getBaseVar(instE.getOperand1());
+                     String baseD2Hi = getBaseVar(instG.getOperand1());
+
+                     if(isSameLocation(baseSrcLo, baseSrcHi, aliases) &&
+                        isSameLocation(baseD1Lo, baseD1Hi, aliases) &&
+                        isSameLocation(baseD1Lo, baseD1ReadLo, aliases) &&
+                        isSameLocation(baseD1Lo, baseD1ReadHi, aliases) &&
+                        isSameLocation(baseD2Lo, baseD2Hi, aliases) &&
+                        !isSameLocation(baseSrcLo, baseD1Lo, aliases) &&
+                        !isSameLocation(baseD1Lo, baseD2Lo, aliases) &&
+                        !isSameLocation(baseSrcLo, baseD2Lo, aliases)) {
+
+                         getLog().append("Folding 16-bit copy chain " + baseSrcLo + " -> " + baseD1Lo + " -> " + baseD2Lo);
+                         CpuOpcode staModeLo = instE.getCpuOpcode();
+                         String staOpLo = instE.getOperand1();
+                         CpuOpcode staModeHi = instG.getCpuOpcode();
+                         String staOpHi = instG.getOperand1();
+                         AsmInstruction newStaLo = new AsmInstruction(staModeLo, staOpLo, null, null);
+                         AsmInstruction newStaHi = new AsmInstruction(staModeHi, staOpHi, null, null);
+
+                         int idx2 = allLines.get(i2).chunk.getLines().indexOf(instA);
+                         allLines.get(i2).chunk.getLines().add(idx2 + 1, newStaLo);
+                         int idx4 = allLines.get(i4).chunk.getLines().indexOf(instC);
+                         allLines.get(i4).chunk.getLines().add(idx4 + 1, newStaHi);
+
+                         allLines.get(i5).chunk.getLines().remove(instD);
+                         allLines.get(i6).chunk.getLines().remove(instE);
+                         allLines.get(i7).chunk.getLines().remove(instF);
+                         allLines.get(i8).chunk.getLines().remove(instG);
+                         passModified = true;
+                         overallModified = true;
+                         break;
+                      }
+                   }
+                }
+             }
+
+            // -------------------------------------------------------------
             // Pattern 0: Redundant CMP #0 / CPX #0 / CPY #0 elimination
             // When inst1 already sets Z and N flags identically on the register,
             // and inst3 is a conditional branch testing Z or N (BEQ, BNE, BMI, BPL),
@@ -158,37 +709,24 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
             // -------------------------------------------------------------
             // Pattern 0b: Redundant LDA <mem> after DEC <mem> / INC <mem>
             // DEC/INC already sets Z and N flags. If followed by a Z/N branch (BEQ/BNE/BMI/BPL)
-            // in the same conditional branch chunk (so A is not an SSA assignment) and the
-            // fallthrough instruction overwrites A, LDA is completely dead.
+            // and A is dead along both the fallthrough path and the target branch path,
+            // LDA is completely redundant and can be safely eliminated.
             // -------------------------------------------------------------
             if(inst3 != null && !inst3.isNoOptimize() && branchIdx != -1 &&
-               ref2.chunk == ref3.chunk && ref1.chunk != ref2.chunk &&
                (mnem1.equals("dec") || mnem1.equals("inc")) && mnem2.equals("lda") &&
                inst1.getOperand1() != null && inst1.getOperand1().equals(inst2.getOperand1()) && mode1.equals(mode2)) {
                String mnem3 = inst3.getCpuOpcode() != null ? inst3.getCpuOpcode().getMnemonic() : "";
                boolean isZOrNBranch = mnem3.equals("beq") || mnem3.equals("bne") || mnem3.equals("bmi") || mnem3.equals("bpl");
                if(isZOrNBranch) {
-                  // Check if fallthrough instruction (after branch inst3) overwrites A
-                  LineRef ref4 = null;
-                  for(int m = branchIdx + 1; m < allLines.size(); m++) {
-                     LineRef cand = allLines.get(m);
-                     if(cand.line instanceof AsmComment || cand.line instanceof AsmConstant || cand.line instanceof AsmLabelDecl) continue;
-                     if(cand.line instanceof AsmInstruction) {
-                        ref4 = cand;
-                        break;
-                     }
+                  int targetIdx = findLabelIndex(allLines, inst3.getOperand1(), branchIdx);
+                  boolean targetDead = targetIdx != -1 && isADeadAlongPath(allLines, targetIdx + 1, new HashSet<>(), currentScope, getProgram());
+                  boolean fallthroughDead = isADeadAlongPath(allLines, branchIdx + 1, new HashSet<>(), currentScope, getProgram());
+                  if(targetDead && fallthroughDead) {
+                     getLog().append("Eliminating redundant load " + inst2.getAsm() + " after " + inst1.getAsm() + " before " + inst3.getAsm());
+                     ref2.chunk.getLines().remove(inst2);
+                     passModified = true;
+                     overallModified = true;
                      break;
-                  }
-                  if(ref4 != null) {
-                     AsmInstruction inst4 = (AsmInstruction) ref4.line;
-                     String mnem4 = inst4.getCpuOpcode() != null ? inst4.getCpuOpcode().getMnemonic() : "";
-                     if(mnem4.equals("lda") || mnem4.equals("pla") || mnem4.equals("txa") || mnem4.equals("tya")) {
-                        getLog().append("Eliminating redundant load " + inst2.getAsm() + " after " + inst1.getAsm() + " before " + inst3.getAsm());
-                        ref2.chunk.getLines().remove(inst2);
-                        passModified = true;
-                        overallModified = true;
-                        break;
-                     }
                   }
                }
             }
@@ -346,12 +884,86 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
    }
 
    /**
-    * Checks if an ASM operand string evaluates to integer 0.
+    * Checks if an ASM operand string evaluates to integer 1.
     */
+   private static boolean isOneOperand(String op) {
+      if(op == null) return false;
+      String trimmed = op.trim();
+      if(trimmed.contains(">") || trimmed.contains("<")) return false;
+      Integer val = AsmProgramStaticRegisterValues.getImmValue(op);
+      return val != null && val == 1;
+   }
+
+   private static int findNextInstruction(List<LineRef> allLines, int start) {
+      for(int j = start; j < allLines.size(); j++) {
+         LineRef candidate = allLines.get(j);
+         if(candidate.line instanceof AsmComment || candidate.line instanceof AsmConstant || candidate.line instanceof AsmLabelDecl) {
+            continue;
+         }
+         if(candidate.line instanceof AsmInstruction) {
+            return j;
+         }
+         break;
+      }
+      return -1;
+   }
+
+   private static String getBaseVar(String op) {
+      if(op == null) return "";
+      int idx = op.indexOf('+');
+      if(idx != -1) return op.substring(0, idx).trim();
+      return op.trim();
+   }
+
+   private static int getOffset(String op) {
+      if(op == null) return 0;
+      int idx = op.indexOf('+');
+      if(idx != -1) {
+         try {
+            return Integer.parseInt(op.substring(idx + 1).trim());
+         } catch(Exception e) {
+            return -1;
+         }
+      }
+      return 0;
+   }
+
+   private static boolean isSameLocation(String op1, String op2, Map<String, String> scopeAliases) {
+      if(op1 == null || op2 == null) return false;
+      if(op1.equals(op2)) return true;
+      if(scopeAliases != null) {
+         String r1 = scopeAliases.getOrDefault(op1, op1);
+         String r2 = scopeAliases.getOrDefault(op2, op2);
+         return r1.equals(r2);
+      }
+      return false;
+   }
+
+   private static boolean isFdOperand(String op) {
+      if(op == null) return false;
+      String t = op.trim().toLowerCase();
+      return t.equals("$fd") || t.equals("$$fd") || t.equals("$00fd");
+   }
+
+   private static boolean isFeOperand(String op) {
+      if(op == null) return false;
+      String t = op.trim().toLowerCase();
+      return t.equals("$fe") || t.equals("$$fe") || t.equals("$00fe");
+   }
+
+   private static boolean isFfOperand(String op) {
+      if(op == null) return false;
+      String t = op.trim().toLowerCase();
+      return t.equals("$ff") || t.equals("$$ff") || t.equals("$00ff");
+   }
+
    private static boolean isZeroOperand(String op) {
       if(op == null) return false;
       String trimmed = op.trim();
       if(trimmed.startsWith("#")) trimmed = trimmed.substring(1).trim();
+      if(trimmed.startsWith("<") || trimmed.startsWith(">")) {
+         trimmed = trimmed.substring(1).trim();
+      }
       if(trimmed.equals("0") || trimmed.equals("$0") || trimmed.equals("$00") || trimmed.equals("0x0") || trimmed.equals("0x00")) {
          return true;
       }
@@ -366,5 +978,102 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
       } catch(NumberFormatException e) {
          return false;
       }
+   }
+
+   private static int findLabelIndex(List<LineRef> allLines, String labelName, int fromIdx) {
+      if(labelName == null) return -1;
+      String clean = labelName.trim();
+      if(clean.startsWith("!")) {
+         boolean forward = clean.endsWith("+");
+         String base = forward ? clean.substring(0, clean.length() - 1) : (clean.endsWith("-") ? clean.substring(0, clean.length() - 1) : clean);
+         if(forward) {
+            for(int i = fromIdx + 1; i < allLines.size(); i++) {
+               LineRef ref = allLines.get(i);
+               if(ref.line instanceof AsmLabel) {
+                  String l = ((AsmLabel) ref.line).getLabel();
+                  if(l != null && (l.equals(base) || (l + "+").equals(clean) || (base + "+").equals(l))) {
+                     return i;
+                  }
+               }
+            }
+         } else {
+            for(int i = fromIdx - 1; i >= 0; i--) {
+               LineRef ref = allLines.get(i);
+               if(ref.line instanceof AsmLabel) {
+                  String l = ((AsmLabel) ref.line).getLabel();
+                  if(l != null && (l.equals(base) || (l + "-").equals(clean))) {
+                     return i;
+                  }
+               }
+            }
+         }
+         return -1;
+      }
+      for(int i = 0; i < allLines.size(); i++) {
+         LineRef ref = allLines.get(i);
+         if(ref.line instanceof AsmLabel) {
+            String l = ((AsmLabel) ref.line).getLabel();
+            if(clean.equals(l)) return i;
+         }
+      }
+      return -1;
+   }
+
+   private static boolean isADeadAlongPath(List<LineRef> allLines, int startIdx, Set<String> visitedLabels, String currentScope, dk.camelot64.kickc.model.Program program) {
+      for(int m = startIdx; m < allLines.size(); m++) {
+         LineRef cand = allLines.get(m);
+         if(cand.line instanceof AsmComment || cand.line instanceof AsmConstant || cand.line instanceof AsmLabelDecl) continue;
+         if(cand.line instanceof AsmLabel) continue;
+         if(cand.line instanceof AsmInstruction) {
+            AsmInstruction inst = (AsmInstruction) cand.line;
+            CpuOpcode op = inst.getCpuOpcode();
+            if(op == null) return false;
+            String mnem = op.getMnemonic();
+            CpuAddressingMode mode = op.getAddressingMode();
+            if(mnem.equals("lda") || mnem.equals("pla") || mnem.equals("txa") || mnem.equals("tya") || mnem.equals("lax")) {
+               return true;
+            }
+            if(mnem.equals("sta") || mnem.equals("tax") || mnem.equals("tay") || mnem.equals("pha") ||
+               mnem.equals("cmp") || mnem.equals("adc") || mnem.equals("sbc") || mnem.equals("and") ||
+               mnem.equals("ora") || mnem.equals("eor") || mnem.equals("sax") ||
+               mnem.equals("alr") || mnem.equals("anc") || mnem.equals("arr") || mnem.equals("axs") ||
+               mnem.equals("dcp") || mnem.equals("isc") || mnem.equals("rla") || mnem.equals("rra") ||
+               mnem.equals("slo") || mnem.equals("sre") ||
+               ((mnem.equals("asl") || mnem.equals("lsr") || mnem.equals("rol") || mnem.equals("ror")) && CpuAddressingMode.NON.equals(mode))) {
+               return false;
+            }
+            if(mnem.equals("jsr")) {
+               return true;
+            }
+            if(mnem.equals("rts")) {
+               if(currentScope != null && program != null) {
+                  dk.camelot64.kickc.model.symbols.Symbol sym = program.getScope().getLocalSymbol(currentScope);
+                  if(sym instanceof dk.camelot64.kickc.model.symbols.Procedure) {
+                     dk.camelot64.kickc.model.symbols.Procedure proc = (dk.camelot64.kickc.model.symbols.Procedure) sym;
+                     if(dk.camelot64.kickc.model.types.SymbolType.VOID.equals(proc.getReturnType())) {
+                        return true;
+                     }
+                  }
+               }
+               return false;
+            }
+            if(mnem.equals("jmp")) {
+               String target = inst.getOperand1();
+               if(target != null && visitedLabels.add(target.trim())) {
+                  int targetIdx = findLabelIndex(allLines, target.trim(), m);
+                  if(targetIdx != -1) {
+                     return isADeadAlongPath(allLines, targetIdx + 1, visitedLabels, currentScope, program);
+                  }
+               }
+               return false;
+            }
+            if(mnem.startsWith("b")) {
+               return false;
+            }
+            continue;
+         }
+         break;
+      }
+      return false;
    }
 }
