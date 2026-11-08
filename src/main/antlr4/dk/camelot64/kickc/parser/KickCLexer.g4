@@ -112,6 +112,7 @@ KICKASM_BODY: '{{' .*? '}}';
 // Preprocessor
 IMPORT: '#import' { pushMode(IMPORT_MODE);  } ;
 INCLUDE: '#include' { pushMode(IMPORT_MODE); } ;
+EMBED: '#embed' { pushMode(IMPORT_MODE); } ;
 PRAGMA: '#pragma' ;
 DEFINE: '#define' ;
 DEFINE_CONTINUE: '\\\n' | '\\\r\n';

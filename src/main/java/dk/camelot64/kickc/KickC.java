@@ -382,6 +382,9 @@ public class KickC implements Callable<Integer> {
 
          Map<String, String> effectiveDefines = new LinkedHashMap<>();
          effectiveDefines.put("__KICKC__", "1");
+         effectiveDefines.put("__STDC_EMBED_NOT_FOUND__", "0");
+         effectiveDefines.put("__STDC_EMBED_FOUND__", "1");
+         effectiveDefines.put("__STDC_EMBED_EMPTY__", "2");
          if(defines != null)
             effectiveDefines.putAll(defines);
          if(program.getTargetPlatform().getDefines() != null)

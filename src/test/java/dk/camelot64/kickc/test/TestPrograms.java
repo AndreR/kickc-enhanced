@@ -176,6 +176,9 @@ public class TestPrograms {
 
       final Map<String, String> defines = new HashMap<>();
       defines.put("__KICKC__", "1");
+      defines.put("__STDC_EMBED_NOT_FOUND__", "0");
+      defines.put("__STDC_EMBED_FOUND__", "1");
+      defines.put("__STDC_EMBED_EMPTY__", "2");
       defines.putAll(program.getTargetPlatform().getDefines());
       try {
          compiler.compile(files, defines);

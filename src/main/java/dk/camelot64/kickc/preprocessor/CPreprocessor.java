@@ -14,6 +14,12 @@ import org.antlr.v4.runtime.*;
 import org.antlr.v4.runtime.tree.TerminalNode;
 
 import java.util.*;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
+import dk.camelot64.kickc.SourceLoader;
 
 /**
  * C preprocessor
@@ -171,6 +177,9 @@ public class CPreprocessor implements TokenSource {
          return true;
       } else if(inputToken.getType() == KickCLexer.INCLUDE) {
          include(inputToken, cTokenSource);
+         return true;
+      } else if(inputToken.getType() == KickCLexer.EMBED) {
+         embed(inputToken, cTokenSource);
          return true;
       }
       return false;
@@ -542,6 +551,8 @@ public class CPreprocessor implements TokenSource {
       ArrayList<Token> conditionTokens = readBody(cTokenSource);
       // Evaluate any uses of the defined operator (to prevent expansion of the named macro)
       evaluateDefinedOperator(conditionTokens);
+      evaluateHasEmbedOperator(conditionTokens);
+      evaluateHasIncludeOperator(conditionTokens);
       // Expand the condition body before evaluating it
       CPreprocessor subPreprocessor = new CPreprocessor(cParser, new ListTokenSource(conditionTokens), new HashMap<>(defines));
       // Parse the expression
@@ -618,6 +629,244 @@ public class CPreprocessor implements TokenSource {
     *
     * @param conditionTokens The token list
     */
+
+   /**
+    * Handle #embed directive (C23 WG14 N3017).
+    * Embeds binary resource bytes as a comma-separated list of integer constant expressions.
+    *
+    * @param inputToken The #embed token
+    * @param cTokenSource The token source used to get the resource file and parameters
+    */
+   private void embed(Token inputToken, CTokenSource cTokenSource) {
+      skipWhitespace(cTokenSource);
+      final Token fileNameToken = cTokenSource.nextToken();
+      String fileName;
+      boolean isSystem = false;
+      if(fileNameToken.getType() == KickCLexer.IMPORT_LOCALFILE) {
+         fileName = fileNameToken.getText();
+      } else if(fileNameToken.getType() == KickCLexer.IMPORT_SYSTEMFILE) {
+         fileName = fileNameToken.getText();
+         isSystem = true;
+      } else {
+         throw new CompileError("#embed not followed by file!", new StatementSource(inputToken, fileNameToken));
+      }
+      if(fileName.startsWith("\"") || fileName.startsWith("<")) {
+         fileName = fileName.substring(1, fileName.length() - 1);
+      }
+
+      // Read remainder of line for parameters (limit, prefix, suffix, if_empty)
+      ArrayList<Token> paramTokens = readBody(cTokenSource);
+
+      Long limit = null;
+      List<Token> prefixTokens = new ArrayList<>();
+      List<Token> suffixTokens = new ArrayList<>();
+      List<Token> ifEmptyTokens = new ArrayList<>();
+
+      for(int i = 0; i < paramTokens.size(); i++) {
+         Token tok = paramTokens.get(i);
+         if(tok.getChannel() == CParser.CHANNEL_WHITESPACE || tok.getChannel() == CParser.CHANNEL_COMMENTS) {
+            continue;
+         }
+         if(tok.getType() == KickCLexer.NAME) {
+            String pName = tok.getText();
+            int pStart = -1;
+            for(int j = i + 1; j < paramTokens.size(); j++) {
+               Token tj = paramTokens.get(j);
+               if(tj.getChannel() == CParser.CHANNEL_WHITESPACE || tj.getChannel() == CParser.CHANNEL_COMMENTS) continue;
+               if(tj.getType() == KickCLexer.PAR_BEGIN) {
+                  pStart = j;
+                  break;
+               }
+               break;
+            }
+            if(pStart != -1) {
+               int depth = 1;
+               int pEnd = -1;
+               List<Token> inside = new ArrayList<>();
+               for(int j = pStart + 1; j < paramTokens.size(); j++) {
+                  Token tj = paramTokens.get(j);
+                  if(tj.getType() == KickCLexer.PAR_BEGIN) depth++;
+                  else if(tj.getType() == KickCLexer.PAR_END) {
+                     depth--;
+                     if(depth == 0) {
+                        pEnd = j;
+                        break;
+                     }
+                  }
+                  inside.add(tj);
+               }
+               if(pEnd != -1) {
+                  i = pEnd;
+                  if("limit".equals(pName)) {
+                     CPreprocessor subPreprocessor = new CPreprocessor(cParser, new ListTokenSource(inside), new HashMap<>(defines));
+                     KickCParser.ExprContext limitExpr = ExprParser.parseExpression(subPreprocessor);
+                     limit = evaluateExpression(limitExpr);
+                  } else if("prefix".equals(pName)) {
+                     for(Token t : inside) {
+                        if(t.getChannel() != CParser.CHANNEL_WHITESPACE && t.getChannel() != CParser.CHANNEL_COMMENTS) {
+                           prefixTokens.add(t);
+                        }
+                     }
+                  } else if("suffix".equals(pName)) {
+                     for(Token t : inside) {
+                        if(t.getChannel() != CParser.CHANNEL_WHITESPACE && t.getChannel() != CParser.CHANNEL_COMMENTS) {
+                           suffixTokens.add(t);
+                        }
+                     }
+                  } else if("if_empty".equals(pName)) {
+                     for(Token t : inside) {
+                        if(t.getChannel() != CParser.CHANNEL_WHITESPACE && t.getChannel() != CParser.CHANNEL_COMMENTS) {
+                           ifEmptyTokens.add(t);
+                        }
+                     }
+                  }
+               }
+            }
+         }
+      }
+
+      final Path currentSourceFolderPath = isSystem ? null : cParser.getCurrentSourceFolderPath();
+      File file = SourceLoader.loadFile(fileName, currentSourceFolderPath, cParser.getProgram().getIncludePaths());
+      if(file == null) {
+         throw new CompileError("File not found for #embed: " + fileName, new StatementSource(inputToken, fileNameToken));
+      }
+
+      byte[] fileBytes;
+      try {
+         fileBytes = Files.readAllBytes(file.toPath());
+      } catch(IOException e) {
+         throw new CompileError("Error reading embedded file " + fileName + ": " + e.getMessage(), e);
+      }
+
+      if(limit != null && limit >= 0 && limit < fileBytes.length) {
+         fileBytes = Arrays.copyOf(fileBytes, limit.intValue());
+      }
+
+      List<Token> resultTokens = new ArrayList<>();
+      if(fileBytes.length == 0) {
+         if(!ifEmptyTokens.isEmpty()) {
+            resultTokens.addAll(ifEmptyTokens);
+         }
+      } else {
+         if(!prefixTokens.isEmpty()) {
+            resultTokens.addAll(prefixTokens);
+            CommonToken comma = new CommonToken(inputToken);
+            comma.setType(KickCLexer.COMMA);
+            comma.setText(",");
+            resultTokens.add(comma);
+         }
+         for(int b = 0; b < fileBytes.length; b++) {
+            int val = fileBytes[b] & 0xFF;
+            CommonToken byteTok = new CommonToken(inputToken);
+            byteTok.setType(KickCLexer.NUMBER);
+            byteTok.setText(String.format("0x%02x", val));
+            resultTokens.add(byteTok);
+            if(b < fileBytes.length - 1) {
+               CommonToken comma = new CommonToken(inputToken);
+               comma.setType(KickCLexer.COMMA);
+               comma.setText(",");
+               resultTokens.add(comma);
+            }
+         }
+         if(!suffixTokens.isEmpty()) {
+            CommonToken comma = new CommonToken(inputToken);
+            comma.setType(KickCLexer.COMMA);
+            comma.setText(",");
+            resultTokens.add(comma);
+            resultTokens.addAll(suffixTokens);
+         }
+      }
+
+      cTokenSource.addSourceFirst(new ListTokenSource(resultTokens));
+   }
+
+   private void evaluateHasEmbedOperator(ArrayList<Token> conditionTokens) {
+      for(ListIterator<Token> tokenIt = conditionTokens.listIterator(); tokenIt.hasNext(); ) {
+         Token token = tokenIt.next();
+         if(token.getType() == KickCLexer.NAME && token.getText().equals("__has_embed")) {
+            tokenIt.remove();
+            token = getNextSkipWhitespace(tokenIt);
+            boolean hasPar = false;
+            if(token.getType() == KickCLexer.PAR_BEGIN) {
+               hasPar = true;
+               tokenIt.remove();
+               token = getNextSkipWhitespace(tokenIt);
+            }
+            tokenIt.remove();
+            Token fileNameToken = token;
+            String fileName = fileNameToken.getText();
+            boolean isSystem = false;
+            if(fileName.startsWith("<") && fileName.endsWith(">")) {
+               fileName = fileName.substring(1, fileName.length() - 1);
+               isSystem = true;
+            } else if(fileName.startsWith("\"") && fileName.endsWith("\"")) {
+               fileName = fileName.substring(1, fileName.length() - 1);
+            }
+            if(hasPar) {
+               token = getNextSkipWhitespace(tokenIt);
+               if(token.getType() != KickCLexer.PAR_END) {
+                  throw new CompileError("Unexpected token. Was expecting ')'!", token);
+               }
+               tokenIt.remove();
+            }
+            final Path currentSourceFolderPath = isSystem ? null : cParser.getCurrentSourceFolderPath();
+            File file = SourceLoader.loadFile(fileName, currentSourceFolderPath, cParser.getProgram().getIncludePaths());
+            long result = 0L; // __STDC_EMBED_NOT_FOUND__
+            if(file != null && file.exists()) {
+               if(file.length() > 0) {
+                  result = 1L; // __STDC_EMBED_FOUND__
+               } else {
+                  result = 2L; // __STDC_EMBED_EMPTY__
+               }
+            }
+            CommonToken resultToken = new CommonToken(fileNameToken);
+            resultToken.setType(KickCLexer.NUMBER);
+            resultToken.setText(String.valueOf(result));
+            tokenIt.add(resultToken);
+         }
+      }
+   }
+
+   private void evaluateHasIncludeOperator(ArrayList<Token> conditionTokens) {
+      for(ListIterator<Token> tokenIt = conditionTokens.listIterator(); tokenIt.hasNext(); ) {
+         Token token = tokenIt.next();
+         if(token.getType() == KickCLexer.NAME && token.getText().equals("__has_include")) {
+            tokenIt.remove();
+            token = getNextSkipWhitespace(tokenIt);
+            boolean hasPar = false;
+            if(token.getType() == KickCLexer.PAR_BEGIN) {
+               hasPar = true;
+               tokenIt.remove();
+               token = getNextSkipWhitespace(tokenIt);
+            }
+            tokenIt.remove();
+            Token fileNameToken = token;
+            String fileName = fileNameToken.getText();
+            boolean isSystem = false;
+            if(fileName.startsWith("<") && fileName.endsWith(">")) {
+               fileName = fileName.substring(1, fileName.length() - 1);
+               isSystem = true;
+            } else if(fileName.startsWith("\"") && fileName.endsWith("\"")) {
+               fileName = fileName.substring(1, fileName.length() - 1);
+            }
+            if(hasPar) {
+               token = getNextSkipWhitespace(tokenIt);
+               if(token.getType() != KickCLexer.PAR_END) {
+                  throw new CompileError("Unexpected token. Was expecting ')'!", token);
+               }
+               tokenIt.remove();
+            }
+            final Path currentSourceFolderPath = isSystem ? null : cParser.getCurrentSourceFolderPath();
+            File file = SourceLoader.loadFile(fileName, currentSourceFolderPath, cParser.getProgram().getIncludePaths());
+            long result = (file != null && file.exists()) ? 1L : 0L;
+            CommonToken resultToken = new CommonToken(fileNameToken);
+            resultToken.setType(KickCLexer.NUMBER);
+            resultToken.setText(String.valueOf(result));
+            tokenIt.add(resultToken);
+         }
+      }
+   }
+
    private void evaluateDefinedOperator(ArrayList<Token> conditionTokens) {
       // First evaluate the special defined operators
       ListIterator<Token> tokenIt = conditionTokens.listIterator();

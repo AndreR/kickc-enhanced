@@ -284,6 +284,10 @@ public class CParser {
      *
      * @return The path of the folder containing the source file currently being tokenized
      */
+    public Program getProgram() {
+        return program;
+    }
+
     public Path getCurrentSourceFolderPath() {
         TokenSource currentSource = cTokenSource.getCurrentSource();
         String sourceName = currentSource.getSourceName();
