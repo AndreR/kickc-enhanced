@@ -159,7 +159,14 @@ public class Pass4RegistersFinalize extends Pass2Base {
 
       List<LiveRangeEquivalenceClass> equivalenceClasses = new ArrayList<>(equivalenceClassSet.getEquivalenceClasses());
       final VariableRegisterWeights registerWeights = getProgram().getVariableRegisterWeights();
-      Collections.sort(equivalenceClasses, (o1, o2) -> Double.compare(registerWeights.getTotalWeight(o2), registerWeights.getTotalWeight(o1)));
+      Collections.sort(equivalenceClasses, (o1, o2) -> {
+         boolean o1Multi = hasMultipleDataSegments(o1);
+         boolean o2Multi = hasMultipleDataSegments(o2);
+         if(o1Multi != o2Multi) {
+            return o1Multi ? -1 : 1;
+         }
+         return Double.compare(registerWeights.getTotalWeight(o2), registerWeights.getTotalWeight(o1));
+      });
 
       for(LiveRangeEquivalenceClass equivalenceClass : equivalenceClasses) {
          Registers.Register register = equivalenceClass.getRegister();
@@ -185,6 +192,9 @@ public class Pass4RegistersFinalize extends Pass2Base {
                int sizeBytes = variable.getType().getSizeBytes();
                if(overflowToMainMem) {
                   if (zp + sizeBytes > 0x100) {
+                     if(hasMultipleDataSegments(equivalenceClass)) {
+                        throw new CompileError("Error! Variables spanning multiple data segments do not fit on zeropage: " + variable.toString());
+                     }
                      // Zero-page exhausted - move to main memory instead (TODO: prioritize!)
                      register = new Registers.RegisterMainMem(variableRef, variable.getType().getSizeBytes(), null, false);
                      getLog().append("Zero-page exhausted. Moving allocation to main memory " + variable.toString());
@@ -197,6 +207,24 @@ public class Pass4RegistersFinalize extends Pass2Base {
             }
          }
       }
+   }
+
+   /**
+    * Checks if an equivalence class contains variables originating from different data segments.
+    */
+   private boolean hasMultipleDataSegments(LiveRangeEquivalenceClass equivalenceClass) {
+      String segment = null;
+      for(VariableRef varRef : equivalenceClass.getVariables()) {
+         Variable var = getProgram().getSymbolInfos().getVariable(varRef);
+         if(var != null && var.getDataSegment() != null) {
+            if(segment == null) {
+               segment = var.getDataSegment();
+            } else if(!segment.equals(var.getDataSegment())) {
+               return true;
+            }
+         }
+      }
+      return false;
    }
 
    /**

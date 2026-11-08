@@ -75,6 +75,7 @@ public class Pass4MemoryCoalesceCallGraph extends Pass2Base {
                   allCallingScopes = new LinkedHashSet<>();
                   for(ScopeRef ecScope : getEquivalenceClassScopesCached(thisEC, ecScopesCache)) {
                      allCallingScopes.addAll(callGraph.getRecursiveCallerProcs(ecScope));
+                     allCallingScopes.addAll(callGraph.getRecursiveCalls(ecScope));
                   }
                }
                // Skip if there is a scope overlap
@@ -83,8 +84,9 @@ public class Pass4MemoryCoalesceCallGraph extends Pass2Base {
                // No scope overlap - attempt to coalesce
                Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate candidate = new Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate(thisEC, otherEC, null);
                if(Pass4MemoryCoalesce.attemptCoalesce(candidate, threadHeads, unknownFragments, getProgram())) {
-                  // Successfully coalesced with already handled EC - invalidate its cached scopes and move on!
+                  // Successfully coalesced with already handled EC - invalidate cached scopes for both and move on!
                   ecScopesCache.remove(otherEC);
+                  ecScopesCache.remove(thisEC);
                   coalesced = true;
                   modified = true;
                   break;
