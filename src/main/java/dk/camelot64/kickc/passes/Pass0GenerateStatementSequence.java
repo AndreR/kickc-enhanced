@@ -1588,6 +1588,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    }
 
    @Override
+   public Object visitDirectiveSoa(KickCParser.DirectiveSoaContext ctx) {
+      return new Directive.Soa();
+   }
+
+   @Override
    public Object visitDirectiveCountdown(KickCParser.DirectiveCountdownContext ctx) {
       return new Directive.Countdown();
    }
@@ -3151,6 +3156,111 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return rhsVal;
    }
 
+   public Long getSoaArrayElementCount(Variable var) {
+      if(var.getArraySpec() != null && var.getArraySpec().getArraySize() != null) {
+         return evaluateConstantInteger(var.getArraySpec().getArraySize());
+      }
+      if(var.getInitValue() instanceof ConstantArrayList list) {
+         return (long) list.getElements().size();
+      }
+      return null;
+   }
+
+   public static class SoaAccessInfo {
+      public final KickCParser.ExprDotContext dotCtx;
+      public final KickCParser.ExprArrayContext arrayCtx;
+      public final Variable arrayVar;
+      public final SymbolTypeStruct structType;
+      public final Variable memberVar;
+      public final long baseOffset;
+      public final long elementCount;
+
+      public SoaAccessInfo(KickCParser.ExprDotContext dotCtx, KickCParser.ExprArrayContext arrayCtx, Variable arrayVar, SymbolTypeStruct structType, Variable memberVar, long baseOffset, long elementCount) {
+         this.dotCtx = dotCtx;
+         this.arrayCtx = arrayCtx;
+         this.arrayVar = arrayVar;
+         this.structType = structType;
+         this.memberVar = memberVar;
+         this.baseOffset = baseOffset;
+         this.elementCount = elementCount;
+      }
+   }
+
+   public SoaAccessInfo getSoaAccessInfo(KickCParser.ExprDotContext dotCtx) {
+      KickCParser.ExprContext baseExpr = dotCtx.expr();
+      while(baseExpr instanceof KickCParser.ExprParContext) {
+         KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) baseExpr).commaExpr();
+         if(commaCtx instanceof KickCParser.CommaNoneContext) {
+            baseExpr = ((KickCParser.CommaNoneContext) commaCtx).expr();
+         } else if(commaCtx instanceof KickCParser.CommaSimpleContext) {
+            baseExpr = ((KickCParser.CommaSimpleContext) commaCtx).expr();
+         } else {
+            return null;
+         }
+      }
+      if(baseExpr instanceof KickCParser.ExprArrayContext arrayCtx) {
+         KickCParser.ExprContext arrNameExpr = arrayCtx.expr();
+         while(arrNameExpr instanceof KickCParser.ExprParContext) {
+            KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) arrNameExpr).commaExpr();
+            if(commaCtx instanceof KickCParser.CommaNoneContext) {
+               arrNameExpr = ((KickCParser.CommaNoneContext) commaCtx).expr();
+            } else if(commaCtx instanceof KickCParser.CommaSimpleContext) {
+               arrNameExpr = ((KickCParser.CommaSimpleContext) commaCtx).expr();
+            } else {
+               return null;
+            }
+         }
+         if(arrNameExpr instanceof KickCParser.ExprIdContext idCtx) {
+            String name = idCtx.NAME().getText();
+            Symbol sym = getCurrentScope().findSymbol(name);
+            if(sym == null) {
+               sym = program.getScope().findSymbol(name);
+            }
+            if(sym instanceof Variable arrayVar && arrayVar.isSoa()) {
+               SymbolType elemType = ((SymbolTypePointer) arrayVar.getType()).getElementType();
+               if(elemType instanceof SymbolTypeStruct structType) {
+                  StructDefinition structDef = structType.getStructDefinition(program.getScope());
+                  String memberName = dotCtx.NAME().getText();
+                  Variable memberVar = structDef.getMember(memberName);
+                  if(memberVar == null) {
+                     throw new CompileError("Struct " + structType.getStructTypeName() + " has no member " + memberName, new StatementSource(dotCtx));
+                  }
+                  Long elementCount = getSoaArrayElementCount(arrayVar);
+                  if(elementCount == null) {
+                     throw new CompileError("Cannot determine element count of __soa array " + arrayVar.getLocalName(), new StatementSource(dotCtx));
+                  }
+                  long baseOffset = 0;
+                  for(Variable m : structDef.getAllVars(false)) {
+                     if(m.getLocalName().equals(memberName)) {
+                        break;
+                     }
+                     long mSize = SymbolTypeStruct.getMemberSizeBytes(m.getType(), m.getArraySize(), program.getScope());
+                     baseOffset += mSize * elementCount;
+                  }
+                  return new SoaAccessInfo(dotCtx, arrayCtx, arrayVar, structType, memberVar, baseOffset, elementCount);
+               }
+            }
+         }
+      }
+      return null;
+   }
+
+   public PointerDereferenceIndexed desugarSoaMember(SoaAccessInfo soa) {
+      RValue indexRVal = (RValue) visit(soa.arrayCtx.commaExpr());
+      SymbolTypePointer bytePtrType = new SymbolTypePointer(SymbolType.BYTE);
+      ConstantCastValue bytePtr = new ConstantCastValue(bytePtrType, (ConstantValue) soa.arrayVar.getRef());
+      ConstantValue memberBasePtr;
+      if(soa.baseOffset > 0) {
+         ConstantBinary addOffset = new ConstantBinary(bytePtr, Operators.PLUS, new ConstantInteger(soa.baseOffset, SymbolType.WORD));
+         memberBasePtr = new ConstantCastValue(new SymbolTypePointer(soa.memberVar.getType()), addOffset);
+      } else {
+         memberBasePtr = new ConstantCastValue(new SymbolTypePointer(soa.memberVar.getType()), bytePtr);
+      }
+      PointerDereferenceIndexed deref = new PointerDereferenceIndexed(memberBasePtr, indexRVal);
+      addExprToConsume(deref);
+      return deref;
+   }
+
    public Long getLoHiArrayElementCount(Variable var) {
       if(var.getArraySpec() != null && var.getArraySpec().getArraySize() != null) {
          return evaluateConstantInteger(var.getArraySpec().getArraySize());
@@ -3184,6 +3294,40 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          }
       }
       return null;
+   }
+
+   public boolean isBareSoaArrayElement(KickCParser.ExprContext exprCtx) {
+      while(exprCtx instanceof KickCParser.ExprParContext) {
+         KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) exprCtx).commaExpr();
+         if(commaCtx instanceof KickCParser.CommaNoneContext) {
+            exprCtx = ((KickCParser.CommaNoneContext) commaCtx).expr();
+         } else if(commaCtx instanceof KickCParser.CommaSimpleContext) {
+            exprCtx = ((KickCParser.CommaSimpleContext) commaCtx).expr();
+         } else {
+            return false;
+         }
+      }
+      if(exprCtx instanceof KickCParser.ExprArrayContext arrayCtx) {
+         KickCParser.ExprContext arrNameExpr = arrayCtx.expr();
+         while(arrNameExpr instanceof KickCParser.ExprParContext) {
+            KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) arrNameExpr).commaExpr();
+            if(commaCtx instanceof KickCParser.CommaNoneContext) {
+               arrNameExpr = ((KickCParser.CommaNoneContext) commaCtx).expr();
+            } else if(commaCtx instanceof KickCParser.CommaSimpleContext) {
+               arrNameExpr = ((KickCParser.CommaSimpleContext) commaCtx).expr();
+            } else {
+               return false;
+            }
+         }
+         if(arrNameExpr instanceof KickCParser.ExprIdContext idCtx) {
+            Symbol sym = getCurrentScope().findSymbol(idCtx.NAME().getText());
+            if(sym == null) sym = program.getScope().findSymbol(idCtx.NAME().getText());
+            if(sym instanceof Variable v && v.isSoa()) {
+               return true;
+            }
+         }
+      }
+      return false;
    }
 
    public KickCParser.ExprArrayContext getLoHiArrayContext(KickCParser.ExprContext exprCtx) {
@@ -3558,6 +3702,10 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public Object visitExprDot(KickCParser.ExprDotContext ctx) {
+      SoaAccessInfo soa = getSoaAccessInfo(ctx);
+      if(soa != null) {
+         return desugarSoaMember(soa);
+      }
       SymbolType structType = inferExprType(ctx.expr());
       if(structType instanceof SymbolTypeStruct) {
          StructDefinition structDef = ((SymbolTypeStruct) structType).getStructDefinition(program.getScope());
@@ -4147,7 +4295,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    public RValue visitExprUnary(KickCParser.ExprUnaryContext ctx) {
       String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
       Operator operator = Operators.getUnary(op);
-      if(Operators.ADDRESS_OF.equals(operator) && (getBitfieldMember(ctx.expr()) != null || getNibbleArrayContext(ctx.expr()) != null || getLoHiArrayContext(ctx.expr()) != null)) {
+      if(Operators.ADDRESS_OF.equals(operator) && (getBitfieldMember(ctx.expr()) != null || getNibbleArrayContext(ctx.expr()) != null || getLoHiArrayContext(ctx.expr()) != null || isBareSoaArrayElement(ctx.expr()))) {
          throw new CompileError("Cannot take address of bitfield member or packed nibble element", new StatementSource(ctx));
       }
       RValue child = (RValue) this.visit(ctx.expr());
@@ -4277,6 +4425,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       Symbol symbol = getCurrentScope().findSymbol(ctx.NAME().getText());
       if(symbol instanceof Variable) {
          Variable variable = (Variable) symbol;
+         if(variable.isSoa()) {
+            ParserRuleContext parent = ctx.getParent();
+            while(parent instanceof KickCParser.ExprParContext || parent instanceof KickCParser.CommaExprContext) {
+               parent = parent.getParent();
+            }
+            if(!(parent instanceof KickCParser.ExprSizeOfContext || parent instanceof KickCParser.ExprCountOfContext || parent instanceof KickCParser.ExprArrayContext)) {
+               throw new CompileError("Split __soa array '" + variable.getLocalName() + "' cannot be used as a raw struct pointer", new StatementSource(ctx));
+            }
+         }
          if(variable.isLoHi()) {
             ParserRuleContext parent = ctx.getParent();
             while(parent instanceof KickCParser.ExprParContext || parent instanceof KickCParser.CommaExprContext) {

@@ -129,6 +129,11 @@ public class Directive {
       public LoHi() { super("__lohi"); }
    }
 
+   /** Array declared __soa (struct-of-arrays flattening). */
+   public static class Soa extends Directive {
+      public Soa() { super("__soa"); }
+   }
+
    /** Function declared interrupt. */
    public static class Interrupt extends Directive {
       public String interruptType;

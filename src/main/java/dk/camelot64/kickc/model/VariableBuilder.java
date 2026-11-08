@@ -87,6 +87,25 @@ public class VariableBuilder {
       variable.setDeclarationOnly(this.isDeclarationOnly());
       variable.setStructUnwind(this.getStructUnwind());
       variable.setLoHi(this.isLoHi());
+      variable.setSoa(this.isSoa());
+      if(this.isSoa()) {
+         if(!isArray()) {
+            throw new CompileError("__soa directive is only valid on arrays");
+         }
+         SymbolType elemType = ((SymbolTypePointer) type).getElementType();
+         if(!(elemType instanceof SymbolTypeStruct)) {
+            throw new CompileError("__soa directive is only supported on arrays of structs");
+         }
+         dk.camelot64.kickc.model.symbols.ArraySpec as = ((SymbolTypePointer) type).getArraySpec();
+         if(as != null && as.getArraySize() instanceof dk.camelot64.kickc.model.values.ConstantInteger ci) {
+            if(ci.getValue() > 256) {
+               throw new CompileError("Array declared __soa cannot have more than 256 elements, found " + ci.getValue());
+            }
+            if(ci.getValue() <= 0) {
+               throw new CompileError("Array declared __soa must have positive size");
+            }
+         }
+      }
       if(this.isLoHi()) {
          if(!isArray()) {
             throw new CompileError("__lohi directive is only valid on arrays");
@@ -321,6 +340,10 @@ public class VariableBuilder {
     *
     * @return true if declared as export
     */
+   public boolean isSoa() {
+      return hasDirective(Directive.Soa.class);
+   }
+
    public boolean isLoHi() {
       return hasDirective(Directive.LoHi.class);
    }

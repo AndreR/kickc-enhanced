@@ -65,6 +65,8 @@ public class Variable implements Symbol {
    private boolean export;
    /** Specifies that a word array is split into parallel low/high byte arrays (__lohi). */
    private boolean loHi;
+   /** Specifies that an array of structs is flattened to parallel member arrays (__soa). */
+   private boolean soa;
 
    /** Specifies that the should be optimized (register keyword). */
    private boolean optimize;
@@ -161,6 +163,7 @@ public class Variable implements Symbol {
       version.setPermanent(phiMaster.isPermanent());
       version.setExport(phiMaster.isExport());
       version.setLoHi(phiMaster.isLoHi());
+      version.setSoa(phiMaster.isSoa());
       version.setComments(phiMaster.getComments());
       version.setStructUnwind(phiMaster.isStructUnwind());
       return version;
@@ -205,6 +208,7 @@ public class Variable implements Symbol {
       constVar.setPermanent(variable.isPermanent());
       constVar.setExport(variable.isExport());
       constVar.setLoHi(variable.isLoHi());
+      constVar.setSoa(variable.isSoa());
       constVar.setComments(variable.getComments());
       constVar.setStructUnwind(variable.isStructUnwind());
       return constVar;
@@ -225,6 +229,7 @@ public class Variable implements Symbol {
       copy.setPermanent(original.isPermanent());
       copy.setExport(original.isExport());
       copy.setLoHi(original.isLoHi());
+      copy.setSoa(original.isSoa());
       copy.setRegister(original.getRegister());
       copy.setComments(original.getComments());
       copy.setStructUnwind(original.isStructUnwind());
@@ -483,6 +488,14 @@ public class Variable implements Symbol {
 
    public void setPermanent(boolean permanent) {
       this.permanent = permanent;
+   }
+
+   public boolean isSoa() {
+      return soa;
+   }
+
+   public void setSoa(boolean soa) {
+      this.soa = soa;
    }
 
    public boolean isLoHi() {

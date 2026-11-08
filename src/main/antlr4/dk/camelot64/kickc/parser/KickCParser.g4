@@ -176,6 +176,7 @@ directive
     | COUNTDOWN #directiveCountdown
     | CARRY #directiveCarry
     | LOHI #directiveLoHi
+    | SOA #directiveSoa
     | BANK PAR_BEGIN NAME COMMA NUMBER PAR_END #directiveBank
     | INTRINSIC #directiveIntrinsic
     | INTERRUPT ( PAR_BEGIN NAME PAR_END )? #directiveInterrupt
