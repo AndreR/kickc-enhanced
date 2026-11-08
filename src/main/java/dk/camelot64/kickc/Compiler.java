@@ -345,6 +345,8 @@ public class Compiler {
 
       new Pass1UnrollConditionVariableSsa(program).step();
 
+      new Pass1LeafFunctionRegisterCallingConvention(program).execute();
+
       new Pass1ModifiedVarsAnalysis(program).execute();
       if(getLog().isVerbosePass1CreateSsa()) {
          getLog().append("PROCEDURE MODIFY VARIABLE ANALYSIS");
