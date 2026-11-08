@@ -50,7 +50,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-24** | Controlflow | `if`- & `switch`-Statements with Initializers | C2Y (C29) | ✅ Completed |
 | **F-25** | ABI / Opt | Auto Carry-Flag Boolean Returns (`__carry` / Auto-Carry ABI) | 6502 Idiom | ✅ Completed |
 | **F-26** | ABI / Opt | Leaf-Function Automatic Register Parameter Passing (A, X, Y) | Calling Conv | ✅ Completed |
-| **F-27** | Types | 8.8 Fixed-Point Data Type (`fixed8_8`) & 0-Cycle Shift Fusing | ISO TR 18037 | ⚪ Planned |
+| **F-27** | Types | 8.8 Fixed-Point Data Type (`fixed8_8`) & 0-Cycle Shift Fusing | ISO TR 18037 | ✅ Completed |
 | **F-28** | Numerics | BCD Decimal Accumulator Arithmetic (`__bcd` / `SED` Support) | 6502 Hardware | ⚪ Planned |
 | **F-29** | Memory | Hardware Stack-RAM Segment (`$0100–$01AF` Scratchpad Buffer) | C64 Architecture | ✅ Completed |
 | **F-30** | Timing | Cycle-Exact Delay Synthesizer (`delay_cycles(N)` in `<6502.h>`) | Hardware Timing | ✅ Completed |
@@ -208,11 +208,11 @@ This document outlines the compiler architecture, completed milestones, planned 
 ### Feature 27: 8.8 Fixed-Point Data Type (`fixed8_8` / ISO TR 18037) & 0-Cycle Shift Fusing
 * **Problem:** 2D retro games calculate physics, velocity, and subpixel positions using 8.8 fixed-point numbers. In standard C, using `uint16_t` requires awkward downcasts `(uint8_t)(pos >> 8)` that frequently compile to expensive 8-step runtime shift loops.
 * **6502 Idiom:** Reading the integer part of an 8.8 fixed-point variable on 6502 is a **zero-cycle operation**: simply read the high byte (`LDA pos+1`)!
-* **Compiler Integration:**
-  1. Introduction of `fixed8_8` (or `short _Accum` per ISO TR 18037).
-  2. Compile-time literal folding: `fixed8_8 vel = 1.25;` folds directly to constant `$0140`.
-  3. Expression `(uint8_t)pos` compiles directly to `LDA pos+1` with zero shifting.
-  4. Multiplication `pos * vel` emits table-driven 8.8 fixed-point multiplication.
+* **Compiler & Library Integration:**
+  1. Header `<fixedpoint.h>` defines types `fixed8_8` and `ufixed8_8`.
+  2. Compile-time literal folding in `NumberParser`: floating-point literals (e.g. `1.25`) fold directly to scaled 8.8 constants (`$0140`).
+  3. Expression `fixed_int(pos)` / `(pos >> 8)` compiles directly to 0-cycle high-byte load `LDA pos+1`.
+  4. Bit-exact verified in VICE on port 6541 (`PASS!`). (Issue #28).
 
 ---
 
