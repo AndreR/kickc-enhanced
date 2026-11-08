@@ -172,7 +172,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
    }
 
 
-   private static boolean areFlagsNeededAfter(List<AsmLine> lines, int currentIdx) {
+   private static boolean areFlagsNeededAfterLines(List<AsmLine> lines, int currentIdx) {
       for(int k = currentIdx + 1; k < lines.size(); k++) {
          AsmLine line = lines.get(k);
          if(line instanceof dk.camelot64.kickc.asm.AsmComment || line instanceof dk.camelot64.kickc.asm.AsmConstant || line instanceof dk.camelot64.kickc.asm.AsmLabelDecl) continue;
@@ -187,7 +187,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                mnem.equals("bcc") || mnem.equals("bcs") || mnem.equals("bvc") || mnem.equals("bvs")) {
                return true;
             }
-            if(mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty") || mnem.equals("nop")) {
+            if(isInstructionPreservingZAndN(inst)) {
                continue;
             }
             return false;
@@ -196,7 +196,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
       return false;
    }
 
-   private static boolean areFlagsEstablishedForReg(List<AsmLine> lines, int currentIdx, String reg) {
+   private static boolean areFlagsEstablishedForRegLines(List<AsmLine> lines, int currentIdx, String reg) {
       for(int p = currentIdx - 1; p >= 0; p--) {
          AsmLine line = lines.get(p);
          if(line instanceof dk.camelot64.kickc.asm.AsmComment || line instanceof dk.camelot64.kickc.asm.AsmConstant || line instanceof dk.camelot64.kickc.asm.AsmLabelDecl) continue;
@@ -206,17 +206,16 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
          if(line instanceof AsmInstruction) {
             AsmInstruction prev = (AsmInstruction) line;
             if(prev.getCpuOpcode() == null) return false;
-            String mnem = prev.getCpuOpcode().getMnemonic();
-            if(mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty") || mnem.equals("nop")) {
+            if(isInstructionPreservingZAndN(prev)) {
                continue;
             }
-            return Pass5IllegalOpcodeOptimization.doesInstructionSetZAndN(prev, reg);
+            return doesInstructionSetZAndN(prev, reg);
          }
       }
       return false;
    }
 
    private static boolean canRemoveRegister(List<AsmLine> lines, int currentIdx, String reg) {
-      return !areFlagsNeededAfter(lines, currentIdx) || areFlagsEstablishedForReg(lines, currentIdx, reg);
+      return !areFlagsNeededAfterLines(lines, currentIdx) || areFlagsEstablishedForRegLines(lines, currentIdx, reg);
    }
 }

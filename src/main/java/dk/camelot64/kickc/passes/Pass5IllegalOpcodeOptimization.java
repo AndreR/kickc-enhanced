@@ -24,15 +24,7 @@ import java.util.Set;
  */
 public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
 
-   private static class LineRef {
-      final AsmChunk chunk;
-      final AsmLine line;
 
-      LineRef(AsmChunk chunk, AsmLine line) {
-         this.chunk = chunk;
-         this.line = line;
-      }
-   }
 
    public Pass5IllegalOpcodeOptimization(Program program) {
       super(program);
@@ -1234,132 +1226,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
       return t.equals("$fe") || t.equals("$$fe") || t.equals("$00fe");
    }
 
-   public static boolean doesInstructionSetZAndN(AsmInstruction inst, String reg) {
-      if(inst == null || inst.getCpuOpcode() == null) return false;
-      String mnem = inst.getCpuOpcode().getMnemonic();
-      CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
-      if("A".equals(reg)) {
-         return mnem.equals("lda") || mnem.equals("pla") ||
-                mnem.equals("tax") || mnem.equals("txa") ||
-                mnem.equals("tay") || mnem.equals("tya") ||
-                mnem.equals("and") || mnem.equals("ora") || mnem.equals("eor") ||
-                mnem.equals("lax") || mnem.equals("alr") || mnem.equals("anc") ||
-                ((mnem.equals("asl") || mnem.equals("lsr") || mnem.equals("rol") || mnem.equals("ror")) && mode.equals(CpuAddressingMode.NON));
-      } else if("X".equals(reg)) {
-         return mnem.equals("ldx") || mnem.equals("inx") || mnem.equals("dex") ||
-                mnem.equals("tax") || mnem.equals("tsx") || mnem.equals("lax") || mnem.equals("axs");
-      } else if("Y".equals(reg)) {
-         return mnem.equals("ldy") || mnem.equals("iny") || mnem.equals("dey") || mnem.equals("tay");
-      }
-      return false;
-   }
 
-   private static boolean areFlagsEstablishedForReg(List<LineRef> allLines, int inst2Idx, String reg, String currentScope) {
-      // 1. Scan backwards within the same basic block, skipping non-flag-modifying stores
-      AsmLabel labelHit = null;
-      int labelIdx = -1;
-      for(int p = inst2Idx - 1; p >= 0; p--) {
-         AsmLine line = allLines.get(p).line;
-         if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
-         if(line instanceof AsmLabel) {
-            labelHit = (AsmLabel) line;
-            labelIdx = p;
-            break;
-         }
-         if(line instanceof AsmScopeBegin || line instanceof AsmScopeEnd || line instanceof AsmInlineKickAsm) {
-            return false;
-         }
-         if(line instanceof AsmInstruction) {
-            AsmInstruction prev = (AsmInstruction) line;
-            if(prev.getCpuOpcode() == null) return false;
-            String mnem = prev.getCpuOpcode().getMnemonic();
-            if(mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty")) {
-               continue; // Stores do not modify flags on 6502
-            }
-            return doesInstructionSetZAndN(prev, reg);
-         }
-      }
-
-      // 2. If we hit a label at the block entry, check all incoming predecessors to this label
-      if(labelHit != null && currentScope != null && !currentScope.isEmpty()) {
-         String targetLabel = labelHit.getLabel();
-         List<Integer> predIndices = new ArrayList<>();
-
-         // Check fallthrough immediately before labelHit
-         for(int p = labelIdx - 1; p >= 0; p--) {
-            AsmLine line = allLines.get(p).line;
-            if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
-            if(line instanceof AsmInstruction) {
-               AsmInstruction prevInst = (AsmInstruction) line;
-               if(prevInst.getCpuOpcode() != null) {
-                  String pm = prevInst.getCpuOpcode().getMnemonic();
-                  if(!pm.equals("jmp") && !pm.equals("rts") && !pm.equals("rti")) {
-                     predIndices.add(p);
-                  }
-               }
-            }
-            break;
-         }
-
-         // Check jumps/branches to targetLabel strictly within currentScope
-         String scanScope = null;
-         for(int k = 0; k < allLines.size(); k++) {
-            LineRef ref = allLines.get(k);
-            if(ref.line instanceof AsmScopeBegin) {
-               scanScope = ((AsmScopeBegin) ref.line).getLabel();
-               continue;
-            } else if(ref.line instanceof AsmScopeEnd) {
-               scanScope = null;
-               continue;
-            }
-            if(scanScope == null || !scanScope.equals(currentScope)) {
-               continue;
-            }
-            if(ref.line instanceof AsmInstruction) {
-               AsmInstruction inst = (AsmInstruction) ref.line;
-               if(inst.getCpuOpcode() != null && inst.getCpuOpcode().isJump()) {
-                  String dest = inst.getOperandJumpTarget();
-                  if(dest != null && (dest.equals(targetLabel) || dest.equals("!" + targetLabel + "+") || dest.equals(targetLabel + "+"))) {
-                     predIndices.add(k);
-                  }
-               }
-            }
-         }
-
-         if(predIndices.isEmpty()) return false;
-
-         for(int predIdx : predIndices) {
-            boolean predOk = false;
-            for(int p = predIdx; p >= 0; p--) {
-               AsmLine line = allLines.get(p).line;
-               if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
-               if(line instanceof AsmInstruction) {
-                  AsmInstruction pi = (AsmInstruction) line;
-                  if(pi.getCpuOpcode() == null) break;
-                  String pm = pi.getCpuOpcode().getMnemonic();
-                  if(pm.equals("jmp")) {
-                     continue; // Look before unconditional jump
-                  }
-                  if(pm.startsWith("b")) {
-                     break; // Branches test different conditions; flags are NOT established!
-                  }
-                  if(pm.equals("sta") || pm.equals("stx") || pm.equals("sty")) {
-                     continue; // Stores do not modify flags
-                  }
-                  if(doesInstructionSetZAndN(pi, reg)) {
-                     predOk = true;
-                  }
-                  break;
-               }
-               break;
-            }
-            if(!predOk) return false;
-         }
-         return true;
-      }
-
-      return false;
-   }
 
    private static boolean isFfOperand(String op) {
       if(op == null) return false;
