@@ -226,14 +226,15 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-### Feature 27: 8.8 Fixed-Point Data Type (`fixed8_8` / ISO TR 18037) & 0-Cycle Shift Fusing
-* **Problem:** 2D retro games calculate physics, velocity, and subpixel positions using 8.8 fixed-point numbers. In standard C, using `uint16_t` requires awkward downcasts `(uint8_t)(pos >> 8)` that frequently compile to expensive 8-step runtime shift loops.
-* **6502 Idiom:** Reading the integer part of an 8.8 fixed-point variable on 6502 is a **zero-cycle operation**: simply read the high byte (`LDA pos+1`)!
+### Feature 27: Fixed-Point & 24-Bit Data Types (`fixed8_8`, `fixed16_8`, `uint24_t` / ISO TR 18037)
+* **Problem:** 2D retro games calculate physics, velocity, and subpixel positions using fixed-point numbers. While 8.8 fixed-point works for single-screen games ($< 256$ px), large scrolling maps and camera tracking require wider integer ranges without the massive cycle and register overhead of 32-bit math. Furthermore, scores, currency, and REU hardware addresses require 24-bit representation ($16.7$M range).
+* **6502 Idiom:** Reading the integer part of a fixed-point variable on 6502 is a **zero-cycle operation**: reading the integer part of 8.8 is `LDA pos+1`, and for 16.8 it is a direct 16-bit word load `LDA pos+1; LDX pos+2`.
 * **Compiler & Library Integration:**
-  1. Header `<fixedpoint.h>` defines types `fixed8_8` and `ufixed8_8`.
-  2. Compile-time literal folding in `NumberParser`: floating-point literals (e.g. `1.25`) fold directly to scaled 8.8 constants (`$0140`).
-  3. Expression `fixed_int(pos)` / `(pos >> 8)` compiles directly to 0-cycle high-byte load `LDA pos+1`.
-  4. Bit-exact verified in VICE on port 6541 (`PASS!`). (Issue #28).
+  1. `<fixedpoint.h>` defines 8.8 types (`fixed8_8`, `ufixed8_8`) and 16.8 extended types (`fixed16_8`, `ufixed16_8` with direct anonymous struct/union member access `.integer` and `.frac`).
+  2. `<stdint.h>` defines 24-bit integral types `uint24_t` ($0 \dots 16,777,215$, 3 bytes) and `int24_t` ($-8.3$M $\dots +8.3$M, 3 bytes) along with `UINT24_MAX` and `INT24_MAX`.
+  3. Compile-time literal folding in `NumberParser`: floating-point literals fold directly to scaled constants.
+  4. Direct 0-cycle high-byte and integer extraction: zero runtime shifts.
+  5. Bit-exact verified in VICE on port 6541 (`PASS!`). (Issues #28, #65).
 
 ---
 
