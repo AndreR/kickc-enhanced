@@ -22,7 +22,7 @@ const unsigned int PI_u4f12 = 0x3244;
 // PI/2 in u[4.12] format
 const unsigned int PI_HALF_u4f12 = 0x1922;
 
-// Generate signed (large) unsigned int sine table - on the full - -  range
+// Generate signed 16-bit sine table on the full -$7fff to +$7fff range
 // sintab - the table to generate into
 // wavelength - the number of sine points in a total sine wavelength (the size of the table)
 void sin16s_gen(signed int* sintab, unsigned int wavelength) {
@@ -67,7 +67,7 @@ void sin16s_gen2(signed int* sintab, unsigned int wavelength, signed int min, si
     }
 }
 
-// Generate signed char sine table - on the full - -  range
+// Generate signed 8-bit sine table on the full -$7f to +$7f range
 // sintab - the table to generate into
 // wavelength - the number of sine points in a total sine wavelength (the size of the table)
 void sin8s_gen(signed char* sintab, unsigned int wavelength) {
