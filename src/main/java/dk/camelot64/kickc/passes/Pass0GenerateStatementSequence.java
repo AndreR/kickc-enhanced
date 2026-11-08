@@ -2544,14 +2544,53 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       StructDefinition structDefinition = program.getScope().addStructDefinition(structDefName, isUnion);
       scopeStack.push(structDefinition);
       for(KickCParser.StructMembersContext memberCtx : ctx.structMembers()) {
-         varDeclPush();
-         varDecl.setStructMember(true);
          visit(memberCtx);
-         varDecl.setStructMember(false);
-         varDeclPop();
       }
       scopeStack.pop();
+
+      // C11 Anonymous Structure / Union support:
+      // If unnamed and declared inside an enclosing struct or union, flatten its members into the parent struct!
+      if(ctx.NAME() == null && !scopeStack.isEmpty() && scopeStack.peek() instanceof StructDefinition parentStruct) {
+         long baseOffset = 0;
+         if(!parentStruct.isUnion()) {
+            baseOffset = ((SymbolTypeStruct) parentStruct.getType()).calculateSizeBytes(parentStruct, program.getScope());
+         }
+         for(Variable anonMember : structDefinition.getAllVars(false)) {
+            String memberName = anonMember.getLocalName();
+            if(parentStruct.getMember(memberName) != null) {
+               throw new CompileError("Duplicate struct member '" + memberName + "' from anonymous " + (isUnion ? "union" : "struct"), new StatementSource(ctx));
+            }
+            long memberOffset = structDefinition.getMemberByteOffset(anonMember, program.getScope());
+            long finalOffset = baseOffset + memberOffset;
+
+            Variable flattenedVar = new VariableBuilder(memberName, parentStruct, false, false, anonMember.getType(), Collections.emptyList(), parentStruct.getSegmentData(), program.getTargetPlatform().getVariableBuilderConfig()).build();
+            flattenedVar.setStructMemberOffset(finalOffset);
+         }
+      }
+
       varDecl.setDeclType(structDefinition.getType());
+      return null;
+   }
+
+   @Override
+   public Object visitStructMemberVar(KickCParser.StructMemberVarContext ctx) {
+      varDeclPush();
+      varDecl.setStructMember(true);
+      visit(ctx.declVariables());
+      varDecl.setStructMember(false);
+      varDeclPop();
+      return null;
+   }
+
+   @Override
+   public Object visitStructMemberAnon(KickCParser.StructMemberAnonContext ctx) {
+      visit(ctx.structDef());
+      return null;
+   }
+
+   @Override
+   public Object visitStructMemberStaticAssert(KickCParser.StructMemberStaticAssertContext ctx) {
+      visit(ctx.staticAssert());
       return null;
    }
 

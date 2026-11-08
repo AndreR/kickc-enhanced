@@ -91,13 +91,21 @@ public class SymbolTypeStruct implements SymbolType {
          for(Variable member : structDefinition.getAllVars(false)) {
             SymbolType memberType = member.getType();
             int memberSize = getMemberSizeBytes(memberType, member.getArraySize(), programScope);
-            sizeBytes = Math.max(sizeBytes, memberSize);
+            if(member.getStructMemberOffset() != null) {
+               sizeBytes = Math.max(sizeBytes, (int)(member.getStructMemberOffset() + memberSize));
+            } else {
+               sizeBytes = Math.max(sizeBytes, memberSize);
+            }
          }
       }  else {
          for(Variable member : structDefinition.getAllVars(false)) {
             SymbolType memberType = member.getType();
             int memberSize = getMemberSizeBytes(memberType, member.getArraySize(), programScope);
-            sizeBytes += memberSize;
+            if(member.getStructMemberOffset() != null) {
+               sizeBytes = Math.max(sizeBytes, (int)(member.getStructMemberOffset() + memberSize));
+            } else {
+               sizeBytes += memberSize;
+            }
          }
       }
       return sizeBytes;

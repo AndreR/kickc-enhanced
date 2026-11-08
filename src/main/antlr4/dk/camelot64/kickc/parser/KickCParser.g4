@@ -103,7 +103,9 @@ structDef
     ;
 
 structMembers
-    : declVariables ';'
+    : declVariables ';' #structMemberVar
+    | structDef ';' #structMemberAnon
+    | staticAssert ';' #structMemberStaticAssert
     ;
 
 enumRef

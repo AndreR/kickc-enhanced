@@ -48,6 +48,8 @@ public class StructDefinition extends Scope {
     * @return The byte offset of the start of the member data
     */
    public long getMemberByteOffset(Variable member, ProgramScope programScope) {
+      if(member.getStructMemberOffset() != null)
+         return member.getStructMemberOffset();
       if(isUnion)
          return 0;
       long byteOffset = 0;
@@ -55,7 +57,11 @@ public class StructDefinition extends Scope {
          if(structMember.equals(member)) {
             break;
          } else {
-            byteOffset += SymbolTypeStruct.getMemberSizeBytes(structMember.getType(), structMember.getArraySize(), programScope);
+            if(structMember.getStructMemberOffset() != null) {
+               byteOffset = Math.max(byteOffset, structMember.getStructMemberOffset() + SymbolTypeStruct.getMemberSizeBytes(structMember.getType(), structMember.getArraySize(), programScope));
+            } else {
+               byteOffset += SymbolTypeStruct.getMemberSizeBytes(structMember.getType(), structMember.getArraySize(), programScope);
+            }
          }
       }
       return byteOffset;

@@ -78,6 +78,9 @@ public class Variable implements Symbol {
    /** The memory area where the variable lives (if stored in memory). [Only variables and arrays] */
    private MemoryArea memoryArea;
 
+   /** Explicit member byte offset within a struct/union (for anonymous union/struct members). Null if calculated consecutively. */
+   private Long structMemberOffset;
+
    /** Specifies that the variable must be aligned in memory. Only allowed for arrays & strings. [Only Variables in memory and arrays] */
    private Integer memoryAlignment;
 
@@ -494,6 +497,14 @@ public class Variable implements Symbol {
 
    public MemoryArea getMemoryArea() {
       return memoryArea;
+   }
+
+   public Long getStructMemberOffset() {
+      return structMemberOffset;
+   }
+
+   public void setStructMemberOffset(Long structMemberOffset) {
+      this.structMemberOffset = structMemberOffset;
    }
 
    public void setMemoryArea(MemoryArea memoryArea) {

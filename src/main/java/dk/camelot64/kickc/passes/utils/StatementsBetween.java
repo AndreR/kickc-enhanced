@@ -6,7 +6,9 @@ import dk.camelot64.kickc.model.values.LabelRef;
 import dk.camelot64.kickc.model.values.ProcedureRef;
 
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.Set;
 
 public class StatementsBetween {
    /**
@@ -18,7 +20,8 @@ public class StatementsBetween {
     */
    public static Collection<Statement> find(Statement from, Graph.Block fromBlock, Statement to, Graph graph) {
       Collection<Statement> between = new LinkedHashSet<>();
-      populateStatementsBetween(fromBlock, from, to, false, between, graph);
+      Set<LabelRef> visited = new HashSet<>();
+      populateStatementsBetween(fromBlock, from, to, false, between, graph, visited);
       return between;
    }
 
@@ -31,7 +34,13 @@ public class StatementsBetween {
     * @param isBetween Are we already between from and to?
     * @param between The between collection, being populated
     */
-   private static void populateStatementsBetween(Graph.Block block, Statement from, Statement to, boolean isBetween, Collection<Statement> between, Graph graph) {
+   private static void populateStatementsBetween(Graph.Block block, Statement from, Statement to, boolean isBetween, Collection<Statement> between, Graph graph, Set<LabelRef> visited) {
+      if(block == null) return;
+      if(isBetween) {
+         if(visited.contains(block.getLabel()))
+            return;
+         visited.add(block.getLabel());
+      }
       for(Statement statement : block.getStatements()) {
          if(between.contains(statement))
             // Stop infinite recursion
@@ -56,7 +65,7 @@ public class StatementsBetween {
             if(successor.getFullName().equals(ProcedureRef.PROCEXIT_BLOCK_NAME))
                continue;
             final Graph.Block successorBlock = graph.getBlock(successor);
-            populateStatementsBetween(successorBlock, from, to, true, between, graph);
+            populateStatementsBetween(successorBlock, from, to, true, between, graph, visited);
          }
       }
    }
