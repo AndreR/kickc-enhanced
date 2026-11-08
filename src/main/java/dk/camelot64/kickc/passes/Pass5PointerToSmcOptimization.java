@@ -5,8 +5,11 @@ import dk.camelot64.cpufamily6502.CpuOpcode;
 import dk.camelot64.kickc.asm.*;
 import dk.camelot64.kickc.model.Program;
 import dk.camelot64.kickc.model.SegmentTypeInfo;
+import dk.camelot64.kickc.model.statements.Statement;
+import dk.camelot64.kickc.model.statements.StatementAsm;
 import dk.camelot64.kickc.model.symbols.Procedure;
 import dk.camelot64.kickc.model.symbols.Scope;
+import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.values.ScopeRef;
 
 import java.util.*;
@@ -160,6 +163,19 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
                }
             }
 
+            // Safety: Never apply Pointer-to-SMC in procedures containing inline assembly
+            boolean hasInlineAsm = false;
+            for(LineRef r : linesInScope) {
+               if(r.chunk.getStatementIdx() != null) {
+                  Statement st = getProgram().getStatementInfos().getStatement(r.chunk.getStatementIdx());
+                  if(st instanceof StatementAsm) {
+                     hasInlineAsm = true;
+                     break;
+                  }
+               }
+            }
+            if(hasInlineAsm) continue;
+
             Map<String, String> aliases = scopeAliases.get(scopeName);
 
             // Find candidates for Pointer-to-SMC:
@@ -179,6 +195,18 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
                if(ptrVar == null) continue;
                String ptrAddr = (aliases != null) ? aliases.get(ptrVar) : null;
 
+               // Safety: Never apply Pointer-to-SMC to variables mapped to hardware/fixed memory addresses (__address)
+               Variable ptrVariable = null;
+               if(proc != null) {
+                  ptrVariable = proc.getScope().findVariable(ptrVar);
+               }
+               if(ptrVariable == null) {
+                  ptrVariable = rootScope.findVariable(ptrVar);
+               }
+               if(ptrVariable != null && ptrVariable.getMemoryAddress() != null) {
+                  continue;
+               }
+
                // Analyze all references to this pointer in the scope:
                // All references must be strictly:
                // 1. Initializations: STA ptr / STA ptr+1
@@ -197,9 +225,12 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
                   if(inst.getCpuOpcode() == null) continue;
                   String mnem = inst.getCpuOpcode().getMnemonic().toLowerCase();
                   String op = inst.getOperand1();
+                  String indPtr = (CpuAddressingMode.IZY.equals(inst.getCpuOpcode().getAddressingMode())) ? extractPtrFromIndY(op) : null;
 
-                  if(ref == derefRef || (derefLines.contains(ref)) || (CpuAddressingMode.IZY.equals(inst.getCpuOpcode().getAddressingMode()) && ptrVar.equals(stripZp(op)))) {
-                     derefLines.add(ref);
+                  if(ref == derefRef || derefLines.contains(ref) || (indPtr != null && matchesVarLo(indPtr, ptrVar, ptrAddr, aliases))) {
+                     if(!derefLines.contains(ref)) {
+                        derefLines.add(ref);
+                     }
                   } else if("sta".equals(mnem) && matchesVarLo(op, ptrVar, ptrAddr, aliases)) {
                      initLoLines.add(ref);
                   } else if("sta".equals(mnem) && matchesVarHi(op, ptrVar, ptrAddr, aliases)) {
@@ -210,14 +241,16 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
                      incHiLines.add(ref);
                   } else {
                      // Check if instruction references this pointer variable
-                     if(matchesVarLo(op, ptrVar, ptrAddr, aliases) || matchesVarHi(op, ptrVar, ptrAddr, aliases)) {
+                     if(matchesVarLo(op, ptrVar, ptrAddr, aliases) || matchesVarHi(op, ptrVar, ptrAddr, aliases) || (indPtr != null && matchesVarLo(indPtr, ptrVar, ptrAddr, aliases))) {
                         safeCandidate = false;
                         break;
                      }
                   }
                }
 
-               if(!safeCandidate || derefLines.isEmpty() || initLoLines.isEmpty() || initHiLines.isEmpty()) {
+               // Safety: SMC optimization is only valid if there is exactly ONE dereference site in the scope.
+               // If there are multiple dereferences, rewriting initializations to SMC would starve the other sites!
+               if(!safeCandidate || derefLines.size() != 1 || initLoLines.isEmpty() || initHiLines.isEmpty()) {
                   continue;
                }
 
