@@ -681,3 +681,84 @@ This document outlines the compiler architecture, completed milestones, planned 
   * Synthesize an anonymous read-only lookup table in ROM/segment and replace the branch cascade with a single indexed load (`LDX idx; LDA lut,X; STA dest`).
   * Provide explicit control via `#pragma branch_to_lut` / `__lut` directive as well as global optimization flag `-Obranch-to-lut`.
   * Execution drops from ~25 cycles to 7 cycles, and code shrinks from 24 bytes to 5 bytes. (Issue #64).
+
+
+---
+
+### Feature 66: Lib: High-Performance Fixed-Point Math Suite & Retro Constants
+* **Problem:**
+  While fixed-point types allow subpixel precision, mathematical operations like multiplication, division, and trigonometry require careful scaling and cycle-heavy operations on 6502. Developers need a unified, cycle-efficient fixed-point library.
+* **Solution & Optimization:**
+  * Implement retro-optimized arithmetic routines in `<fixedpoint.h>`: `fixed_mul`, `fixed_div`, `fixed_mul_int`, `fixed16_16_mul`, `fixed16_16_div`.
+  * Compact 256-byte ROM-table trigonometry: `fixed_sin`, `fixed_cos`, `fixed_atan2`.
+  * Fast geometric helpers: `fixed_sqrt`, `fixed_dist`, `fixed_lerp`, `fixed_abs`.
+  * Complete suite of compile-time mathematical constants (`PI`, `TAU`, `HALF_PI`, `QUARTER_PI`, `INV_PI`, `DEG_TO_BAM`, `BAM_TO_DEG`, `DEG_TO_RAD`, `SQRT2`, `INV_SQRT2`, `SQRT3`, `PHI`, `E`, `LN2`, `FIXED_ONE`, `FIXED_EPSILON` for `_F8`, `_F16`, `_F24`). (Issue #66).
+
+---
+
+## 9. Milestone v0.12.0: "Convenience-C" & Adaptive High-Level Synthesis Track
+
+### Feature 67: Ctrl: Scoped Convenience Control Architecture (-fconvenience & #pragma convenience)
+* **Problem:**
+  Standard C features like untyped declarations, arbitrary division, and floating-point math were historically omitted to avoid accidental performance traps. Developers need an opt-in mechanism to write modern C for non-time-critical code without compromising performance-critical loops.
+* **Solution & Optimization:**
+  * CLI flag `-fconvenience` (or `-fmodern-c`).
+  * Scoped pragmas `#pragma convenience(push, on)` / `#pragma convenience(pop)` and fine-grained directives `#pragma convenience(math=fast|size, float=rom|soft|fixed, auto=on)`.
+  * Function attribute `__attribute__((convenience))`. (Issue #67).
+
+---
+
+### Feature 68: Type: Modern C23 Type Inference (auto) with 6502 Byte Narrowing
+* **Problem:**
+  Untyped declarations in standard C default to 16/32-bit `int`, wasting 6502 registers and RAM. Developers writing concise code need automated type deduction without register bloat.
+* **Solution & Optimization:**
+  * C23 `auto` keyword support in parser and `SymbolTypeInference`.
+  * Automatic size narrowing: Integer literals in range $0..255$ infer to `uint8_t` (and $-128..+127$ to `int8_t`).
+  * Deduces fixed-point types, struct pointers, and compound literals. (Issue #68).
+
+---
+
+### Feature 69: Math: Constant-Specialized Arithmetic Synthesizer (Shift-Add & Reciprocal Div/Mod)
+* **Problem:**
+  Multiplications, divisions, and modulo operations with non-power-of-two constants currently emit slow generic software loops or fail with compiler errors.
+* **Solution & Optimization:**
+  * Minimal Shift-Add sequence factorization for constant multipliers (`x * 40` -> `(x << 5) + (x << 3)`).
+  * Granlund-Montgomery / Lemire reciprocal multiplication + fixed-point shift algorithm for constant divisions.
+  * Modulo folding via power-of-two bitwise `AND` or reciprocal multiply-subtract. (Issue #69).
+
+---
+
+### Feature 70: Math: Heuristic Predictable-Multiplier & Dynamic Dispatch Synthesizer
+* **Problem:**
+  Dynamic multiplications (`a * b`) where `b` is dynamic but bounded to a few discrete values (e.g. tile widths `8, 16, 24, 32`) waste ~160 cycles in generic 16-bit shift-add loops.
+* **Solution & Optimization:**
+  * Leverage SSA Value Range Propagation to detect discrete multiplier value sets with cardinality $\le 4$.
+  * Synthesize an inline comparison branch cascade or jump table to specialized shift-add sequences (~18 cycles). (Issue #70).
+
+---
+
+### Feature 71: CodeGen: Deduplicating Synthetic Helper Routine Manager (N >= 2 Code Size Guard)
+* **Problem:**
+  Inlining synthetic mathematical routines across multiple call sites rapidly exhausts the 64 KB C64 RAM space.
+* **Solution & Optimization:**
+  * Occurrence-based code generator: single occurrence ($N = 1$) inlines for raw speed.
+  * Multiple occurrences ($N \ge 2$) automatically synthesize a shared private subroutine in segment `Code` and emit 3-byte `jsr` calls. (Issue #71).
+
+---
+
+### Feature 72: Float: Dual-Tier Floating-Point Suite (BASIC-ROM FAC Interop & Smart Pseudo-Float)
+* **Problem:**
+  Real floating-point math requires heavy software emulation libraries (1–2 KB) that are prohibitive on 64 KB systems.
+* **Solution & Optimization:**
+  * Tier 1: Smart Pseudo-Float mapping `float` transparently to `fixed16_16` or `fixed8_24` for native 6502 integer speeds.
+  * Tier 2: Zero-Cost hardware recycling of the Commodore 64 BASIC-ROM Microsoft Float routines starting at `$B850` (0 bytes RAM footprint).
+  * Modular fallback software IEEE-754 routines for non-Commodore targets. (Issue #72).
+
+---
+
+### Feature 73: Diag: Diagnostic Cost Profiler & Convenience QA Test Suite
+* **Problem:**
+  Developers using convenience features must remain aware of cycle and byte costs.
+* **Solution & Optimization:**
+  * Informative compiler diagnostic logging reporting cycle and byte costs for each synthesized operation.
+  * Automated headless VICE regression test suite validating numerical accuracy against IEEE-754 reference outputs. (Issue #73).
