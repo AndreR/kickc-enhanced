@@ -299,6 +299,11 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
             }
          }
          axReturnProcs.removeAll(unsafeAxReturnProcs);
+         for(Procedure proc : rootScope.getAllProcedures(true)) {
+            if(axReturnProcs.contains(proc.getLocalName()) || axReturnProcs.contains(proc.getFullName())) {
+               proc.setAxConvention(true);
+            }
+         }
 
          // -------------------------------------------------------------
          // Step 1: Callee AX Return Optimization

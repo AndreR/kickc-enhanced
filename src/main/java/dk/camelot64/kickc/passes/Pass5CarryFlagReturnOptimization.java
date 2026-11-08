@@ -291,6 +291,25 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
                            passModified = true;
                            overallModified = true;
                            break;
+                        } else if(isRts(nextInst) && (ref.scope == null || !carryProcs.contains(ref.scope))) {
+                           // Caller is NOT a carry procedure and immediately returns the result:
+                           // Normalize Carry to Register A: LDA #0 ; ROL
+                           CpuOpcode ldaImm = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lda", CpuAddressingMode.IMM, false);
+                           CpuOpcode rolOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("rol", CpuAddressingMode.NON, false);
+                           refNext.chunk.addLineBefore(nextInst, new AsmInstruction(ldaImm, "0", null, null));
+                           refNext.chunk.addLineBefore(nextInst, new AsmInstruction(rolOp, null, null, null));
+                           passModified = true;
+                           overallModified = true;
+                           break;
+                        } else if(mn.startsWith("sta") && (ref.scope == null || !carryProcs.contains(ref.scope))) {
+                           // Call site stores the boolean result: normalize Carry to Register A: LDA #0 ; ROL
+                           CpuOpcode ldaImm = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lda", CpuAddressingMode.IMM, false);
+                           CpuOpcode rolOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("rol", CpuAddressingMode.NON, false);
+                           refNext.chunk.addLineBefore(nextInst, new AsmInstruction(ldaImm, "0", null, null));
+                           refNext.chunk.addLineBefore(nextInst, new AsmInstruction(rolOp, null, null, null));
+                           passModified = true;
+                           overallModified = true;
+                           break;
                         }
                      }
                   }
@@ -343,6 +362,7 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
          if(SymbolType.BOOLEAN.equals(procedure.getReturnType()) && procedure.getInterruptType() == null) {
             if(calleeCanReturnCarry(allLines, name) && allCallSitesAreBranches(allLines, name)) {
                carryProcs.add(name);
+               procedure.setCarryReturn(true);
             }
          }
       }

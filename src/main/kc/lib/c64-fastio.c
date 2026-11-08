@@ -88,7 +88,7 @@ static bool str_contains(const char* haystack, const char* needle) {
 
 DiskDriveType disk_probe(uint8_t device) {
     char status_buf[48];
-    disk_send_command(device, "UI");
+    if (!disk_send_command(device, "UI")) return DRIVE_NONE;
     uint8_t len = disk_read_status(device, status_buf, sizeof(status_buf));
     if (len == 0) return DRIVE_NONE;
 
