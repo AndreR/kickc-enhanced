@@ -549,8 +549,6 @@ This document outlines the compiler architecture, completed milestones, planned 
   * **Licensing:** Permissive MIT License (Lasse Öörni / Covert Bitops attribution preserved in source header and documentation).
 
 
----
-
 
 ---
 
@@ -558,32 +556,101 @@ This document outlines the compiler architecture, completed milestones, planned 
 * **Problem:**
   High-ratio crunchers like ZX02, PuCrunch, or Exomizer employ optimal dynamic programming parsers that require megabytes of host RAM and millions of instructions, making real-time on-device compression completely intractable on a 1 MHz NMOS 6502. However, games frequently require fast real-time on-device compression (e.g. savegame serialization, procedural world staging, network packets, delta buffers) directly before writing to slow IEC serial disk drives or serial modems.
 * **Solution & Optimization:**
-  * Implement an ultra-fast, symmetric 6502 RLE suite in <rle.h> and 
-le.c:
-    * 
-le_pack(const void* src, void* dest, uint16_t src_len): Compresses 8 KB of sparse data in ~15–25 milliseconds (< 2 video frames) with zero heap/RAM allocation (utilizing only 2 ZP pointers and a run counter).
-    * 
-le_unpack(const void* src, void* dest, uint16_t max_dest_len): Unpacks data in ~8–12 milliseconds.
+  * Implement an ultra-fast, symmetric 6502 RLE suite in `<rle.h>` and `rle.c`:
+    * `rle_pack(const void* src, void* dest, uint16_t src_len)`: Compresses 8 KB of sparse data in ~15–25 milliseconds (< 2 video frames) with zero heap/RAM allocation (utilizing only 2 ZP pointers and a run counter).
+    * `rle_unpack(const void* src, void* dest, uint16_t max_dest_len)`: Unpacks data in ~8–12 milliseconds.
     * Uses a standardized PackBits / byte-run format (flagging repeated byte runs vs. raw literal spans), achieving 60–80% of ZX02's compression ratio on sparse state tables at 100,000x faster compression speed.
+
+---
 
 ## Quality Assurance & Automated Regression Test Suites (QA-01 to QA-03)
 
 ### QA-01: Modern C Standards Hardening (C11/C23/C2Y)
-* **Goal:** Permanent regression test coverage in src/test/kc/ and JUnit TestProgramsFast.java.
-* **Scope:** #embed (F-17), num : uint8_t (F-18), countof() (F-19), Named loops reak/continue label; (F-20), static_assert (F-21), _Generic (F-22), Digit separators & 
-ullptr/{} (F-23), if/switch with init (F-24), C11 anonymous unions (F-02).
-* **Test Focus:** Boundary values (0, 255, empty assets, multidimensional arrays), nested scopes, and negative tests verifying that syntax violations strictly fail compilation with clear CompileError. (Issue #52).
+* **Goal:** Permanent regression test coverage in `src/test/kc/` and JUnit `TestProgramsFast.java`.
+* **Scope:** `#embed` (F-17), `enum : uint8_t` (F-18), `countof()` (F-19), Named loops `break/continue label;` (F-20), `static_assert` (F-21), `_Generic` (F-22), Digit separators & `nullptr`/`{}` (F-23), `if`/`switch` with init (F-24), C11 anonymous unions (F-02).
+* **Test Focus:** Boundary values (0, 255, empty assets, multidimensional arrays), nested scopes, and negative tests verifying that syntax violations strictly fail compilation with clear `CompileError`. (Issue #52).
 
 ---
 
 ### QA-02: 6502 Low-Level & ABI Hardening
 * **Goal:** Consolidate low-level 6502 code generation optimizations into verifiable automated regression tests.
-* **Scope:** Leaf-function register calling convention (F-26), Auto Carry-flag boolean returns (F-25), 8.8 fixed-point arithmetic (F-27), Pre-indexed ZP (,X) (F-31), Cycle-exact delays (F-30), Pass-5 bit-tests (F-34), Byte-skipping via .byte  (F-35).
-* **Test Focus:** Full 3-parameter passing (A, X, Y), safe ZP fallbacks upon register clobbering, relational operators (<, <=, >, >=, ==, !=) in Carry ABI, register/flag preservation during delays, and bit-exact execution in VICE test harness. (Issue #53).
+* **Scope:** Leaf-function register calling convention (F-26), Auto Carry-flag boolean returns (F-25), 8.8 fixed-point arithmetic (F-27), Pre-indexed ZP `($zp,X)` (F-31), Cycle-exact delays (F-30), Pass-5 bit-tests (F-34), Byte-skipping via `.byte $2c` (F-35).
+* **Test Focus:** Full 3-parameter passing (A, X, Y), safe ZP fallbacks upon register clobbering, relational operators (`<`, `<=`, `>`, `>=`, `==`, `!=`) in Carry ABI, register/flag preservation during delays, and bit-exact execution in VICE test harness. (Issue #53).
 
 ---
 
 ### QA-03: Arithmetic & Memory Safety Hardening
 * **Goal:** Verify mathematical precision across exhaustive domains and ensure formal memory model safety rules are strictly enforced.
-* **Scope:** Reciprocal constant division & modulo 0..255 (F-13), Quarter-square multiplication exhaustive (F-08), 8x8->16 constant mul (F-16), Segment type ROM safety & Cross-bank checks (F-00), StackRam $0100- overflow protection (F-29), ZP coalescing (F-06).
+* **Scope:** Reciprocal constant division & modulo 0..255 (F-13), Quarter-square multiplication exhaustive (F-08), 8x8->16 constant mul (F-16), Segment type ROM safety & Cross-bank checks (F-00), StackRam `$0100-$01AF` overflow protection (F-29), ZP coalescing (F-06).
 * **Test Focus:** Exhaustive domain verification (0..255 for all divisors), negative compile tests for ROM symbol writes and direct cross-bank calls without trampolines, and hardware stack bounds verification. (Issue #54).
+
+---
+
+# Milestone v0.11.0: Advanced Code Size Optimization, Bytecode & Structural Layout
+
+### Feature 52: Optimizer: Value Range Propagation & Automatic 16-to-8 Bit Expression Narrowing
+* **Problem:**
+  C type promotion rules frequently widen byte-level operations (e.g. `(a + b) >> 1` or array index arithmetic) into 16-bit intermediate SSA variables. On the 6502, this leads to unnecessary 16-bit Zero-Page register allocation, multi-byte addition loops, or compiler errors when combined shift/downcast fragments are absent.
+* **Solution & Optimization:**
+  * Implement static value range propagation in Pass 2 (SSA Optimization) tracking interval bounds $[min, max]$ through expression trees.
+  * When subexpression bounds are proven to fit within $[0, 255]$ (or $[-128, 127]$ for signed bytes), narrow the SSA operation and target type to 8-bit.
+  * Transparently eliminates 16-bit register allocations and eliminates manual `(uint8_t)` casting requirements. (Issue #56).
+
+---
+
+### Feature 53: Diagnostics: Source-Level Code Size Profiler & Memory Accounting (.csz / JSON)
+* **Problem:**
+  Developers optimizing memory on the 6502 struggle to identify which specific high-level C statements expand into disproportionately large machine code sequences without manually inspecting disassembly.
+* **Solution & Optimization:**
+  * Post-codegen analysis in Pass 5 aggregating machine instruction lengths mapped to source code locations.
+  * Emits detailed line-by-line memory accounting reports (`.csz` text format and structured JSON).
+  * Generates top-20 ranking of largest functions and hot spots to accelerate memory footprint optimization. (Issue #57).
+
+---
+
+### Feature 54: Language: Selective Loop Unroll Pragmas (#pragma unroll(N) / __unroll)
+* **Problem:**
+  Global loop unroll limits (`-Ounroll`) apply across all loops indiscriminately. Enabling high unroll factors causes code size explosions across the whole program, while low factors prevent full unrolling of small time-critical raster routines.
+* **Solution & Optimization:**
+  * Add `#pragma unroll(N)`, `#pragma unroll full`, and `#pragma nounroll` syntax in Pass 0.
+  * Allows fine-grained unroll directives to attach directly to `for`, `while`, and `do-while` loops, overriding global heuristics. (Issue #58).
+
+---
+
+### Feature 55: Optimizer Bugfix: Transitive Link-Time Dead Data & Table Elimination
+* **Problem:**
+  `PassNEliminateUnusedVars` removes initially unused variables, but data tables referenced by procedures that are subsequently eliminated by `Pass2EliminateUnreachableProcedures` or inlining passes remain stranded in data segments. This causes phantom memory overflows in restricted memory regions.
+* **Solution & Optimization:**
+  * Implement whole-program reachability traversal starting from confirmed entry points (`main`, hardware interrupt vectors).
+  * Purge any global data array, table, or constant not transitively reachable through active execution paths prior to Pass 4 code generation. (Issue #59).
+
+---
+
+### Feature 56: Language: Automatic Struct-Packing & Field Reordering (__reorder / #pragma struct_pack)
+* **Problem:**
+  Standard C struct member order often introduces unaligned fields and prevents 8-bit indexed addressing without crossing page boundaries.
+* **Solution & Optimization:**
+  * Implement opt-in directive `__reorder` and `#pragma struct_pack(reorder)`.
+  * Automatically clusters byte-sized fields together and word-sized fields together.
+  * Eliminates padding gaps and allows single-instruction indexed addressing (`LDA struct_bytes,X`) on 6502. (Issue #60).
+
+---
+
+### Feature 57: Optimizer: Pass-5 Peephole Tail-Merging & Cross-Jumping
+* **Problem:**
+  Many procedures end with identical register restoration or status clearing sequences (e.g. `PLA; TAY; PLA; TAX; PLA; RTI` or `LDA #0; RTS`), duplicating 6–12 bytes per routine across hundreds of functions.
+* **Solution & Optimization:**
+  * Analyze procedure epilogues in Pass 5 before emitting assembly.
+  * When an identical sequence of instructions exists at another function's exit, replace the redundant epilogue with a direct branch or jump (`jmp shared_epilogue`).
+  * Reclaims 150–300+ bytes of resident code across larger programs at negligible cycle cost. (Issue #61).
+
+---
+
+### Feature 58: Architecture: Selective 6502 Bytecode Virtual Machine (-bc / #pragma bytecode)
+* **Problem:**
+  Complex control logic, dialogue trees, game menus, and scripted events consume vast amounts of RAM when compiled to native 6502 instructions, quickly exceeding 64 KB memory bounds.
+* **Solution & Optimization:**
+  * Provide `#pragma bytecode` / `__bytecode` procedure annotation and `-bc` compiler flag.
+  * Emit compact 1-byte opcodes for designated procedures, executed by a minimal embedded ~250-byte 6502 interpreter loop.
+  * Reduces compiled code footprint by 40–50% for complex non-performance-critical routines. (Issue #62).
+
