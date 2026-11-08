@@ -49,9 +49,9 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-23** | Lexer | Digit Separators (`0b1100_0011`, `1_000`) & C23 Keywords (`nullptr`, `{}`) | C23 | ✅ Completed |
 | **F-24** | Controlflow | `if`- & `switch`-Statements with Initializers | C2Y (C29) | ✅ Completed |
 | **F-25** | ABI / Opt | Auto Carry-Flag Boolean Returns (`__carry` / Auto-Carry ABI) | 6502 Idiom | ✅ Completed |
-| **F-26** | ABI / Opt | Leaf-Function Automatic Register Parameter Passing (A, X, Y) | Calling Conv | ⚪ Planned |
+| **F-26** | ABI / Opt | Leaf-Function Automatic Register Parameter Passing (A, X, Y) | Calling Conv | ✅ Completed |
 | **F-27** | Types | 8.8 Fixed-Point Data Type (`fixed8_8`) & 0-Cycle Shift Fusing | ISO TR 18037 | ✅ Completed |
-| **F-28** | Numerics | BCD Decimal Accumulator Arithmetic (`__bcd` / `SED` Support) | 6502 Hardware | ⚪ Planned |
+| **F-28** | Numerics | BCD Decimal Accumulator Arithmetic (`__bcd` / `SED` Support) | 6502 Hardware | ✅ Completed |
 | **F-29** | Memory | Hardware Stack-RAM Segment (`$0100–$01AF` Scratchpad Buffer) | C64 Architecture | ✅ Completed |
 | **F-30** | Timing | Cycle-Exact Delay Synthesizer (`delay_cycles(N)` in `<6502.h>`) | Hardware Timing | ✅ Completed |
 | **F-31** | Codegen | Pre-Indexed Zero-Page Addressing Optimization (`LDA ($zp,X)`) | 6502 Hardware | ✅ Completed |
@@ -226,9 +226,11 @@ This document outlines the compiler architecture, completed milestones, planned 
 ### Feature 28: BCD Decimal Accumulator Arithmetic (`__bcd` / `SED` Support)
 * **Problem:** Game scores, player cash, and timer counters require frequent conversion between binary and decimal for on-screen display, consuming hundreds of cycles in division subroutines.
 * **6502 Idiom:** The 6502 hardware Decimal Mode (`SED`) natively executes additions and subtractions directly in Binary Coded Decimal (BCD). Screen display is trivial since each nibble directly corresponds to an ASCII character (`+ '0'`).
-* **Compiler Integration & Safety Guards:**
-  * Supported as a specialized accumulator type `__bcd uint16_t` or `__bcd uint32_t`, supporting `+=`, `-=`, `++`, `--`, and comparison.
-  * **Critical IRQ Safety:** On NMOS 6502, hardware interrupts do not automatically clear the `D` flag. The compiler strictly wraps BCD operations (`SED; ADC ...; CLD;`) or enforces `CLD` insertion in all interrupt handlers.
+* **Compiler & Library Integration:**
+  1. <bcd.h> and lib/bcd.c implement types cd8_t, cd16_t, cd32_t, macros BCD8() / BCD16(), and 8/16/32-bit operations (cd8_add, cd8_sub, cd8_inc, cd8_dec, cd16_add, cd16_sub, cd16_inc, cd16_dec, cd32_add, cd32_sub).
+  2. Zero-division string conversions: cd8_to_str, cd16_to_str, cd32_to_str, in_to_bcd8, cd8_to_bin.
+  3. **Critical IRQ Safety:** Eliminated NMOS 6502 IRQ Decimal Mode trap by adding cld instruction to isr_hardware_all_entry.asm.
+  4. Bit-exact verified in VICE on port 6541 (PASS!). (Issue #29, Commit 4cd748875).
 
 ---
 
@@ -535,3 +537,28 @@ This document outlines the compiler architecture, completed milestones, planned 
     * **Transparent Kernal Fallback:** Graceful degradation to standard Kernal I/O when connected to unsupported or virtual network drives.
   * Packaged as clean C interface in <c64-fastio.h> and c64-fastio.c with zero resident footprint requirements (can execute from RAM or overlays).
   * **Licensing:** Permissive MIT License (Lasse Öörni / Covert Bitops attribution preserved in source header and documentation).
+
+
+---
+
+## Quality Assurance & Automated Regression Test Suites (QA-01 to QA-03)
+
+### QA-01: Modern C Standards Hardening (C11/C23/C2Y)
+* **Goal:** Permanent regression test coverage in src/test/kc/ and JUnit TestProgramsFast.java.
+* **Scope:** #embed (F-17), num : uint8_t (F-18), countof() (F-19), Named loops reak/continue label; (F-20), static_assert (F-21), _Generic (F-22), Digit separators & 
+ullptr/{} (F-23), if/switch with init (F-24), C11 anonymous unions (F-02).
+* **Test Focus:** Boundary values (0, 255, empty assets, multidimensional arrays), nested scopes, and negative tests verifying that syntax violations strictly fail compilation with clear CompileError. (Issue #52).
+
+---
+
+### QA-02: 6502 Low-Level & ABI Hardening
+* **Goal:** Consolidate low-level 6502 code generation optimizations into verifiable automated regression tests.
+* **Scope:** Leaf-function register calling convention (F-26), Auto Carry-flag boolean returns (F-25), 8.8 fixed-point arithmetic (F-27), Pre-indexed ZP (,X) (F-31), Cycle-exact delays (F-30), Pass-5 bit-tests (F-34), Byte-skipping via .byte  (F-35).
+* **Test Focus:** Full 3-parameter passing (A, X, Y), safe ZP fallbacks upon register clobbering, relational operators (<, <=, >, >=, ==, !=) in Carry ABI, register/flag preservation during delays, and bit-exact execution in VICE test harness. (Issue #53).
+
+---
+
+### QA-03: Arithmetic & Memory Safety Hardening
+* **Goal:** Verify mathematical precision across exhaustive domains and ensure formal memory model safety rules are strictly enforced.
+* **Scope:** Reciprocal constant division & modulo 0..255 (F-13), Quarter-square multiplication exhaustive (F-08), 8x8->16 constant mul (F-16), Segment type ROM safety & Cross-bank checks (F-00), StackRam $0100- overflow protection (F-29), ZP coalescing (F-06).
+* **Test Focus:** Exhaustive domain verification (0..255 for all divisors), negative compile tests for ROM symbol writes and direct cross-bank calls without trampolines, and hardware stack bounds verification. (Issue #54).
