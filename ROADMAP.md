@@ -1,4 +1,4 @@
-# KickC Enhanced – Compiler Architecture & Feature Roadmap
+﻿# KickC Enhanced – Compiler Architecture & Feature Roadmap
 
 KickC Enhanced is an optimizing C-to-6502 cross-compiler designed to generate readable, ultra-compact, and cycle-efficient machine code for MOS 6502-family systems (such as the Commodore 64).
 
@@ -540,6 +540,18 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 
 ---
+
+
+---
+
+### Feature 51: Library: Ultra-Fast Run-Length Encoding (RLE) Compression Suite (<rle.h>)
+* **Problem:**
+  High-ratio crunchers like ZX02, PuCrunch, or Exomizer employ optimal dynamic programming parsers that require megabytes of host RAM and millions of instructions, making real-time on-device compression completely intractable on a 1 MHz NMOS 6502. However, games frequently require fast real-time on-device compression (e.g. savegame serialization, procedural world staging, network packets, delta buffers) directly before writing to slow IEC serial disk drives or serial modems.
+* **Solution & Optimization:**
+  * Implement an ultra-fast, symmetric 6502 RLE suite in <rle.h> and le.c:
+    * le_pack(const void* src, void* dest, uint16_t src_len): Compresses 8 KB of sparse data in ~15–25 milliseconds (< 2 video frames) with zero heap/RAM allocation (utilizing only 2 ZP pointers and a run counter).
+    * le_unpack(const void* src, void* dest, uint16_t max_dest_len): Unpacks data in ~8–12 milliseconds.
+    * Uses a standardized PackBits / byte-run format (flagging repeated byte runs vs. raw literal spans), achieving 60–80% of ZX02's compression ratio on sparse state tables at 100,000x faster compression speed.
 
 ## Quality Assurance & Automated Regression Test Suites (QA-01 to QA-03)
 
