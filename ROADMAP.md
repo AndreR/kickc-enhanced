@@ -58,7 +58,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-32** | Generator | Compile-Time Table Generator (`__builtin_lut` / Constexpr Arrays) | Tooling | ⚪ Planned |
 | **F-33** | Types | ISO-C Bitfields in Structs (`uint8_t a:1, b:1;` for Packed Bools) | ISO C | ⚪ Planned |
 | **F-34** | Peephole | Pass-5 Bit-Test Optimization (`BIT`, `BMI`, `BPL` for Bit 7/6) | Pass 5 | ⚪ Planned |
-| **F-35** | Codegen | Multi-Entry Byte-Skipping via `BIT $xxxx` (`.byte $2c`) | 6502 Idiom | ⚪ Planned |
+| **F-35** | Codegen | Multi-Entry Byte-Skipping via `BIT $xxxx` (`.byte $2c`) | 6502 Idiom | ✅ Completed |
 | **F-36** | Types | Packed 4-Bit Nibble Arrays (`uint4_t` / Color-RAM Packing) | C64 Architecture | ⚪ Planned |
 
 ---
