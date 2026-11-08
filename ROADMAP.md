@@ -223,12 +223,14 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-### Feature 31: Pre-Indexed Zero-Page Addressing Optimization (`LDA ($zp,X)`)
-* **Problem:** Accessing an array of 16-bit pointers (`ptr_table[x][0]`) currently copies the pointer from the array into two temporary Zero-Page bytes and executes `LDA ($zp),Y`, taking 20–25 cycles and burning Zero-Page registers.
-* **6502 Idiom:** When an array of pointers is placed in the Zero Page, the 6502 instruction `LDA ($zp,X)` dereferences the pointer directly in a single 6-cycle operation.
+### Feature 31: Pre-Indexed Zero-Page Addressing Optimization (`LDA ($zp,X)`) - [x] COMPLETED
+* **Problem:** Accessing an array of 16-bit pointers (`ptr_table[x][0]`) previously copied the pointer from the array into two temporary Zero-Page bytes and executed `LDA ($zp),Y`, taking 20–25 cycles and burning Zero-Page registers.
+* **6502 Idiom:** When an array of pointers is placed in the Zero Page, the 6502 instruction `LDA.Z ($zp,X)` / `STA.Z ($zp,X)` dereferences the pointer directly in a single 6-cycle operation.
 * **Compiler Integration:**
-  * Pass 5 pattern recognizer for `__zp uint8_t* ptr_table[]`.
-  * Emits `LDX index_times_2; LDA (ptr_table,X)` with zero temporary Zero-Page allocation.
+  * Pass 5 `Pass5PreIndexedAddressingOptimization` optimizes multi-instruction pointer dereferencing sequences into native `LDA.Z (zp_table,X)` and `STA.Z (zp_table,X)`.
+  * Updated `CpuAddressingMode.IZX` to emit `%i.z (%p,x)` ensuring unambiguous KickAssembler opcode synthesis.
+  * Enhanced `Pass4CodeGeneration` to emit `.label` declarations for Zero-Page arrays without corrupting PRG load headers.
+  * Verified bit-exact in VICE on port 6541 with screen test output `PASS!`.
 
 ---
 
