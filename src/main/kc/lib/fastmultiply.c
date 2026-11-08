@@ -7,7 +7,7 @@
 
 #ifdef FASTMULTIPLY_USE_ROM
 
-// ROM mode: uses Quarter-Square ROM tables from <multiply.h> (0 bytes RAM, 100% ROM-safe)
+// Mode 3: 100% ROM-/Cartridge-safe Quarter-Square tables from <multiply.h> (0 bytes RAM)
 static char _mulf_prepared_a = 0;
 
 void mulf_init() {
@@ -47,8 +47,31 @@ signed long mulf16s(signed int a, signed int b) {
 
 #else
 
-// Classic RAM mode: High-speed Seriously Fast Multiplication via self-modifying code (~245 cycles)
-// mulf_sqr tables contain f(x)=int(x*x/4) and g(x) = f(x-255).
+// Classic High-Speed SMC Multiplication (~25 cycles 8x8, ~245 cycles 16x16)
+
+#ifdef FASTMULTIPLY_PRECOMPUTED
+
+// Mode 2: Compile-time precomputed tables (0 startup cycles, +2 KB PRG payload)
+char __align(0x100) mulf_sqr1_lo[512] = kickasm {{
+    .fill 512, <((i*i)/4)
+}};
+char __align(0x100) mulf_sqr1_hi[512] = kickasm {{
+    .fill 512, >((i*i)/4)
+}};
+char __align(0x100) mulf_sqr2_lo[512] = kickasm {{
+    .fill 512, <(((i-255)*(i-255))/4)
+}};
+char __align(0x100) mulf_sqr2_hi[512] = kickasm {{
+    .fill 512, >(((i-255)*(i-255))/4)
+}};
+
+void mulf_init() {
+    // 0 cycles: tables are precomputed at compile time!
+}
+
+#else
+
+// Mode 1 (Default): Dynamic BSS RAM tables (0 bytes PRG bloat)
 char __align(0x100) mulf_sqr1_lo[512];
 char __align(0x100) mulf_sqr1_hi[512];
 char __align(0x100) mulf_sqr2_lo[512];
@@ -56,35 +79,29 @@ char __align(0x100) mulf_sqr2_hi[512];
 
 // Initialize the mulf_sqr multiplication tables with f(x)=int(x*x/4)
 void mulf_init() {
-  unsigned int sqr = 0;
-  char x_2 = 0;
-  char c = 0;
-  char* sqr1_hi = mulf_sqr1_hi+1;
-  for(char* sqr1_lo = mulf_sqr1_lo+1; sqr1_lo!=mulf_sqr1_lo+512; sqr1_lo++) {
-    if((++c&1)==0) {
-        x_2++;
-        sqr++;
+    unsigned int sqr = 0;
+    unsigned int delta = 0;
+    for (unsigned int x = 0; x < 512; x++) {
+        mulf_sqr1_lo[x] = BYTE0(sqr);
+        mulf_sqr1_hi[x] = BYTE1(sqr);
+        delta += ((char)x & 1);
+        sqr += delta;
     }
-    *sqr1_lo = BYTE0(sqr);
-    *sqr1_hi++ = BYTE1(sqr);
-    sqr = sqr + x_2;
-  }
-  char x_255 = (char)-1;
-  char dir = 0xff;
-  char* sqr2_hi = mulf_sqr2_hi;
-  for(char* sqr2_lo = mulf_sqr2_lo; sqr2_lo!=mulf_sqr2_lo+511; sqr2_lo++) {
-    *sqr2_lo = mulf_sqr1_lo[x_255];
-    *sqr2_hi++ = mulf_sqr1_hi[x_255];
-    x_255 = x_255 + dir;
-    if(x_255==0) {
-      dir = 1;
+    for (unsigned int x = 0; x < 256; x++) {
+        char mirror = (char)(255 - x);
+        mulf_sqr2_lo[x] = mulf_sqr1_lo[mirror];
+        mulf_sqr2_hi[x] = mulf_sqr1_hi[mirror];
     }
-  }
-  *(mulf_sqr2_lo+511) = *(mulf_sqr1_lo+256);
-  *(mulf_sqr2_hi+511) = *(mulf_sqr1_hi+256);
+    for (unsigned int x = 256; x < 512; x++) {
+        unsigned int mirror = x - 255;
+        mulf_sqr2_lo[x] = mulf_sqr1_lo[mirror];
+        mulf_sqr2_hi[x] = mulf_sqr1_hi[mirror];
+    }
 }
 
-// Prepare for fast multiply with an unsigned char to a unsigned int result
+#endif
+
+// Prepare for fast multiply with an unsigned char to an unsigned int result
 void mulf8u_prepare(char a) {
     char* const memA = (char*)0xfd;
     *memA = a;
@@ -98,7 +115,7 @@ void mulf8u_prepare(char a) {
     }
 }
 
-// Calculate fast multiply with a prepared unsigned char to a unsigned int result
+// Calculate fast multiply with a prepared unsigned char to an unsigned int result
 unsigned int mulf8u_prepared(char b) {
     char* const resL = (char*)0xfe;
     char* const memB = (char*)0xff;
@@ -120,18 +137,18 @@ unsigned int mulf8u_prepared(char b) {
     return MAKEWORD( *memB, *resL );
 }
 
-// Fast multiply two unsigned chars to a unsigned int result
+// Fast multiply two unsigned chars to an unsigned int result
 unsigned int mulf8u(char a, char b) {
     mulf8u_prepare(a);
     return mulf8u_prepared(b);
 }
 
-// Prepare for fast multiply with an signed char to a unsigned int result
+// Prepare for fast multiply with a signed char to an unsigned int result
 inline void mulf8s_prepare(signed char a) {
     mulf8u_prepare((char)a);
 }
 
-// Calculate fast multiply with a prepared unsigned char to a unsigned int result
+// Calculate fast multiply with a prepared unsigned char to an unsigned int result
 signed int mulf8s_prepared(signed char b) {
     signed char* const memA = (signed char*)0xfd;
     unsigned int m = mulf8u_prepared((char) b);
@@ -144,7 +161,7 @@ signed int mulf8s_prepared(signed char b) {
     return (signed int)m;
 }
 
-// Fast multiply two signed chars to a unsigned int result
+// Fast multiply two signed chars to a signed int result
 signed int mulf8s(signed char a, signed char b) {
     mulf8s_prepare(a);
     return mulf8s_prepared(b);
