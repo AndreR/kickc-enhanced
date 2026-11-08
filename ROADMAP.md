@@ -232,16 +232,16 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-### Feature 32: Compile-Time Table Generator (`__builtin_lut` / Constexpr Arrays)
+### Feature 32: Compile-Time Table Generator (`__builtin_lut` / Constexpr Arrays) - [x] COMPLETED
 * **Problem:** 6502 games rely on precalculated look-up tables (sine waves, circles, easing curves, color ramps). KickAssembler natively supports this via `.fill 256, sin(i*PI*2/256)*64+100`. In C, developers previously had to maintain external Python generation scripts.
 * **Syntax:**
   ```c
   const uint8_t sin_table[256] = __builtin_lut(256, round(sin(i * 2.0 * 3.14159265 / 256.0) * 64.0 + 128.0));
   ```
-* **Compiler Integration:**
-  * Pass 0 / Preprocessor evaluates the mathematical expression for $i \in [0, N-1]$ using double-precision floating-point host arithmetic at compile time.
-  * Directly emits a static constant byte array into the designated data/ROM segment.
-  * Eliminates external asset generation scripts for algorithmic tables.
+* **Implementation:**
+  * Pass 0 intercepts `__builtin_lut(size, expr)` array initializations and generates KickAssembler `.fill` (for 1-byte elements), `.fillword` (for 2-byte elements), or `.for(var i=0; i<size; i++) .dword expr` (for 4-byte elements) directives directly into the variable's constant segment.
+  * Math constants (`PI`, `M_PI`) and double-precision math functions (`sin`, `cos`, `tan`, `atan`, `round`, `floor`, `ceil`, `sqrt`, `pow`) are evaluated at assembly time with full 64-bit precision.
+  * Eliminates external asset generation scripts for algorithmic tables. Verified bit-exact in VICE on port 6541.
 
 ---
 
