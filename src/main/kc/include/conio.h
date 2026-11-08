@@ -5,6 +5,10 @@
 /// See https://github.com/cc65/cc65/blob/master/include/conio.h
 //
 /// Currently CX16/C64/PLUS4/VIC20 platforms are supported
+#ifndef _CONIO_H
+#define _CONIO_H
+
+#include <stdbool.h>
 
 /// clears the screen and moves the cursor to the upper left-hand corner of the screen.
 void clrscr(void);
@@ -56,12 +60,14 @@ unsigned char bordercolor(unsigned char color);
 /// Return true if there's a key waiting, return false if not
 unsigned char kbhit (void);
 
-/// If onoff is 1, a cursor is displayed when waiting for keyboard input.
-/// If onoff is 0, the cursor is hidden when waiting for keyboard input.
+/// If onoff is true, a cursor is displayed when waiting for keyboard input.
+/// If onoff is false, the cursor is hidden when waiting for keyboard input.
 /// The function returns the old cursor setting.
-unsigned char cursor(unsigned char onoff);
+bool cursor(bool onoff);
 
-/// If onoff is 1, scrolling is enabled when outputting past the end of the screen
-/// If onoff is 0, scrolling is disabled and the cursor instead moves to (0,0)
+/// If onoff is true, scrolling is enabled when outputting past the end of the screen.
+/// If onoff is false, scrolling is disabled and the cursor instead moves to (0,0).
 /// The function returns the old scroll setting.
-unsigned char scroll(unsigned char onoff);
+bool scroll(bool onoff);
+
+#endif

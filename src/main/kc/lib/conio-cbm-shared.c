@@ -7,6 +7,7 @@
 // - CONIO_TEXTCOLOR_DEFAULT - The default text color
 
 #include <string.h>
+#include <stdbool.h>
 
 // The number of bytes on the screen
 #define CONIO_BYTES CONIO_HEIGHT*CONIO_WIDTH
@@ -25,30 +26,19 @@ __ma char *conio_line_color = CONIO_SCREEN_COLORS;
 
 // The current text color
 __ma char conio_textcolor = CONIO_TEXTCOLOR_DEFAULT;
-// Is a cursor whown when waiting for input (0: no, other: yes)
-__ma char conio_display_cursor = 0;
-// Is scrolling enabled when outputting beyond the end of the screen (1: yes, 0: no).
+// Is a cursor shown when waiting for input (false: no, true: yes)
+__ma bool conio_display_cursor = false;
+// Is scrolling enabled when outputting beyond the end of the screen (true: yes, false: no).
 // If disabled the cursor just moves back to (0,0) instead
-__ma char conio_scroll_enable = 1;
+__ma bool conio_scroll_enable = true;
 
 // clears the screen and moves the cursor to the upper left-hand corner of the screen.
+// Accelerated via fast page-based memset (~10 cycles/byte).
 void clrscr(void) {
-    char* line_text = CONIO_SCREEN_TEXT;
+    memset(CONIO_SCREEN_TEXT, ' ', CONIO_BYTES);
     #ifndef __PET8032__
-    char* line_cols = CONIO_SCREEN_COLORS;
+    memset(CONIO_SCREEN_COLORS, conio_textcolor, CONIO_BYTES);
     #endif
-    for( char l=0;l<CONIO_HEIGHT; l++ ) {
-        for( char c=0;c<CONIO_WIDTH; c++ ) {
-            line_text[c] = ' ';
-    #ifndef __PET8032__
-            line_cols[c] = conio_textcolor;
-    #endif
-        }
-        line_text += CONIO_WIDTH;
-    #ifndef __PET8032__
-        line_cols += CONIO_WIDTH;
-    #endif
-    }
     conio_cursor_x = 0;
     conio_cursor_y = 0;
     conio_line_text = CONIO_SCREEN_TEXT;
@@ -145,7 +135,6 @@ void cscroll() {
     }
 }
 
-
 // Output a NUL-terminated string at the current cursor position
 void cputs(const char* s) {
     char c;
@@ -178,20 +167,20 @@ unsigned char textcolor(unsigned char color) {
     #endif
 }
 
-// If onoff is 1, a cursor is displayed when waiting for keyboard input.
-// If onoff is 0, the cursor is hidden when waiting for keyboard input.
+// If onoff is true, a cursor is displayed when waiting for keyboard input.
+// If onoff is false, the cursor is hidden when waiting for keyboard input.
 // The function returns the old cursor setting.
-unsigned char cursor(unsigned char onoff) {
-    char old = conio_display_cursor;
+bool cursor(bool onoff) {
+    bool old = conio_display_cursor;
     conio_display_cursor = onoff;
     return old;
 }
 
-// If onoff is 1, scrolling is enabled when outputting past the end of the screen
-// If onoff is 0, scrolling is disabled and the cursor instead moves to (0,0)
+// If onoff is true, scrolling is enabled when outputting past the end of the screen.
+// If onoff is false, scrolling is disabled and the cursor instead moves to (0,0).
 // The function returns the old scroll setting.
-unsigned char scroll(unsigned char onoff) {
-    char old = conio_scroll_enable;
+bool scroll(bool onoff) {
+    bool old = conio_scroll_enable;
     conio_scroll_enable = onoff;
     return old;
 }
