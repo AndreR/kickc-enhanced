@@ -3628,6 +3628,26 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          lValue = new LvalueIntermediate((VariableRef) lValue);
       }
       RValue rValue = (RValue) this.visit(ctx.expr(1));
+      SymbolType lType = inferExprType(ctx.expr(0));
+      if(lType instanceof SymbolTypeStruct && ((SymbolTypeStruct) lType).isUnion()) {
+         SymbolType rType = inferExprType(ctx.expr(1));
+         if(rType == null || !lType.equals(rType)) {
+            StructDefinition sDef = ((SymbolTypeStruct) lType).getStructDefinition(program.getScope());
+            if(sDef != null && !sDef.getAllVars(false).isEmpty()) {
+               Variable firstMember = sDef.getAllVars(false).iterator().next();
+               lValue = new StructMemberRef(lValue, firstMember.getLocalName());
+            }
+         }
+      } else if(rValue instanceof LValue) {
+         SymbolType rType = inferExprType(ctx.expr(1));
+         if(rType instanceof SymbolTypeStruct && ((SymbolTypeStruct) rType).isUnion()) {
+            StructDefinition sDef = ((SymbolTypeStruct) rType).getStructDefinition(program.getScope());
+            if(sDef != null && !sDef.getAllVars(false).isEmpty()) {
+               Variable firstMember = sDef.getAllVars(false).iterator().next();
+               rValue = new StructMemberRef((LValue) rValue, firstMember.getLocalName());
+            }
+         }
+      }
       Statement stmt = new StatementAssignment(lValue, rValue, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx)));
       addStatement(stmt);
       consumeExpr(lValue);
@@ -3678,6 +3698,14 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       RValue rValue = (RValue) this.visit(ctx.expr(1));
       if(rValue instanceof LValue) {
          rValue = copyLValue((LValue) rValue);
+      }
+      SymbolType lCompoundType = inferExprType(ctx.expr(0));
+      if(lCompoundType instanceof SymbolTypeStruct && ((SymbolTypeStruct) lCompoundType).isUnion()) {
+         StructDefinition sDef = ((SymbolTypeStruct) lCompoundType).getStructDefinition(program.getScope());
+         if(sDef != null && !sDef.getAllVars(false).isEmpty()) {
+            Variable firstMember = sDef.getAllVars(false).iterator().next();
+            lValue = new StructMemberRef(lValue, firstMember.getLocalName());
+         }
       }
       // Binary Operator
       String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
@@ -4086,7 +4114,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             return addExprUnary(ctx, Operators.WORD1, parameters.get(0));
          } else if(Pass1ByteXIntrinsicRewrite.INTRINSIC_MAKEWORD.equals(procedureName) && parameters.size() == 2) {
             return addExprBinary(ctx, parameters.get(0), Operators.WORD, parameters.get(1));
-         } else if(Pass1ByteXIntrinsicRewrite.INTRINSIC_MAKELONG.equals(procedureName) && parameters.size() == 2) {
+         } else if((Pass1ByteXIntrinsicRewrite.INTRINSIC_MAKELONG.equals(procedureName) || "MAKEDWORD".equals(procedureName)) && parameters.size() == 2) {
             return addExprBinary(ctx, parameters.get(0), Operators.DWORD, parameters.get(1));
          } else if(Pass1ByteXIntrinsicRewrite.INTRINSIC_MAKELONG4.equals(procedureName)) {
             // Handle the intrinsic MAKELONG4()

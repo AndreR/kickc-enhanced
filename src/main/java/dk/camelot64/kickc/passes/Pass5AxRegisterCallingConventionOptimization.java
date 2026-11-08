@@ -183,14 +183,16 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
 
             boolean returns16 = proc.getReturnType() != null && proc.getReturnType().getSizeBytes() == 2 && !(proc.getReturnType() instanceof dk.camelot64.kickc.model.types.SymbolTypeStruct);
             if(proc.isAxConvention() || returns16) {
-               axReturnProcs.add(name);
                Map<String, String> aliases = scopeAliases.get(name);
                if(aliases != null && aliases.containsKey("return")) {
+                  axReturnProcs.add(name);
                   procReturnVarAddr.put(name, aliases.get("return"));
+               } else if(proc.isAxConvention()) {
+                  axReturnProcs.add(name);
                }
             }
 
-            if(proc.getParameters().size() == 1) {
+            if(proc.isAxConvention() && proc.getParameters().size() == 1) {
                Variable param0 = proc.getParameters().get(0);
                if(param0.getType() != null && param0.getType().getSizeBytes() == 2 && !(param0.getType() instanceof dk.camelot64.kickc.model.types.SymbolTypeStruct)) {
                      axParamProcs.add(name);
@@ -306,9 +308,13 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
 
                      // Case 1C: Dynamic return ending in sta return+1:
                      // Insert: tax ; lda.z return
+                     if(retAddr == null) {
+                        transformedRts.add(inst);
+                        continue;
+                     }
                      CpuAddressingMode ldaMode = inst1.getCpuOpcode().getAddressingMode();
                      CpuOpcode ldaOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lda", ldaMode, false);
-                     String retLoOp = (retAddr != null) ? retAddr : "return";
+                     String retLoOp = retAddr;
                      int rtsIndex = ref.chunk.getLines().indexOf(inst);
                      if(rtsIndex >= 0) {
                         AsmInstruction taxInst = new AsmInstruction(taxOp, null, null, null);
@@ -325,11 +331,15 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
                   } else {
                      // Case 1D: Any other return (e.g. rol.z return+1; rts):
                      // Insert: lda.z return ; ldx.z return+1
-                     CpuAddressingMode ldaMode = (retAddr != null) ? CpuAddressingMode.ZP : CpuAddressingMode.ABS;
+                     if(retAddr == null) {
+                        transformedRts.add(inst);
+                        continue;
+                     }
+                     CpuAddressingMode ldaMode = CpuAddressingMode.ZP;
                      CpuOpcode ldaOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lda", ldaMode, false);
                      CpuOpcode ldxOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("ldx", ldaMode, false);
-                     String retLoOp = (retAddr != null) ? retAddr : "return";
-                     String retHiOp = (retAddr != null) ? retAddr + "+1" : "return+1";
+                     String retLoOp = retAddr;
+                     String retHiOp = retAddr + "+1";
                      int rtsIndex = ref.chunk.getLines().indexOf(inst);
                      if(rtsIndex >= 0) {
                         AsmInstruction ldaRet = new AsmInstruction(ldaOp, retLoOp, null, null);

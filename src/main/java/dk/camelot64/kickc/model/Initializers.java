@@ -91,6 +91,14 @@ public class Initializers {
          }
       } else if(initValue instanceof UnionDesignator) {
          initValue = constantifyUnion((UnionDesignator) initValue, (SymbolTypeStruct) typeSpec.getType(), program, source);
+      } else if(typeSpec.getType() instanceof SymbolTypeStruct && ((SymbolTypeStruct) typeSpec.getType()).getStructDefinition(program.getScope()) != null && ((SymbolTypeStruct) typeSpec.getType()).getStructDefinition(program.getScope()).isUnion() && !(initValue instanceof ValueList) && !(initValue instanceof ConstantStructValue)) {
+         StructDefinition structDefinition = ((SymbolTypeStruct) typeSpec.getType()).getStructDefinition(program.getScope());
+         Collection<Variable> memberDefinitions = structDefinition.getAllVars(false);
+         if(!memberDefinitions.isEmpty()) {
+            Variable firstMember = memberDefinitions.iterator().next();
+            UnionDesignator autoDesignator = new UnionDesignator(firstMember.getLocalName(), initValue);
+            initValue = constantifyUnion(autoDesignator, (SymbolTypeStruct) typeSpec.getType(), program, source);
+         }
       } else if(initValue instanceof ValueList) {
          ValueList initList = (ValueList) initValue;
          if(initList.getList().isEmpty()) {
@@ -162,7 +170,7 @@ public class Initializers {
          constMemberMap.put(memberDef.getRef(), (ConstantValue) constantifiedMemberValue);
          return new ConstantStructValue(structType, constMemberMap);
       } else {
-         throw new CompileError( "Union initializer is not constant", source);
+         return new CastValue(structType, new ValueList(Collections.singletonList(constantifiedMemberValue)));
       }
    }
 

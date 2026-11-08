@@ -168,8 +168,109 @@ typedef union {
 #define UFIXED8_24(i, f_lo, f_hi) ((ufixed8_24){ .frac = ((uint24_t){(uint16_t)(f_lo), (uint8_t)(f_hi)}), .integer = (uint8_t)(i) })
 
 // =============================================================================
+// Mathematical, Geometric & Retro Constants for Fixed-Point Types
+// Suffixes: _F8 (8.8), _F16 (16.16), _F24 (8.24)
+// =============================================================================
+
+// Units & Epsilon
+#define FIXED_ONE_F8       0x0100
+#define FIXED_ONE_F16      0x00010000
+#define FIXED_ONE_F24      0x01000000
+
+#define FIXED_HALF_F8      0x0080
+#define FIXED_HALF_F16     0x00008000
+#define FIXED_HALF_F24     0x00800000
+
+#define FIXED_QUARTER_F8   0x0040
+#define FIXED_QUARTER_F16  0x00004000
+#define FIXED_QUARTER_F24  0x00400000
+
+#define FIXED_EPSILON_F8   0x0001
+#define FIXED_EPSILON_F16  0x00000001
+#define FIXED_EPSILON_F24  0x00000001
+
+// Circle & Angles
+#define PI_F8              0x0324
+#define PI_F16             0x0003243f
+#define PI_F24             0x03243f6b
+
+#define TAU_F8             0x0648
+#define TAU_F16            0x0006487f
+#define TAU_F24            0x06487ed5
+
+#define HALF_PI_F8         0x0192
+#define HALF_PI_F16        0x00019220
+#define HALF_PI_F24        0x01921fb5
+
+#define QUARTER_PI_F8      0x00c9
+#define QUARTER_PI_F16     0x0000c910
+#define QUARTER_PI_F24     0x00c90fdb
+
+#define INV_PI_F8          0x0051
+#define INV_PI_F16         0x0000517d
+#define INV_PI_F24         0x00517cc2
+
+#define INV_TAU_F8         0x0029
+#define INV_TAU_F16        0x000028be
+#define INV_TAU_F24        0x0028be61
+
+// Angle Conversions (BAM = Binary Angular Measurement: 256 BAM = 360 deg = 2*PI rad)
+#define DEG_TO_RAD_F8      0x0004
+#define DEG_TO_RAD_F16     0x00000478
+#define DEG_TO_RAD_F24     0x000477d2
+
+#define RAD_TO_DEG_F8      0x394c
+#define RAD_TO_DEG_F16     0x00394bb8
+#define RAD_TO_DEG_F24     0x394bb835
+
+#define DEG_TO_BAM_F8      0x00b6
+#define DEG_TO_BAM_F16     0x0000b60b
+#define DEG_TO_BAM_F24     0x00b60b61
+
+#define BAM_TO_DEG_F8      0x0168
+#define BAM_TO_DEG_F16     0x00016800
+#define BAM_TO_DEG_F24     0x01680000
+
+#define RAD_TO_BAM_F8      0x28be
+#define RAD_TO_BAM_F16     0x0028be61
+#define RAD_TO_BAM_F24     0x28be60dc
+
+#define BAM_TO_RAD_F8      0x0006
+#define BAM_TO_RAD_F16     0x00000648
+#define BAM_TO_RAD_F24     0x0006487f
+
+// Geometry & Vectors
+#define SQRT2_F8           0x016a
+#define SQRT2_F16          0x00016a0a
+#define SQRT2_F24          0x016a09e6
+
+#define INV_SQRT2_F8       0x00b5
+#define INV_SQRT2_F16      0x0000b505
+#define INV_SQRT2_F24      0x00b504f3
+
+#define SQRT3_F8           0x01bb
+#define SQRT3_F16          0x0001bb68
+#define SQRT3_F24          0x01bb67af
+
+#define PHI_F8             0x019e
+#define PHI_F16            0x00019e37
+#define PHI_F24            0x019e377a
+
+// Logarithms
+#define E_F8               0x02b8
+#define E_F16              0x0002b7e1
+#define E_F24              0x02b7e151
+
+#define LN2_F8             0x00b1
+#define LN2_F16            0x0000b172
+#define LN2_F24            0x00b17218
+
+#define LOG2E_F8           0x0171
+#define LOG2E_F16          0x00017154
+#define LOG2E_F24          0x01715476
+
+// =============================================================================
 // Compile-Time Literal Folding Macros
-// Allows defining fixed-point variables cleanly from float literals with zero runtime cost:
 // e.g. fixed16_16 pos = F16_16(123.456);
 // =============================================================================
 
@@ -190,5 +291,59 @@ typedef union {
 
 #define F8_24(lit)   ((fixed8_24){ .val = (int32_t)(lit) * 65536 })
 #define UF8_24(lit)  ((ufixed8_24){ .val = (uint32_t)(lit) * 65536 })
+
+// =============================================================================
+// High-Performance Fixed-Point Math Functions
+// =============================================================================
+
+// --- 8.8 Arithmetic ---
+
+/// Multiply two 8.8 signed fixed-point numbers (16x16 -> 32-bit product with middle 16-bit extraction)
+fixed8_8 fixed_mul(fixed8_8 a, fixed8_8 b);
+
+/// Multiply two 8.8 unsigned fixed-point numbers
+ufixed8_8 ufixed_mul(ufixed8_8 a, ufixed8_8 b);
+
+/// Divide two 8.8 signed fixed-point numbers (with 8-bit numerator pre-shift)
+fixed8_8 fixed_div(fixed8_8 a, fixed8_8 b);
+
+/// Multiply an 8.8 fixed-point number with an 8-bit signed integer scalar
+fixed8_8 fixed_mul_int(fixed8_8 a, int8_t scalar);
+
+/// Absolute value of an 8.8 fixed-point number
+fixed8_8 fixed_abs(fixed8_8 a);
+
+/// Linear interpolation between a and b: a + (b - a) * t (t in [0.0, 1.0])
+fixed8_8 fixed_lerp(fixed8_8 a, fixed8_8 b, ufixed8_8 t);
+
+// --- 16.16 Arithmetic ---
+
+/// Multiply two 16.16 signed fixed-point numbers
+fixed16_16 fixed16_16_mul(fixed16_16 a, fixed16_16 b);
+
+/// Divide two 16.16 signed fixed-point numbers
+fixed16_16 fixed16_16_div(fixed16_16 a, fixed16_16 b);
+
+// --- Trigonometry & Geometry ---
+
+/// 8.8 Sine lookup: angle in 0..255 (0..360 deg BAM), returns -1.0 .. +1.0 in 8.8 format
+fixed8_8 fixed_sin(uint8_t angle);
+
+/// 8.8 Cosine lookup: angle in 0..255 (0..360 deg BAM)
+fixed8_8 fixed_cos(uint8_t angle);
+
+/// Fast 2D angle bearing in 0..255 (0..360 deg BAM) from (x, y) vector
+uint8_t fixed_atan2(fixed8_8 y, fixed8_8 x);
+
+/// Fast bit-by-bit restoring square root for 8.8 fixed-point
+fixed8_8 fixed_sqrt(fixed8_8 val);
+
+/// Euclidean 2D distance: sqrt(dx^2 + dy^2)
+fixed8_8 fixed_dist(fixed8_8 dx, fixed8_8 dy);
+
+// --- Lookup Tables (in fixedpoint.c) ---
+extern const uint8_t FIXED_SIN_TAB_LO[256];
+extern const uint8_t FIXED_SIN_TAB_HI[256];
+extern const uint8_t FIXED_ATAN_TAB[33];
 
 #endif

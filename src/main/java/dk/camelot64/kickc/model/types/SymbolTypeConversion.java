@@ -246,6 +246,22 @@ public class SymbolTypeConversion {
          // Pointer types assigned from each other
          return true;
       }
+      if(lValueType instanceof SymbolTypeStruct && ((SymbolTypeStruct) lValueType).isUnion()) {
+         if(SymbolType.isInteger(rValueType) && rValueType.getSizeBytes() <= lValueType.getSizeBytes()) {
+            return true;
+         }
+      }
+      if(rValueType instanceof SymbolTypeStruct && ((SymbolTypeStruct) rValueType).isUnion()) {
+         if(SymbolType.isInteger(lValueType) && lValueType.getSizeBytes() <= rValueType.getSizeBytes()) {
+            return true;
+         }
+      }
+      if(lValueType instanceof SymbolTypeStruct && ((SymbolTypeStruct) lValueType).isUnion() &&
+         rValueType instanceof SymbolTypeStruct && ((SymbolTypeStruct) rValueType).isUnion()) {
+         if(lValueType.getSizeBytes() == rValueType.getSizeBytes()) {
+            return true;
+         }
+      }
       return false;
    }
 
