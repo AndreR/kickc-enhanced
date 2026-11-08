@@ -848,6 +848,7 @@ public class Compiler {
       pass5Optimizations.add(new Pass5UnreachableCodeElimination(program));
       pass5Optimizations.add(new Pass5RelabelLongLabels(program));
       pass5Optimizations.add(new Pass5AddMainRts(program));
+      pass5Optimizations.add(new Pass5HighSpeedJumpTableSwitch(program));
       boolean asmOptimized = true;
       int pass5Rounds = 0;
       while(asmOptimized) {
