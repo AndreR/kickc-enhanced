@@ -226,6 +226,9 @@ expr
     | expr PAR_BEGIN parameterList? PAR_END #exprCall
     | SIZEOF PAR_BEGIN typeName PAR_END  #exprSizeOfType
     | SIZEOF expr #exprSizeOf
+    | COUNTOF PAR_BEGIN typeName PAR_END #exprCountOfType
+    | COUNTOF PAR_BEGIN expr PAR_END #exprCountOf
+    | COUNTOF expr #exprCountOf
     | TYPEID PAR_BEGIN typeName PAR_END  #exprTypeIdType
     | TYPEID expr  #exprTypeId
     | DEFINED PAR_BEGIN? NAME PAR_END? #exprDefined

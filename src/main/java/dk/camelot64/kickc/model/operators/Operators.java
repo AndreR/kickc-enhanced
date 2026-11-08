@@ -32,6 +32,7 @@ public class Operators {
    public static final OperatorUnary CAST_UNUMBER = new OperatorCastUNumber(2);
    public static final OperatorUnary CAST_SNUMBER = new OperatorCastSNumber(2);
    public static final OperatorUnary SIZEOF = new OperatorSizeOf(2);
+   public static final OperatorUnary COUNTOF = new OperatorCountOf(2);
    public static final OperatorUnary TYPEID = new OperatorTypeId(2);
    public static final OperatorBinary MULTIPLY = new OperatorMultiply(3);
    public static final OperatorBinary DIVIDE = new OperatorDivide(3);

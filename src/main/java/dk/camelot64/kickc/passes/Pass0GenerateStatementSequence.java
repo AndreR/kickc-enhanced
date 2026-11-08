@@ -2793,6 +2793,26 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    }
 
    @Override
+   public Object visitExprCountOf(KickCParser.ExprCountOfContext ctx) {
+      RValue child = (RValue) this.visit(ctx.expr());
+      Variable tmpVar = addIntermediateVar();
+      SymbolVariableRef tmpVarRef = tmpVar.getRef();
+      Statement stmt = new StatementAssignment((LValue) tmpVarRef, Operators.COUNTOF, child, true, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx)));
+      addStatement(stmt);
+      consumeExpr(child);
+      return tmpVarRef;
+   }
+
+   @Override
+   public Object visitExprCountOfType(KickCParser.ExprCountOfTypeContext ctx) {
+      SymbolType type = (SymbolType) this.visit(ctx.typeName());
+      if(type instanceof SymbolTypePointer arrayType && arrayType.getArraySpec() != null && arrayType.getArraySpec().getArraySize() != null) {
+         return arrayType.getArraySpec().getArraySize();
+      }
+      throw new CompileError("countof() requires an array type with fixed size, found " + type.toCDecl(), new StatementSource(ctx));
+   }
+
+   @Override
    public Object visitExprTypeId(KickCParser.ExprTypeIdContext ctx) {
       // typeid(expression) - add a unary expression to be resolved later
       RValue child = (RValue) this.visit(ctx.expr());

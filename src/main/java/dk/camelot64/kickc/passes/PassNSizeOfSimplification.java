@@ -49,6 +49,24 @@ public class PassNSizeOfSimplification extends Pass2SsaOptimization {
                      modified.set(true);
                   }
                }
+            } else if(Operators.COUNTOF.equals(assignment.getOperator())) {
+               if(assignment.getrValue2() instanceof SymbolVariableRef symbolRef) {
+                  Variable symbolVar = (Variable) getProgramScope().getSymbol(symbolRef);
+                  if(!symbolVar.isArray()) {
+                     throw new CompileError("countof() argument must be an array with known static size, found: " + symbolVar.getType().toCDecl(), assignment.getSource());
+                  }
+                  if(symbolVar.getArraySize() != null) {
+                     getLog().append("Resolving countof() " + assignment.toString(getProgram(), false));
+                     assignment.setrValue2(symbolVar.getArraySize());
+                     assignment.setOperator(null);
+                     modified.set(true);
+                  } else if(symbolVar.getInitValue() instanceof ConstantArrayList list) {
+                     getLog().append("Resolving countof() " + assignment.toString(getProgram(), false));
+                     assignment.setrValue2(new ConstantInteger((long) list.getElements().size(), SymbolType.WORD));
+                     assignment.setOperator(null);
+                     modified.set(true);
+                  }
+               }
             }
          }
       }
@@ -58,6 +76,9 @@ public class PassNSizeOfSimplification extends Pass2SsaOptimization {
                   if(unary.getOperator().equals(Operators.SIZEOF)) {
                      ConstantValue operand = unary.getOperand();
                      resolveConstantSizeOf(modified, programValue, unary, operand);
+                  } else if(unary.getOperator().equals(Operators.COUNTOF)) {
+                     ConstantValue operand = unary.getOperand();
+                     resolveConstantCountOf(modified, programValue, unary, operand);
                   }
                }
             }
@@ -124,4 +145,38 @@ public class PassNSizeOfSimplification extends Pass2SsaOptimization {
       }
    }
 
+
+   public void resolveConstantCountOf(AtomicBoolean modified, ProgramValue programValue, ConstantUnary unary, ConstantValue operand) {
+      if(operand instanceof ConstantRef) {
+         Variable constant = getProgramScope().getConstant((ConstantRef) operand);
+         if(constant.isArray()) {
+            ConstantValue arraySize = constant.getArraySize();
+            if(arraySize != null) {
+               getLog().append("Resolving array countof() " + unary.toString(getProgram()));
+               programValue.set(arraySize);
+               modified.set(true);
+            } else if(constant.getInitValue() instanceof ConstantArrayList list) {
+               getLog().append("Resolving array countof() " + unary.toString(getProgram()));
+               programValue.set(new ConstantInteger((long) list.getElements().size(), SymbolType.WORD));
+               modified.set(true);
+            } else {
+               ConstantLiteral<?> stringLiteral = null;
+               try {
+                  stringLiteral = constant.getInitValue().calculateLiteral(getProgram().getScope());
+               } catch(ConstantNotLiteral e) {
+                  // Ignore
+               }
+               if(stringLiteral instanceof ConstantString constString) {
+                  getLog().append("Resolving string countof() " + unary.toString(getProgram()));
+                  programValue.set(new ConstantInteger((long) constString.getStringLength(), SymbolType.WORD));
+                  modified.set(true);
+               } else {
+                  throw new CompileError("countof() requires an array with known static size");
+               }
+            }
+         } else {
+            throw new CompileError("countof() argument must be an array, found: " + constant.getType().toCDecl());
+         }
+      }
+   }
 }

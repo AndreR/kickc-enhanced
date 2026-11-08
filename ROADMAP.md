@@ -42,7 +42,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-16** | Arithmetics | Compact 8x8->16 Multiplication without 16-bit Zero-Extension | Pass 2 SSA | ⚪ Planned |
 | **F-17** | Preprocessor | `#embed` Directive for Direct Binary Asset Embedding | C23 | ⚪ Planned |
 | **F-18** | Types | Typed 8-Bit Enumerations (`enum : uint8_t`) | C23 | ✅ Completed |
-| **F-19** | Operators | Compile-Time Array Length Operator `countof()` | C2Y (C29) | ⚪ Planned |
+| **F-19** | Operators | Compile-Time Array Length Operator `countof()` | C2Y (C29) | ✅ Completed |
 | **F-20** | Controlflow | Named Loops: `break label;` & `continue label;` | C2Y (C29) | ⚪ Planned |
 | **F-21** | Safety | Compile-Time Assertions (`static_assert` / `_Static_assert`) | C11 / C23 | ⚪ Planned |
 | **F-22** | Metaprog | `_Generic` Type-Dispatch for Polymorphic 8/16-Bit Macros | C11 | ⚪ Planned |
