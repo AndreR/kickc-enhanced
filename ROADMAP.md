@@ -654,3 +654,24 @@ This document outlines the compiler architecture, completed milestones, planned 
   * Emit compact 1-byte opcodes for designated procedures, executed by a minimal embedded ~250-byte 6502 interpreter loop.
   * Reduces compiled code footprint by 40–50% for complex non-performance-critical routines. (Issue #62).
 
+
+---
+
+### Feature 59: Optimizer: Cross-Scope Constant Storage Elimination & Immediate Inlining
+* **Problem:**
+  In `Pass4CodeGeneration.java`, `useLabelForConst()` forces scalar `const` variables (e.g. `const uint8_t MAX_ITEMS = 8;`) to be emitted as assembly memory labels or memory bytes whenever they are referenced across different procedure scopes. Because `Pass2ConstantInlining` currently only processes unnamed intermediate compiler temporaries, named user constants continue to consume memory in data segments even when their address is never taken via `&`.
+* **Solution & Optimization:**
+  * Extend constant inlining across scopes: When a named scalar `const` variable is never address-taken anywhere in the program, inline its literal value directly at every usage site as an immediate operand (`#imm`).
+  * Suppress assembly `.label` and storage byte allocation in Pass 4 for inlined scalar constants.
+  * Frees data segment RAM/ROM across projects with extensive configuration constants. (Issue #63).
+
+---
+
+### Feature 60: Optimizer: If-to-LUT Data-Flow Synthesizer (Branch Cascade to Indexed Table)
+* **Problem:**
+  Sequences assigning values based on a small contiguous index (e.g. `if(dir==0) dx=0; else if(dir==1) dx=1; else if(dir==2) dx=0; else if(dir==3) dx=-1;`) currently generate chains of comparison and branch instructions (`CMP #val; BNE`), taking up to 25+ cycles and 20+ bytes of code. While `F-01` addresses control-flow branching via RTS jump-tables, data-flow value mappings remain unoptimized.
+* **Solution & Optimization:**
+  * Detect dense linear value assignment chains in Pass 2 / Pass 5 where all branches assign constant literals to the same destination variable.
+  * Synthesize an anonymous read-only lookup table in ROM/segment and replace the branch cascade with a single indexed load (`LDX idx; LDA lut,X; STA dest`).
+  * Provide explicit control via `#pragma branch_to_lut` / `__lut` directive as well as global optimization flag `-Obranch-to-lut`.
+  * Execution drops from ~25 cycles to 7 cycles, and code shrinks from 24 bytes to 5 bytes. (Issue #64).
