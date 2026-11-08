@@ -19,7 +19,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-## 2. Feature Matrix (Strictly Sequenced F-00 to F-46)
+## 2. Feature Matrix (Strictly Sequenced F-00 to F-47)
 
 | ID | Category | Feature Description | Origin / Standard | Status |
 | :---: | :--- | :--- | :---: | :---: |
@@ -70,6 +70,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-44** | Library | Library Bugfix: `sine.c` (`sin16s_gen2` Precedence) & `c64-tod.c` (AM/PM Masking) | 6502 Library | ⚪ Planned |
 | **F-45** | Math | Library Math: Fast 6502 Division & Zero-RAM Square Root (`sqrt16`, `div16u`) | 6502 Math | ⚪ Planned |
 | **F-46** | Math | Library Math: Trig & Multiplier Optimization (Sine Quadrant Symmetries, CORDIC) | 6502 Math | ⚪ Planned |
+| **F-47** | Library | Library: High-Performance Retro-Game Utilities (PRNG Suite, Multiplexer, Fast `strlen`) | 6502 Library | ⚪ Planned |
 
 ---
 
@@ -459,6 +460,25 @@ This document outlines the compiler architecture, completed milestones, planned 
   * Provide `F-32` (`__builtin_lut`) constexpr macros to precalculate sine tables directly into ROM at compile time.
   * Optimize CORDIC shifts with byte-swapping when shift $\ge 8$.
   * Redirect `fastmultiply.c` to use the unified `F-08` ROM tables, freeing 2,048 bytes of RAM on the C64.
+
+---
+
+### Feature 47: Library: High-Performance Retro-Game Utilities (PRNG Suite, Multiplexer, Fast `strlen`)
+* **Problem:**
+  1. `rand()` in `stdlib.c` lacks 0-seed safety (passing `srand(0)` locks Xorshift permanently into an absorbing zero-state). Furthermore, KickC lacks an ultra-fast 8-bit deterministic PRNG (~11 cycles) and a long-period 32-bit PRNG for procedural generation.
+  2. `c64-multiplexer.c` hardcodes `PLEX_COUNT = 32`, forcing every game to pay the full insertion-sort cost for 32 sprites in every frame's raster IRQ even when only 12 or 16 sprites are active.
+  3. `strlen()` in `string.c` increments two 16-bit pointers on every character, costing ~28 cycles/char instead of an optimal 9 cycles/char 6502 Y-indexed loop.
+  4. `print_uchar_decimal()` in `c64-print.c` unnecessarily promotes bytes to 16-bit words and invokes full 16-bit `utoa()`, taking ~400 cycles instead of ~40 cycles via `div10u` (`F-13`).
+* **Solution & Optimization:**
+  * **Deterministic PRNG Suite:**
+    * Implement seed-safety in `srand()` (`if(seed == 0) seed = 1;`).
+    * Add 11-cycle Galois 8-bit LFSR `rand8()` / `srand8(seed)` (period 255).
+    * Accelerate 16-bit `rand()` with native 6502 assembly (~30 cycles).
+    * Add 32-bit `rand32()` / `srand32(seed)` (period 4.29 billion) for procedural world/map generation.
+  * **Configurable Multiplexer:** Allow user override of `PLEX_COUNT` via `#ifndef PLEX_COUNT` and add runtime `plex_count` limiter to skip inactive virtual sprites during sorting.
+  * **Fast `strlen()`:** Emit Y-indexed 6502 loop (`LDY #$FF; !: INY; LDA (str),Y; BNE !-; TYA`) for strings $\le 255$ characters.
+  * **Fast 8-bit Decimal Print:** Direct `print_uchar_decimal()` dispatch using `div10u` (`F-13`).
+
 
 
 
