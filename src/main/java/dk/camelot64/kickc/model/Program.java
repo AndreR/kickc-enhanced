@@ -55,6 +55,8 @@ public class Program {
 
    /** Reserved ZP addresses that the compiler cannot use. PASS 0-5 (STATIC) */
    private List<Integer> reservedZps;
+   /** Zero-waste loop alignment threshold in bytes. PASS 0-5 (STATIC) */
+   private int loopAlignThreshold = 0;
    /** Segment type metadata configured via #pragma segment_type. PASS 0-5 (STATIC) */
    private final Map<String, SegmentTypeInfo> segmentTypes = new LinkedHashMap<>();
    /** Resource files that should be copied to the output folder to be compiled with the generated ASM. PASS 0-5 (STATIC) */
@@ -661,4 +663,12 @@ public class Program {
       return entryPointBlocks;
    }
 
+
+   public int getLoopAlignThreshold() {
+      return loopAlignThreshold;
+   }
+
+   public void setLoopAlignThreshold(int loopAlignThreshold) {
+      this.loopAlignThreshold = loopAlignThreshold;
+   }
 }

@@ -108,6 +108,9 @@ public class KickC implements Callable<Integer> {
    @CommandLine.Option(names = {"-Onocache"}, description = "Optimization Option. Disables the fragment synthesis cache. The cache is enabled by default.")
    private boolean optimizeNoFragmentCache = false;
 
+   @CommandLine.Option(names = {"-Oloopalign", "-Oloop-align"}, description = "Optimization Option. Enables zero-waste page boundary loop alignment with max byte threshold (e.g. 32). Default is disabled (0).")
+   private Integer optimizeLoopAlign = null;
+
    @CommandLine.Option(names = {"-Oliverangecallpath"}, description = "Optimization Option. Enables live ranges per call path optimization, which limits memory usage and code, but takes a lot of compile time.")
    private boolean optimizeLiveRangeCallPath = false;
 
@@ -332,6 +335,8 @@ public class KickC implements Callable<Integer> {
             compiler.disableLoopHeadConstant();
 
          compiler.setEnableLiveRangeCallPath(optimizeLiveRangeCallPath);
+         if(optimizeLoopAlign != null)
+            compiler.setLoopAlignThreshold(optimizeLoopAlign);
 
          if(warnFragmentMissing)
             compiler.setWarnFragmentMissing(true);

@@ -311,6 +311,29 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             }
             program.setSegmentType(segName, new SegmentTypeInfo(kind, id));
          }
+         case CParser.PRAGMA_LOOP_ALIGN -> {
+            if(ctx.pragmaParam().isEmpty()) {
+               this.program.setLoopAlignThreshold(32);
+            } else {
+               KickCParser.PragmaParamContext param = ctx.pragmaParam(0);
+               if(param instanceof KickCParser.PragmaParamNumberContext) {
+                  this.program.setLoopAlignThreshold(pragmaParamNumber(param).intValue());
+               } else {
+                  String val = pragmaParamName(param).toLowerCase();
+                  if("on".equals(val) || "true".equals(val) || "yes".equals(val)) {
+                     this.program.setLoopAlignThreshold(32);
+                  } else if("off".equals(val) || "false".equals(val) || "no".equals(val)) {
+                     this.program.setLoopAlignThreshold(0);
+                  } else {
+                     try {
+                        this.program.setLoopAlignThreshold(Integer.parseInt(val));
+                     } catch(NumberFormatException e) {
+                        throw new CompileError("Expected number or on/off for #pragma loop_align", new StatementSource(ctx));
+                     }
+                  }
+               }
+            }
+         }
          case CParser.PRAGMA_BANK -> {
             if(ctx.pragmaParam().size() != 2)
                throw new CompileError("#pragma expects two parameters!", new StatementSource(ctx));

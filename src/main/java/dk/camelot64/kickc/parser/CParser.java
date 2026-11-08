@@ -85,6 +85,10 @@ public class CParser {
      */
     public static final String PRAGMA_SEGMENT_TYPE = "segment_type";
     /**
+     * #pragma loop_align(threshold) specifies maximum byte size of tight loops for zero-waste page boundary alignment.
+     */
+    public static final String PRAGMA_LOOP_ALIGN = "loop_align";
+    /**
      * #pragma start_address(...) specifies the start address of the program.
      */
     public static final String PRAGMA_START_ADDRESS = "start_address";

@@ -38,7 +38,7 @@ public class Pass5DoubleJumpElimination extends Pass5AsmOptimization {
                currentLabels.add(((AsmLabel) line).getLabel());
             } else if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) {
                // ignore
-            } else if(line instanceof AsmBasicUpstart || line instanceof AsmDataNumeric || line instanceof AsmDataZeroFill || line instanceof AsmDataString || line instanceof AsmDataAlignment || line instanceof AsmSetPc || line instanceof AsmInlineKickAsm|| line instanceof AsmSetEncoding|| line instanceof AsmSetCpu|| line instanceof AsmDataKickAsm|| line instanceof AsmSegmentDef|| line instanceof AsmSegment|| line instanceof AsmFile) {
+            } else if(line instanceof AsmBasicUpstart || line instanceof AsmDataNumeric || line instanceof AsmDataZeroFill || line instanceof AsmDataString || line instanceof AsmDataAlignment || line instanceof AsmLoopAlign || line instanceof AsmSetPc || line instanceof AsmInlineKickAsm|| line instanceof AsmSetEncoding|| line instanceof AsmSetCpu|| line instanceof AsmDataKickAsm|| line instanceof AsmSegmentDef|| line instanceof AsmSegment|| line instanceof AsmFile) {
                currentLabels.clear();
             } else if(line instanceof AsmInstruction) {
                if(!currentLabels.isEmpty()) {

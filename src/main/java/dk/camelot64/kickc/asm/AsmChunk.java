@@ -331,6 +331,7 @@ public class AsmChunk {
             line instanceof AsmDataZeroFill ||
             line instanceof AsmDataString ||
             line instanceof AsmDataAlignment ||
+            line instanceof AsmLoopAlign ||
             (line instanceof AsmInlineKickAsm && !line.getAsm().contains(".pc"));
    }
 

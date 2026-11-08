@@ -41,6 +41,18 @@ public class Compiler {
 
    /** Disable the long branch fix pass. */
    private boolean disableLongBranchFix = false;
+   private int loopAlignThreshold = 0;
+
+   public int getLoopAlignThreshold() {
+      return loopAlignThreshold;
+   }
+
+   public void setLoopAlignThreshold(int loopAlignThreshold) {
+      this.loopAlignThreshold = loopAlignThreshold;
+      if(this.program != null) {
+         this.program.setLoopAlignThreshold(loopAlignThreshold);
+      }
+   }
 
    /**
     * Enable loop head constant optimization. It identified whenever a while()/for() has a constant condition on the first iteration and rewrites it.
@@ -860,6 +872,16 @@ public class Compiler {
       }
       long tOptElapsed = System.currentTimeMillis() - tOptStart;
       System.out.println(String.format("   [PASS5] Peephole Optimizations (%d rounds): %6.2f s", pass5Rounds, tOptElapsed / 1000.0));
+
+      if(program.getLoopAlignThreshold() > 0) {
+         long tAlignStart = System.currentTimeMillis();
+         boolean aligned = new Pass5ZeroWasteLoopAlignment(program).optimize();
+         long tAlignElapsed = System.currentTimeMillis() - tAlignStart;
+         if(getLog().isSysOut() || getLog().isVerboseAsmOptimize()) {
+            getLog().append("Zero-waste loop alignment pass completed (modified=" + aligned + ", threshold=" + program.getLoopAlignThreshold() + ")");
+         }
+         System.out.println(String.format("   [PASS5] Loop Alignment (thresh=%d):     %6.2f s (aligned=%b)", program.getLoopAlignThreshold(), tAlignElapsed / 1000.0, aligned));
+      }
 
       long tReindexStart = System.currentTimeMillis();
       new Pass5ReindexAsmLines(program).optimize();
