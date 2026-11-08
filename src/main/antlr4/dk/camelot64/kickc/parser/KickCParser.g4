@@ -40,6 +40,7 @@ decl
     | enumDef ';'
     | pragma
     | typeDef ';'
+    | staticAssert ';'
     ;
 
 declVariables
@@ -122,6 +123,10 @@ enumMember
     :   NAME ( '=' expr )?
     ;
 
+staticAssert
+    : STATIC_ASSERT PAR_BEGIN expr (COMMA STRING)? PAR_END
+    ;
+
 declFunction
     : declType declarator CURLY_BEGIN stmtSeq? CURLY_END
     ;
@@ -187,6 +192,7 @@ stmt
     | CONTINUE ';' #stmtContinue
     | ASM asmDirectives? CURLY_BEGIN asmLines ASM_CURLY_END #stmtAsm
     | kasmContent #stmtDeclKasm
+    | staticAssert ';' #stmtStaticAssert
     | ';' #stmtEmpty
     | NAME COLON #stmtLabel
     | GOTO NAME ';' #stmtGoto

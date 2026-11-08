@@ -1,6 +1,7 @@
 package dk.camelot64.kickc.passes.calcs;
 
 import dk.camelot64.kickc.model.ControlFlowBlock;
+import dk.camelot64.kickc.model.StaticAssert;
 import dk.camelot64.kickc.model.Graph;
 import dk.camelot64.kickc.model.Program;
 import dk.camelot64.kickc.model.VariableReferenceInfos;
@@ -70,6 +71,15 @@ public class PassNCalcVariableReferenceInfos extends PassNCalcBase<VariableRefer
                      references.add(new VariableReferenceInfos.ReferenceInSymbol((SymbolVariableRef) referencingVar.getRef(), VariableReferenceInfos.ReferenceToSymbolVar.ReferenceType.USE, referencedVar));
                   }
                });
+      }
+      // Gather symbols referenced in static assertions
+      for(StaticAssert staticAssert : getProgram().getStaticAsserts()) {
+         Collection<SymbolVariableRef> referencedInAssert = getReferenced(staticAssert.getCondition());
+         for(SymbolVariableRef ref : referencedInAssert) {
+            symbolVarReferences.putIfAbsent(ref, new ArrayList<>());
+            Collection<VariableReferenceInfos.ReferenceToSymbolVar> references = symbolVarReferences.get(ref);
+            references.add(new VariableReferenceInfos.ReferenceInSymbol(ref, VariableReferenceInfos.ReferenceToSymbolVar.ReferenceType.USE, ref));
+         }
       }
       return new VariableReferenceInfos(symbolVarReferences, blockVarReferences, statementVarReferences);
    }

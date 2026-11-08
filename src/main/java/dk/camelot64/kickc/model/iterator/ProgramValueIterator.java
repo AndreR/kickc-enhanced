@@ -1,6 +1,7 @@
 package dk.camelot64.kickc.model.iterator;
 
 import dk.camelot64.kickc.model.ControlFlowBlock;
+import dk.camelot64.kickc.model.StaticAssert;
 import dk.camelot64.kickc.model.Graph;
 import dk.camelot64.kickc.model.Program;
 import dk.camelot64.kickc.model.statements.*;
@@ -28,6 +29,9 @@ public class ProgramValueIterator {
    public static void execute(Program program, ProgramValueHandler handler) {
       execute(program.getScope(), handler);
       execute(program.getGraph(), handler);
+      for(StaticAssert staticAssert : program.getStaticAsserts()) {
+         execute(new ProgramValue.StaticAssertCondition(staticAssert), handler, null, null, null);
+      }
    }
 
    /**

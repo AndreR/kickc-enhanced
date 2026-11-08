@@ -2263,6 +2263,23 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    }
 
    @Override
+   public Object visitStaticAssert(KickCParser.StaticAssertContext ctx) {
+      RValue condition = (RValue) visit(ctx.expr());
+      String message = null;
+      if(ctx.STRING() != null) {
+         String strText = ctx.STRING().getText();
+         message = strText.substring(1, strText.lastIndexOf('"'));
+      }
+      program.addStaticAssert(new StaticAssert(condition, message, new StatementSource(ctx)));
+      return null;
+   }
+
+   @Override
+   public Object visitStmtStaticAssert(KickCParser.StmtStaticAssertContext ctx) {
+      return visitStaticAssert(ctx.staticAssert());
+   }
+
+   @Override
    public Void visitStmtReturn(KickCParser.StmtReturnContext ctx) {
       Procedure procedure = getCurrentProcedure();
       KickCParser.CommaExprContext exprCtx = ctx.commaExpr();
@@ -2777,6 +2794,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    public Object visitExprSizeOf(KickCParser.ExprSizeOfContext ctx) {
       // sizeof(expression) - add a unary expression to be resolved later
       RValue child = (RValue) this.visit(ctx.expr());
+      if(child instanceof ConstantValue) {
+         return new ConstantUnary(Operators.SIZEOF, (ConstantValue) child);
+      }
       Variable tmpVar = addIntermediateVar();
       SymbolVariableRef tmpVarRef = tmpVar.getRef();
       Statement stmt = new StatementAssignment((LValue) tmpVarRef, Operators.SIZEOF, child, true, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx)));
@@ -2795,6 +2815,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    @Override
    public Object visitExprCountOf(KickCParser.ExprCountOfContext ctx) {
       RValue child = (RValue) this.visit(ctx.expr());
+      if(child instanceof ConstantValue) {
+         return new ConstantUnary(Operators.COUNTOF, (ConstantValue) child);
+      }
       Variable tmpVar = addIntermediateVar();
       SymbolVariableRef tmpVarRef = tmpVar.getRef();
       Statement stmt = new StatementAssignment((LValue) tmpVarRef, Operators.COUNTOF, child, true, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx)));

@@ -671,4 +671,14 @@ public class Program {
    public void setLoopAlignThreshold(int loopAlignThreshold) {
       this.loopAlignThreshold = loopAlignThreshold;
    }
+
+   private List<StaticAssert> staticAsserts = new ArrayList<>();
+
+   public List<StaticAssert> getStaticAsserts() {
+      return staticAsserts;
+   }
+
+   public void addStaticAssert(StaticAssert staticAssert) {
+      this.staticAsserts.add(staticAssert);
+   }
 }

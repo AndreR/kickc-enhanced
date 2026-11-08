@@ -414,6 +414,7 @@ public class Compiler {
       optimizations.add(new PassNAddTypeConversionAssignment(program, false));
       optimizations.add(new PassNTypeIdSimplification(program));
       optimizations.add(new PassNSizeOfSimplification(program));
+      optimizations.add(new Pass2AssertStaticAsserts(program));
       optimizations.add(new PassNStatementIndices(program));
       optimizations.add(() -> {
          program.clearVariableReferenceInfos();
@@ -641,6 +642,7 @@ public class Compiler {
       new Pass3AssertRValues(program).check();
       new Pass3AssertNoNumbers(program).check();
       new Pass3AssertConstants(program).check();
+      new Pass3AssertStaticAsserts(program).check();
       new Pass3AssertArrayLengths(program).check();
       new Pass3AssertNoMulDivMod(program).check();
       // Phi lifting ensures that all variables in phi-blocks are in different live range equivalence classes

@@ -1,6 +1,7 @@
 package dk.camelot64.kickc.model.iterator;
 
 import dk.camelot64.kickc.model.ControlFlowBlock;
+import dk.camelot64.kickc.model.StaticAssert;
 import dk.camelot64.kickc.model.statements.*;
 import dk.camelot64.kickc.model.symbols.Procedure;
 import dk.camelot64.kickc.model.symbols.Variable;
@@ -1138,4 +1139,22 @@ public interface ProgramValue {
       }
    }
 
+
+   class StaticAssertCondition implements ProgramValue {
+      private final StaticAssert staticAssert;
+
+      public StaticAssertCondition(StaticAssert staticAssert) {
+         this.staticAssert = staticAssert;
+      }
+
+      @Override
+      public Value get() {
+         return staticAssert.getCondition();
+      }
+
+      @Override
+      public void set(Value value) {
+         staticAssert.setCondition((RValue) value);
+      }
+   }
 }
