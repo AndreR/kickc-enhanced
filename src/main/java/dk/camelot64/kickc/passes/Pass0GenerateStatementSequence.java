@@ -1228,6 +1228,106 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return null;
    }
 
+   private boolean isLutCall(KickCParser.ExprContext expr) {
+      if(expr instanceof KickCParser.ExprCallContext) {
+         KickCParser.ExprCallContext callCtx = (KickCParser.ExprCallContext) expr;
+         if(callCtx.expr() instanceof KickCParser.ExprIdContext) {
+            String name = callCtx.expr().getText();
+            return "__builtin_lut".equals(name) || "lut".equals(name);
+         }
+      }
+      return false;
+   }
+
+   private Object handleDeclVariableInitLut(KickCParser.DeclVariableInitExprContext ctx, KickCParser.ExprCallContext callCtx, StatementSource declSource) {
+      String varName = varDecl.getVarName();
+      SymbolType effectiveType = varDecl.getEffectiveType();
+      if(!(effectiveType instanceof SymbolTypePointer) || ((SymbolTypePointer) effectiveType).getArraySpec() == null) {
+         varDecl.exitVar();
+         throw new CompileError("__builtin_lut only supported for array initializers, found " + effectiveType.toCDecl(), declSource);
+      }
+      SymbolTypePointer ptrType = (SymbolTypePointer) effectiveType;
+      ArraySpec arraySpec = ptrType.getArraySpec();
+      SymbolType elementType = ptrType.getElementType();
+
+      KickCParser.ParameterListContext paramList = callCtx.parameterList();
+      if(paramList == null || paramList.expr().size() != 2) {
+         varDecl.exitVar();
+         throw new CompileError("__builtin_lut takes exactly 2 arguments: (size, expression)", declSource);
+      }
+
+      RValue sizeRVal = (RValue) this.visit(paramList.expr(0));
+      Long lutSize = evaluateConstantInteger(sizeRVal);
+      if(lutSize == null || lutSize <= 0) {
+         varDecl.exitVar();
+         throw new CompileError("__builtin_lut size must be a positive compile-time constant integer", declSource);
+      }
+
+      if(arraySpec.getArraySize() != null) {
+         Long declaredSize = evaluateConstantInteger(arraySpec.getArraySize());
+         if(declaredSize != null && declaredSize.longValue() != lutSize.longValue()) {
+            varDecl.exitVar();
+            throw new CompileError("Array declared size " + declaredSize + " does not match __builtin_lut size " + lutSize, declSource);
+         }
+      } else {
+         arraySpec.setArraySize(new ConstantInteger(lutSize));
+      }
+
+      KickCParser.ExprContext exprCtx = paramList.expr(1);
+      String exprText;
+      try {
+         BufferedTokenStream preprocessedTokenStream = cParser.getPreprocessedTokenStream();
+         exprText = preprocessedTokenStream.getText(exprCtx.start, exprCtx.stop);
+      } catch(Exception e) {
+         exprText = exprCtx.getText();
+      }
+
+      // Strip redundant C type casts like (uint8_t), (char), (int), etc.
+      exprText = exprText.replaceAll("\\(\\s*(uint[0-9]+_t|int[0-9]+_t|unsigned\\s+char|signed\\s+char|char|unsigned\\s+int|signed\\s+int|int|unsigned\\s+short|signed\\s+short|short|unsigned\\s+long|signed\\s+long|long|word|byte|dword|sbyte)\\s*\\)", "");
+      exprText = exprText.replaceAll("\\bM_PI\\b", "PI");
+
+      String kickAsmCode;
+      int elementSizeBytes = elementType.getSizeBytes();
+      if(elementSizeBytes == 1) {
+         kickAsmCode = ".fill " + lutSize + ", " + exprText;
+      } else if(elementSizeBytes == 2) {
+         kickAsmCode = ".fillword " + lutSize + ", " + exprText;
+      } else if(elementSizeBytes == 4) {
+         kickAsmCode = ".for(var i=0; i<" + lutSize + "; i++) .dword " + exprText;
+      } else {
+         varDecl.exitVar();
+         throw new CompileError("__builtin_lut does not support element type " + elementType.toCDecl(), declSource);
+      }
+
+      ConstantArrayKickAsm constantArrayKickAsm = new ConstantArrayKickAsm(
+         elementType,
+         kickAsmCode,
+         Collections.emptyList(),
+         arraySpec.getArraySize()
+      );
+
+      final List<Directive> effectiveDirectives = varDecl.getDeclDirectives();
+      final List<Comment> declComments = varDecl.getDeclComments();
+      varDecl.exitVar();
+
+      String segData = program.isLibraryFile(declSource != null ? declSource.getFileName() : null) ? Scope.SEGMENT_DATA_DEFAULT : currentSegmentData;
+      VariableBuilder varBuilder = new VariableBuilder(varName, getCurrentScope(), false, false, effectiveType, effectiveDirectives, segData, program.getTargetPlatform().getVariableBuilderConfig());
+      Variable variable = varBuilder.build();
+
+      if(program.isSegmentRom(variable.getDataSegment())) {
+         boolean isGlobalOrStatic = ScopeRef.ROOT.equals(variable.getScope().getRef()) || variable.isPermanent();
+         if(!isGlobalOrStatic) {
+            variable.setDataSegment(Scope.SEGMENT_DATA_DEFAULT);
+         } else if(!variable.isNoModify() && !variable.isKindConstant() && !variable.isDeclarationOnly()) {
+            throw new CompileError("Cannot allocate non-const variable '" + varName + "' in read-only ROM segment '" + variable.getDataSegment() + "'", declSource);
+         }
+      }
+
+      variable.setInitValue(getConstInitValue(constantArrayKickAsm, null, declSource));
+      variable.setComments(ensureUnusedComments(declComments));
+      return null;
+   }
+
    @Override
    public Object visitDeclVariableInitExpr(KickCParser.DeclVariableInitExprContext ctx) {
       this.visit(ctx.declarator());
@@ -1235,6 +1335,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       KickCParser.ExprContext initializer = ctx.expr();
       StatementSource declSource = new StatementSource((ParserRuleContext) ctx.parent.parent);
       try {
+         if(isLutCall(initializer)) {
+            return handleDeclVariableInitLut(ctx, (KickCParser.ExprCallContext) initializer, declSource);
+         }
          final SymbolType effectiveType = varDecl.getEffectiveType();
          if(effectiveType instanceof SymbolTypeProcedure) {
             // Declare the procedure
@@ -3213,6 +3316,8 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             LValue result = (LValue) addIntermediateVar().getRef();
             addStatement(new StatementCall(result, procedureName, parameters, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
             return result;
+         } else if("__builtin_lut".equals(procedureName) || "lut".equals(procedureName)) {
+            throw new CompileError("__builtin_lut can only be used to initialize array declarations", new StatementSource(ctx));
          } else if("delay_cycles".equals(procedureName) || "__builtin_delay_cycles".equals(procedureName)) {
             if(parameters.size() != 1) {
                throw new CompileError(procedureName + "() takes exactly 1 argument (number of cycles)", new StatementSource(ctx));
@@ -3224,38 +3329,39 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             if(cycles < 0) {
                throw new CompileError(procedureName + "() cycle count cannot be negative: " + cycles, new StatementSource(ctx));
             }
+            ConstantCastValue voidVal = new ConstantCastValue(new SymbolTypePointer(SymbolType.VOID), new ConstantInteger(0L));
+            consumeExpr(voidVal);
+            if(cycles == 0) {
+               return voidVal;
+            }
             if(cycles == 1) {
                throw new CompileError(procedureName + "(1) is impossible on 6502: minimum instruction duration is 2 cycles", new StatementSource(ctx));
             }
-            if(cycles > 0) {
-               long remaining = cycles;
-               StringBuilder kickAsmCode = new StringBuilder();
-               long bytes = 0;
-               CpuClobber clobber = CpuClobber.CLOBBER_NONE;
-               if(remaining % 2 != 0) {
-                  kickAsmCode.append("bit $00\n");
-                  bytes += 2;
-                  remaining -= 3;
-                  clobber = new CpuClobber("nzv");
-               }
-               long numNops = remaining / 2;
-               for(int i = 0; i < numNops; i++) {
-                  kickAsmCode.append("nop\n");
-                  bytes++;
-               }
-               StatementKickAsm statementKickAsm = new StatementKickAsm(
-                  kickAsmCode.toString(),
-                  new ConstantInteger(bytes, SymbolType.NUMBER),
-                  new ConstantInteger(cycles, SymbolType.NUMBER),
-                  java.util.Collections.emptyList(),
-                  clobber,
-                  new StatementSource(ctx),
-                  ensureUnusedComments(getCommentsSymbol(ctx))
-               );
-               addStatement(statementKickAsm);
+            long remaining = cycles;
+            StringBuilder kickAsmCode = new StringBuilder();
+            long bytes = 0;
+            CpuClobber clobber = CpuClobber.CLOBBER_NONE;
+            if(remaining % 2 != 0) {
+               kickAsmCode.append("bit $00\n");
+               bytes += 2;
+               remaining -= 3;
+               clobber = new CpuClobber("nzv");
             }
-            ConstantCastValue voidVal = new ConstantCastValue(new SymbolTypePointer(SymbolType.VOID), new ConstantInteger(0L));
-            consumeExpr(voidVal);
+            long numNops = remaining / 2;
+            for(int i = 0; i < numNops; i++) {
+               kickAsmCode.append("nop\n");
+               bytes++;
+            }
+            StatementKickAsm statementKickAsm = new StatementKickAsm(
+               kickAsmCode.toString(),
+               new ConstantInteger(bytes, SymbolType.NUMBER),
+               new ConstantInteger(cycles, SymbolType.NUMBER),
+               java.util.Collections.emptyList(),
+               clobber,
+               new StatementSource(ctx),
+               ensureUnusedComments(getCommentsSymbol(ctx))
+            );
+            addStatement(statementKickAsm);
             return voidVal;
          }
       }
