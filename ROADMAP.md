@@ -19,7 +19,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-## 2. Feature Matrix (Strictly Sequenced F-00 to F-42)
+## 2. Feature Matrix (Strictly Sequenced F-00 to F-44)
 
 | ID | Category | Feature Description | Origin / Standard | Status |
 | :---: | :--- | :--- | :---: | :---: |
@@ -66,6 +66,8 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-40** | Library | Library: `conio-cbm-shared.c` Performance & C23 `bool` Modernization | CBM Library | ⚪ Planned |
 | **F-41** | Library | Library: `c64-bitmap.c` ROM Safety Fix & 8-Bit Y Bresenham Routine | C64 Library | ⚪ Planned |
 | **F-42** | Library | Library: `printf.c` / `sprintf.c` 8/16-Bit Fast-Path Dispatch | 6502 Library | ⚪ Planned |
+| **F-43** | Library | Library Bugfix: `stdint.h` & `limits.h` (32-Bit Limits, Macro Conversion, `limits.h`) | ISO C Library | ⚪ Planned |
+| **F-44** | Library | Library Bugfix: `sine.c` (`sin16s_gen2` Precedence) & `c64-tod.c` (AM/PM Masking) | 6502 Library | ⚪ Planned |
 
 ---
 
@@ -405,4 +407,30 @@ This document outlines the compiler architecture, completed milestones, planned 
     * 16-bit integer formats (`%u`, `%d`, `%x`) dispatch directly to 16-bit `utoa()`.
     * Only 32-bit formats (`%lu`, `%ld`, `%lx`) invoke full 32-bit `ultoa()`.
   * Reduces cycle count by up to 70% when printing byte and word values.
+
+---
+
+### Feature 43: Library Bugfix: `stdint.h` & `limits.h` (32-Bit Limits, Macro Conversion, `limits.h`)
+* **Problem:**
+  1. `UINT32_MAX` in `stdint.h` and `ULONG_MAX` in `limits.c` are defined as `4194304` ($2^{22}$)! Correct value is `4294967295UL` ($2^{32}-1$).
+  2. `INT32_MIN` and `LONG_MIN` are defined as `-2097152` ($-2^{21}$), while `INT32_MAX` and `LONG_MAX` are defined as `2097151` ($2^{21}-1$)! Correct values are `-2147483648L` and `2147483647L`.
+  3. All limits are declared as `const` variables instead of preprocessor `#define` macros, violating ISO C standards and preventing use in constant expressions (`#if`, `switch`, array dimensions).
+  4. The standard header `include/limits.h` is completely missing from the include directory.
+* **Solution & Optimization:**
+  * Correct all 32-bit boundary values to exact 32-bit limits (`4294967295UL`, `2147483647L`, `-2147483648L`).
+  * Convert all limit constants in `<stdint.h>` and `<limits.h>` to standard `#define` macros.
+  * Create `include/limits.h` with complete ISO C fundamental type limits.
+
+---
+
+### Feature 44: Library Bugfix: `sine.c` (`sin16s_gen2` Precedence) & `c64-tod.c` (AM/PM Masking)
+* **Problem:**
+  1. `sine.c` line 44: `signed int offs = min + ampl>>1;` suffers from C operator precedence (`+` precedes `>>`). It evaluates as `(min + ampl) >> 1` = `max >> 1`, causing scaled sine generation (`sin16s_gen2`) to calculate wrong midpoints for any non-zero `min`.
+  2. `c64-tod.c` line 37: `tod_str()` executes `tod_buffer[0] = '0' + (tod.HOURS >> 4);` without masking bit 7 (AM/PM flag on MOS 6526 CIA). During PM (after 12:00), bit 7 is set ($80), rendering afternoon hours as `"81:00:00"` or `"92:00:00"`.
+  3. `stdlib.c` line 53: `bsearch16u()` returns `items - 1` (out-of-bounds before array) when search key is smaller than the first item.
+* **Solution & Optimization:**
+  * Fix operator precedence in `sine.c`: `signed int offs = min + (ampl >> 1);`.
+  * Mask AM/PM bit in `c64-tod.c`: `tod_buffer[0] = '0' + ((tod.HOURS & 0x1f) >> 4);`.
+  * Add underflow boundary check in `bsearch16u()` to safely return `items` or `NULL`.
+
 
