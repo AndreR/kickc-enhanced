@@ -46,4 +46,10 @@ inline void __builtin_nop();
 /// If you use VICE or C64Debugger they can automatically load the breakpoints when starting.
 inline void BREAK();
 
+
+/// Cycle-exact delay for N clock cycles (compile-time constant >= 2, or 0 for no-op).
+/// Synthesizes optimal register-preserving instruction sequence (NOP, BIT $00).
+__intrinsic void delay_cycles(const unsigned long cycles);
+__intrinsic void __builtin_delay_cycles(const unsigned long cycles);
+
 #endif

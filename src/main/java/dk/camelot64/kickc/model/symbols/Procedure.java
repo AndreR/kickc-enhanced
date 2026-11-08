@@ -52,7 +52,9 @@ public class Procedure extends Scope {
          Pass1PrintfIntrinsicRewrite.INTRINSIC_PRINTF_NAME,
          Pass1PrintfIntrinsicRewrite.INTRINSIC_SNPRINTF_NAME,
          Pass1PrintfIntrinsicRewrite.INTRINSIC_SPRINTF_NAME,
-         Pass1ByteXIntrinsicRewrite.INTRINSIC_MAKELONG4
+         Pass1ByteXIntrinsicRewrite.INTRINSIC_MAKELONG4,
+         "delay_cycles",
+         "__builtin_delay_cycles"
    );
 
    public Bank getBank() {

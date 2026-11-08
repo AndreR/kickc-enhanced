@@ -3213,6 +3213,50 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             LValue result = (LValue) addIntermediateVar().getRef();
             addStatement(new StatementCall(result, procedureName, parameters, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
             return result;
+         } else if("delay_cycles".equals(procedureName) || "__builtin_delay_cycles".equals(procedureName)) {
+            if(parameters.size() != 1) {
+               throw new CompileError(procedureName + "() takes exactly 1 argument (number of cycles)", new StatementSource(ctx));
+            }
+            Long cycles = evaluateConstantInteger(parameters.get(0));
+            if(cycles == null) {
+               throw new CompileError(procedureName + "() requires a compile-time constant cycle count", new StatementSource(ctx));
+            }
+            if(cycles < 0) {
+               throw new CompileError(procedureName + "() cycle count cannot be negative: " + cycles, new StatementSource(ctx));
+            }
+            if(cycles == 1) {
+               throw new CompileError(procedureName + "(1) is impossible on 6502: minimum instruction duration is 2 cycles", new StatementSource(ctx));
+            }
+            if(cycles > 0) {
+               long remaining = cycles;
+               StringBuilder kickAsmCode = new StringBuilder();
+               long bytes = 0;
+               CpuClobber clobber = CpuClobber.CLOBBER_NONE;
+               if(remaining % 2 != 0) {
+                  kickAsmCode.append("bit $00\n");
+                  bytes += 2;
+                  remaining -= 3;
+                  clobber = new CpuClobber("nzv");
+               }
+               long numNops = remaining / 2;
+               for(int i = 0; i < numNops; i++) {
+                  kickAsmCode.append("nop\n");
+                  bytes++;
+               }
+               StatementKickAsm statementKickAsm = new StatementKickAsm(
+                  kickAsmCode.toString(),
+                  new ConstantInteger(bytes, SymbolType.NUMBER),
+                  new ConstantInteger(cycles, SymbolType.NUMBER),
+                  java.util.Collections.emptyList(),
+                  clobber,
+                  new StatementSource(ctx),
+                  ensureUnusedComments(getCommentsSymbol(ctx))
+               );
+               addStatement(statementKickAsm);
+            }
+            ConstantCastValue voidVal = new ConstantCastValue(new SymbolTypePointer(SymbolType.VOID), new ConstantInteger(0L));
+            consumeExpr(voidVal);
+            return voidVal;
          }
       }
 
@@ -3602,6 +3646,35 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return commentBlocks.get(commentBlocks.size() - 1);
    }
 
+
+   private Long evaluateConstantInteger(RValue rValue) {
+      if(rValue instanceof ConstantInteger) {
+         return ((ConstantInteger) rValue).getValue();
+      }
+      if(rValue instanceof ConstantValue) {
+         try {
+            ConstantLiteral lit = ((ConstantValue) rValue).calculateLiteral(program.getScope());
+            if(lit instanceof ConstantInteger) {
+               return ((ConstantInteger) lit).getValue();
+            }
+         } catch(Exception e) {
+            // fall through
+         }
+      }
+      if(rValue instanceof SymbolVariableRef) {
+         Symbol sym = getCurrentScope().findSymbol(((SymbolVariableRef) rValue).getLocalName());
+         if(sym == null) {
+            sym = program.getScope().findSymbol(((SymbolVariableRef) rValue).getFullName());
+         }
+         if(sym instanceof Variable && ((Variable) sym).isKindConstant()) {
+            RValue initValue = ((Variable) sym).getInitValue();
+            if(initValue != null) {
+               return evaluateConstantInteger(initValue);
+            }
+         }
+      }
+      return null;
+   }
 
    private static class PrePostModifierHandler extends KickCParserBaseVisitor<Void> {
 
