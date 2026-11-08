@@ -43,11 +43,11 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-17** | Preprocessor | `#embed` Directive for Direct Binary Asset Embedding | C23 | ⚪ Planned |
 | **F-18** | Types | Typed 8-Bit Enumerations (`enum : uint8_t`) | C23 | ✅ Completed |
 | **F-19** | Operators | Compile-Time Array Length Operator `countof()` | C2Y (C29) | ✅ Completed |
-| **F-20** | Controlflow | Named Loops: `break label;` & `continue label;` | C2Y (C29) | ⚪ Planned |
-| **F-21** | Safety | Compile-Time Assertions (`static_assert` / `_Static_assert`) | C11 / C23 | ⚪ Planned |
+| **F-20** | Controlflow | Named Loops: `break label;` & `continue label;` | C2Y (C29) | ✅ Completed |
+| **F-21** | Safety | Compile-Time Assertions (`static_assert` / `_Static_assert`) | C11 / C23 | ✅ Completed |
 | **F-22** | Metaprog | `_Generic` Type-Dispatch for Polymorphic 8/16-Bit Macros | C11 | ⚪ Planned |
 | **F-23** | Lexer | Digit Separators (`0b1100_0011`, `1_000`) & C23 Keywords (`nullptr`, `{}`) | C23 | ✅ Completed |
-| **F-24** | Controlflow | `if`-Statements with Initializers for Strict Scope Limitation | C2Y (C29) | ⚪ Planned |
+| **F-24** | Controlflow | `if`- & `switch`-Statements with Initializers | C2Y (C29) | ✅ Completed |
 | **F-25** | ABI / Opt | Auto Carry-Flag Boolean Returns (`__carry` / Auto-Carry ABI) | 6502 Idiom | ⚪ Planned |
 | **F-26** | ABI / Opt | Leaf-Function Automatic Register Parameter Passing (A, X, Y) | Calling Conv | ⚪ Planned |
 | **F-27** | Types | 8.8 Fixed-Point Data Type (`fixed8_8`) & 0-Cycle Shift Fusing | ISO TR 18037 | ⚪ Planned |
@@ -110,8 +110,9 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-### Feature 20: Named Loops: `break label;` & `continue label;` (C2Y / C29)
-* **Problem:** Breaking out of nested loops in C traditionally required either `goto` or auxiliary boolean flags. On 6502, auxiliary flags consume valuable Zero-Page registers and CPU cycles.
+### Feature 20: Named Loops: `break label;` & `continue label;` (C2Y / C29 / WG14 N3355)
+* **Status:** ✅ Completed (Commit `2e2b0a5d3`)
+* **Problem:** Breaking out of nested loops in C traditionally required either `goto` or auxiliary boolean flags. On 6502, auxiliary flags consume valuable Zero-Page registers and CPU cycles. Moreover, breaking out of an outer loop from inside a `switch` statement was previously impossible with plain `break;`.
 * **Syntax:**
   ```c
   outer: for (uint8_t y = 0; y < 25; ++y) {
@@ -121,17 +122,32 @@ This document outlines the compiler architecture, completed milestones, planned 
           }
       }
   }
+
+  outer_loop: for (uint8_t i = 0; i < 10; ++i) {
+      switch (status[i]) {
+          case 0xFF:
+              break outer_loop; // Directly exits the for-loop from within switch
+      }
+  }
   ```
-* **Compiler Integration:** Pass 3 CFG routes the break edge directly to the exit block of the designated loop, emitting a single 6502 branch or jump instruction.
+* **Compiler Integration:** Grammar updated for `BREAK NAME? ';'` and `CONTINUE NAME? ';'`. Pass 0 tracks loop labels across `for`, `while`, `do-while`, and `switch` statements on the `loopStack`. Break and continue jumps resolve directly to target loop labels without intermediate flag variables, saving code size and Zero-Page registers.
 
 ---
 
-### Feature 21: Compile-Time Assertions `static_assert` (C11 / C23)
+### Feature 21: Compile-Time Assertions `static_assert` & `_Static_assert` (C11 / C23)
+* **Status:** ✅ Completed (Commit `13d858467`)
 * **Syntax:**
   ```c
+  // C11 two-argument assertion with custom error message
   static_assert(sizeof(struct ActorState) <= 64, "ActorState exceeds allocated memory block!");
+
+  // C23 single-argument assertion
+  static_assert(100 > 50);
+
+  // C11 keyword synonym
+  _Static_assert(sizeof(int) == 2, "16-bit int required");
   ```
-* **Compiler Integration:** Evaluated during Pass 0/1 constant resolution, aborting compilation with clear error messages if violated.
+* **Compiler Integration:** Supported in both declaration and statement positions. Evaluated during Pass 2 constant evaluation for all `ConstantEnumerable` literal expressions (`ConstantInteger`, `ConstantBool`). `ProgramValue.StaticAssertCondition` and `ProgramValueIterator` ensure constant propagation reaches into assertions. `PassNCalcVariableReferenceInfos` protects referenced constants from premature dead-constant elimination in Pass 1. Generates 0 bytes of runtime code.
 
 ---
 
@@ -153,14 +169,22 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-### Feature 24: `if`-Statements with Initializers (C2Y / C29)
+### Feature 24: `if`- & `switch`-Statements with Initializers (C2Y / C29 / C++17)
+* **Status:** ✅ Completed (Commit `1b6ea5c04`)
 * **Syntax:**
   ```c
   if (uint8_t status = read_hardware_status(); status != 0) {
       handle_status(status);
+  } else {
+      fallback();
+  }
+  // 'status' is strictly out of scope here!
+
+  switch (uint8_t mode = get_mode(); mode) {
+      case 1: process_mode1(); break;
   }
   ```
-* **Compiler Integration:** Confines scope strictly to the conditional block in Pass 1, shortening live ranges and enabling aggressive Zero-Page register reuse in Pass 4.
+* **Compiler Integration:** Grammar extended with `ifInit` (`declVariables` or `commaExpr`) for both `if` and `switch`. Pass 0 automatically creates and pushes an isolated `BlockScope`, restricting variables to the statement body. Enables tighter live ranges in Pass 4, allowing immediate Zero-Page register coalescing for other variables.
 
 ---
 

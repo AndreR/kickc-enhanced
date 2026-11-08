@@ -60,6 +60,15 @@
   * **Optimized SSA & Alias Passes:** Variable-to-set indexing and fast phi check in `Pass2AliasElimination`, O(1) VarAssignments indexing, memoized `LoopDepthAnalysis`.
   * **Long Branch Guarding:** Guarded expensive ASM/symbol string conversions in `Pass5FixLongBranches` when verbose logging is inactive.
 
+* **Modern C Standards Track (C11 / C23 / C2Y):**  
+  Selectively incorporates high-leverage modern C language features with compile-time zero runtime overhead designed to solve acute challenges in 8-bit systems programming:
+  * **Compile-Time Array Size Operator `countof()` (C2Y N3169):** Evaluates exact element counts for arrays, types, structs, and string literals at compile time without runtime cycles or division (`countof(table)`). Formally rejects non-array pointer types to prevent subtle bugs.
+  * **Compile-Time Assertions `static_assert` & `_Static_assert` (C11 / C23):** Validates memory layout constraints, structure sizes, and constant invariants at compile time with 0-byte runtime overhead (`static_assert(sizeof(struct Actor) <= 64, "overflow")` and single-argument `static_assert(BUF_SIZE > 0)`).
+  * **Named Loops (`break label;` & `continue label;` – C2Y N3355):** Prefix loops with a label (`outer: for(...)`) and jump out or continue directly from deeply nested loops or `switch` statements without auxiliary flags or `goto`.
+  * **`if`- and `switch`-Statements with Initializers (C2Y / C++17):** Declarations inside the condition header (`if (uint8_t d = get_dist(); d < 10)`) are strictly block-scoped, allowing KickC's SSA live-range analyzer to immediately reuse Zero-Page registers for subsequent code.
+  * **Typed 8-Bit Enumerations (`enum : uint8_t` – C23):** Enforces 1-byte storage for enums, eliminating unwanted 16-bit integer promotion and saving hundreds of cycles in state machines and flag checks.
+  * **Digit Separators & C23 Literals (`0b1100_0011`, `1_000`, `nullptr`, `{}`):** Allows underscores in binary, hex, and decimal literals for error-free hardware bitmask notation, plus standard C23 `nullptr` and empty zero-initializers `{}` for structs and arrays.
+
 ---
 
 ## About KickC
