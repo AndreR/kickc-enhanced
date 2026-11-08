@@ -22,17 +22,36 @@ const unsigned int PI_u4f12 = 0x3244;
 // PI/2 in u[4.12] format
 const unsigned int PI_HALF_u4f12 = 0x1922;
 
-// Generate signed (large) unsigned int sine table - on the full -$7fff - $7fff range
+// Generate signed (large) unsigned int sine table - on the full - -  range
 // sintab - the table to generate into
 // wavelength - the number of sine points in a total sine wavelength (the size of the table)
 void sin16s_gen(signed int* sintab, unsigned int wavelength) {
-    // u[4.28] step = PI*2/wavelength
     unsigned long step = div32u16u(PI2_u4f28, wavelength); // u[4.28]
-    // Iterate over the table
-    unsigned long x = 0; // u[4.28]
-    for( unsigned int i=0; i<wavelength; i++) {
-        *sintab++ = sin16s(x);
-        x = x + step;
+    if ((wavelength & 3) == 0) {
+        // 4-quadrant symmetry: calculates Q1 once, mirrors to Q2, Q3, Q4 (~4x speedup)
+        unsigned int q = wavelength >> 2;
+        unsigned long x = 0;
+        sintab[0] = 0;
+        sintab[q << 1] = 0;
+        for (unsigned int i = 1; i < q; i++) {
+            x += step;
+            signed int val = sin16s(x);
+            sintab[i] = val;
+            sintab[(q << 1) - i] = val;
+            sintab[(q << 1) + i] = -val;
+            sintab[(q << 2) - i] = -val;
+        }
+        x += step;
+        signed int peak = sin16s(x);
+        sintab[q] = peak;
+        sintab[q * 3] = -peak;
+    } else {
+        // Fallback for non-multiples of 4
+        unsigned long x = 0;
+        for (unsigned int i = 0; i < wavelength; i++) {
+            *sintab++ = sin16s(x);
+            x = x + step;
+        }
     }
 }
 
@@ -40,32 +59,45 @@ void sin16s_gen(signed int* sintab, unsigned int wavelength) {
 // sintab - the table to generate into
 // wavelength - the number of sine points in a total sine wavelength (the size of the table)
 void sin16s_gen2(signed int* sintab, unsigned int wavelength, signed int min, signed int max) {
-    signed int ampl = max-min;
-    signed int offs = min + (ampl>>1); // ampl is always positive so shifting left does not alter the sign
-    // u[4.28] step = PI*2/wavelength
-    unsigned long step = div32u16u(PI2_u4f28, wavelength); // u[4.28]
-    // Iterate over the table
-    unsigned long x = 0; // u[4.28]
-    for( unsigned int i=0; i<wavelength; i++) {
-        *sintab++ = offs + (signed int)WORD1(mul16s(sin16s(x), ampl)); // The signed sin() has values [-7fff;7fff] = [-1/2 ; 1/2], so ampl*sin has the right amplitude
-        x = x + step;
+    sin16s_gen(sintab, wavelength);
+    signed int ampl = max - min;
+    signed int offs = min + (ampl >> 1);
+    for (unsigned int i = 0; i < wavelength; i++) {
+        sintab[i] = offs + (signed int)WORD1(mul16s(sintab[i], ampl));
     }
 }
 
-// Generate signed char sine table - on the full -$7f - $7f range
+// Generate signed char sine table - on the full - -  range
 // sintab - the table to generate into
 // wavelength - the number of sine points in a total sine wavelength (the size of the table)
 void sin8s_gen(signed char* sintab, unsigned int wavelength) {
-    // u[4.28] step = PI*2/wavelength
     unsigned int step = div16u(PI2_u4f12, wavelength); // u[4.12]
-    // Iterate over the table
-    unsigned int x = 0; // u[4.12]
-    for( unsigned int i=0; i<wavelength; i++) {
-        *sintab++ = sin8s(x);
-        x = x + step;
+    if ((wavelength & 3) == 0) {
+        // 4-quadrant symmetry for 8-bit table
+        unsigned int q = wavelength >> 2;
+        unsigned int x = 0;
+        sintab[0] = 0;
+        sintab[q << 1] = 0;
+        for (unsigned int i = 1; i < q; i++) {
+            x += step;
+            signed char val = sin8s(x);
+            sintab[i] = val;
+            sintab[(q << 1) - i] = val;
+            sintab[(q << 1) + i] = -val;
+            sintab[(q << 2) - i] = -val;
+        }
+        x += step;
+        signed char peak = sin8s(x);
+        sintab[q] = peak;
+        sintab[q * 3] = -peak;
+    } else {
+        unsigned int x = 0;
+        for (unsigned int i = 0; i < wavelength; i++) {
+            *sintab++ = sin8s(x);
+            x = x + step;
+        }
     }
 }
-
 // Calculate signed int sine sin(x)
 // x: unsigned long input u[4.28] in the interval $00000000 - PI2_u4f28
 // result: signed int sin(x) s[0.15] - using the full range  -$7fff - $7fff

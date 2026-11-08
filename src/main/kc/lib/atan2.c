@@ -24,10 +24,15 @@ unsigned int atan2_16(signed int x, signed int y) {
             // We found the correct angle!
             break;
         }
-        // Optimized shift of 2 values: xd=xi>>i; yd=yi>>i
+        // Optimized shift of 2 values: xd=xi>>i; yd=yi>>i (with byte-shift for >= 8)
         signed int xd = xi;
         signed int yd = yi;
         char shift = i;
+        if (shift >= 8) {
+            xd = (signed int)(signed char)BYTE1(xd);
+            yd = (signed int)(signed char)BYTE1(yd);
+            shift -= 8;
+        }
         while(shift>=2) {
             xd >>= 2;
             yd >>= 2;
