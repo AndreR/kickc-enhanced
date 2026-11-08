@@ -1,4 +1,4 @@
-﻿# KickC Enhanced – Compiler Architecture & Feature Roadmap
+# KickC Enhanced – Compiler Architecture & Feature Roadmap
 
 KickC Enhanced is an optimizing C-to-6502 cross-compiler designed to generate readable, ultra-compact, and cycle-efficient machine code for MOS 6502-family systems (such as the Commodore 64).
 
@@ -56,7 +56,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-30** | Timing | Cycle-Exact Delay Synthesizer (`delay_cycles(N)` in `<6502.h>`) | Hardware Timing | ✅ Completed |
 | **F-31** | Codegen | Pre-Indexed Zero-Page Addressing Optimization (`LDA ($zp,X)`) | 6502 Hardware | ✅ Completed |
 | **F-32** | Generator | Compile-Time Table Generator (`__builtin_lut` / Constexpr Arrays) | Tooling | ✅ Completed |
-| **F-33** | Types | ISO-C Bitfields in Structs (`uint8_t a:1, b:1;` for Packed Bools) | ISO C | ⚪ Planned |
+| **F-33** | Types | ISO-C Bitfields in Structs (`uint8_t a:1, b:1;` for Packed Bools) | ISO C | ✅ Completed |
 | **F-34** | Peephole | Pass-5 Bit-Test Optimization (`BIT`, `BMI`, `BPL` for Bit 7/6) | Pass 5 | ✅ Completed |
 | **F-35** | Codegen | Multi-Entry Byte-Skipping via `BIT $xxxx` (`.byte $2c`) | 6502 Idiom | ✅ Completed |
 | **F-36** | Types | Packed 4-Bit Nibble Arrays (`uint4_t` / Color-RAM Packing) | C64 Architecture | ⚪ Planned |
@@ -298,13 +298,14 @@ This document outlines the compiler architecture, completed milestones, planned 
   };
   ```
 * **Compiler Integration:**
-  * Implemented in `CParserVisitor` and Pass 1 AST member layout.
-  * Packs adjacent bitfields of the same underlying byte type into single bytes.
-  * Pass 4/5 automatically synthesizes minimal bitmask instructions:
-    * Read: `LDA byte; AND #mask; BNE` (or `LSR/ASL` for sub-byte integers).
-    * Set: `LDA byte; ORA #mask; STA byte`.
-    * Clear: `LDA byte; AND #~mask; STA byte`.
-  * Drastically reduces data structure RAM footprint for game entities.
+  * Implemented in ANTLR4 KickCParser.g4 (grammar rules for named and unnamed bitfields : expr).
+  * Variable symbol metadata stores itFieldWidth, itFieldOffset, and underlying container member name (__bf_N).
+  * StructDefinition and SymbolTypeStruct automatically calculate struct byte size and member offsets solely from physical storage containers, ensuring accurate sizeof and alignment.
+  * Pass 0 AST desugaring:
+    * Read: Extracts value via (container >> offset) & mask with branchless (val ^ signBit) - signBit sign extension for signed bitfields.
+    * Write: Synthesizes optimal bitmask operations container = (container & invMask) | insertBits, with specialized fast paths for boolean flags and constant values.
+    * Full support for pointer dereferencing (ptr->field), compound assignments (ptr->field += 2), and pre/post-increments (ield++).
+  * Verified bit-exact in headless VICE on port 6541 (Issue #34).
 
 ---
 
