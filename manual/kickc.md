@@ -643,6 +643,34 @@ for( char i: 0..255) {
 }
 ```
 
+### 2.4.8 Goto and Labels
+
+The `goto` statement performs an unconditional jump to a labeled statement within the same function. In accordance with standard C, labels have function scope and can be placed anywhere in the function body, including inside or outside nested blocks, loops, and conditional statements.
+
+A label is declared by an identifier followed by a colon: `label:`
+A jump is performed using: `goto label;`
+
+The compiler automatically generates optimal 6502 code:
+- Unconditional `goto` statements produce direct 16-bit `JMP` instructions (or are eliminated as fallthrough if the target directly follows in the code stream).
+- Conditional branches (`if (cond) goto label;`) are automatically optimized: short branches within -128 to +127 bytes use native 6502 branch opcodes, while long branches beyond 127 bytes are automatically relaxed to reverse-condition jumps in Pass 5.
+
+Example: Breaking out of deeply nested loops:
+
+```c
+char* const SCREEN = (char*)0x0400;
+for(char y: 0..24) {
+    for(char x: 0..39) {
+        if(SCREEN[y*40 + x] == '*') {
+            goto found;
+        }
+    }
+}
+return;
+
+found:
+print("found!");
+```
+
 ## 2.5 Functions
 
 Functions are named pieces of code that can be reused by calling them and passing different parameters.
