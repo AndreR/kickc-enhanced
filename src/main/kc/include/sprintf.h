@@ -21,6 +21,14 @@ int snprintf ( char * s, size_t n, const char * format, ... );
 /// @return The number of characters written not counting the terminating null character.
 int sprintf( char * s, const char * format, ... );
 
+/// Initialize the sprintf() state (unbounded buffer)
+void sprintf_init(char * s);
+
+/// Print a character into sprintf buffer
+/// Used by sprintf()
+/// @param c The character to print
+void sputc(char c);
+
 /// Initialize the snprintf() state
 /// @param s Pointer to a buffer where the resulting C-string is stored. The buffer should have a size of at least n characters.
 /// @param n Maximum number of bytes to be used in the buffer. The generated string has a length of at most n-1, leaving space for the additional terminating null character.
@@ -30,4 +38,3 @@ void snprintf_init(char * s, size_t n);
 /// Used by snprintf()
 /// @param c The character to print
 void snputc(char c);
-

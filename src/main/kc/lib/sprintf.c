@@ -1,4 +1,4 @@
-/// Implementation of snprintf
+/// Implementation of sprintf and snprintf
 
 /// Composes a string with the same text that would be printed if format was used on printf(),
 /// but instead of being printed, the content is stored as a C string in the buffer pointed by s
@@ -21,13 +21,28 @@ __intrinsic int snprintf ( char * s, size_t n, const char * format, ... );
 /// @return The number of characters written not counting the terminating null character.
 __intrinsic int sprintf( char * s, const char * format, ... );
 
+/// Current position in the sprintf buffer being filled
+char * __sprintf_buffer;
+
+/// Initialize the sprintf() state (unbounded buffer)
+void sprintf_init(char * s) {
+    __sprintf_buffer = s;
+}
+
+/// Print a character into sprintf buffer
+/// Used by sprintf()
+/// @param c The character to print
+void sputc(char c) {
+    *(__sprintf_buffer++) = c;
+}
+
 /// The capacity of the buffer (n passed to snprintf())
 /// Used to hold state while printing
-__mem volatile size_t __snprintf_capacity;
-// The number of chars that would have been filled when printing without capacity. Grows even after size>capacity.
+__mem size_t __snprintf_capacity;
+/// The number of chars that would have been filled when printing without capacity. Grows even after size>capacity.
 /// Used to hold state while printing
-__mem volatile size_t __snprintf_size;
-/// Current position in the buffer being filled ( initially *s passed to snprintf()
+__mem size_t __snprintf_size;
+/// Current position in the buffer being filled ( initially *s passed to snprintf() )
 /// Used to hold state while printing
 char * __snprintf_buffer;
 

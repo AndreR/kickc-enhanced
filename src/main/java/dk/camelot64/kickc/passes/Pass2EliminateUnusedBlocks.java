@@ -72,7 +72,7 @@ public class Pass2EliminateUnusedBlocks extends Pass2SsaOptimization {
             procedureGraph.remove(unusedBlock);
             Label label = getProgramScope().getLabel(unusedBlock);
             label.getScope().remove(label);
-            removePhiRValues(unusedBlock, procedureGraph, getProgram().getLog());
+            removePhiRValues(unusedBlock, getProgram());
             removedBlocks.add(unusedBlock);
             getLog().append("Removing unused block " + unusedBlock);
          } else if(unusedSymbol instanceof Procedure) {
@@ -104,6 +104,7 @@ public class Pass2EliminateUnusedBlocks extends Pass2SsaOptimization {
          LabelRef blockLabelRef = procedureBlock.getLabel();
          program.getLog().append("Removing unused procedure block " + blockLabelRef);
          procedureGraph.remove(blockLabelRef);
+         removePhiRValues(blockLabelRef, program);
          removedBlocks.add(blockLabelRef);
       }
       unusedProcedure.getScope().remove(unusedProcedure);

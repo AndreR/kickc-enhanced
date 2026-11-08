@@ -35,6 +35,11 @@ public class Pass1PrintfIntrinsicRewrite extends Pass2SsaOptimization {
    /** The snprintf routine used to print a raw char */
    private static final String SNPUTC = "snputc";
 
+   /** The sprintf routine used to init buffer */
+   private static final String SPRINTF_INIT = "sprintf_init";
+   /** The sprintf routine used to print a raw char */
+   private static final String SPUTC = "sputc";
+
    /** The printf routine used to print a raw string */
    private static final String SNPRINTF_INIT = "snprintf_init";
    /** The printf routine used to print a raw string */
@@ -98,9 +103,9 @@ public class Pass1PrintfIntrinsicRewrite extends Pass2SsaOptimization {
                   final RValue buffer = getParameterValue(callParameters, 0, call);
                   final RValue format = getParameterValue(callParameters, 1, call);
                   List<RValue> formatParameters = callParameters.subList(2, callParameters.size());
-                  addPrintfCall(SNPRINTF_INIT, Arrays.asList(buffer, new ConstantInteger(65535L, SymbolType.WORD)), stmtIt, call);
-                  addPrintfFormatStatements(stmtIt, call, format, formatParameters, SNPUTC);
-                  addPrintfCall(SNPUTC, Arrays.asList(new ConstantInteger(0L, SymbolType.BYTE)), stmtIt, call);
+                  addPrintfCall(SPRINTF_INIT, Arrays.asList(buffer), stmtIt, call);
+                  addPrintfFormatStatements(stmtIt, call, format, formatParameters, SPUTC);
+                  addPrintfCall(SPUTC, Arrays.asList(new ConstantInteger(0L, SymbolType.BYTE)), stmtIt, call);
                }
             }
          }
@@ -138,7 +143,7 @@ public class Pass1PrintfIntrinsicRewrite extends Pass2SsaOptimization {
       // [1-9][0-9]*          width (the minimum number of characters)
       // ("hh" | "l" )?       length (specifies the type of integer "hh": char "": int, "l": long)
       // [%diuxXoscp]         type (specifies the type of the parameter/output "d"/"i" decimal signed, "u": decimal unsigned, "x": hexadecimal unsigned (lowercase), "X": hexadecimal unsigned (uppercase), "o": octal unsigned, "s": string, "c": character, "p": pointer, "%": output "%" )
-      Pattern pattern = Pattern.compile("%([1-9][0-9]*[$])?([-+0#]*)([1-9][0-9]*)?(hh|l)?([%diuxXoscp])");
+      Pattern pattern = Pattern.compile("%([1-9][0-9]*[$])?([-+0#]*)([1-9][0-9]*)?(hh|h|l)?([%diuxXoscp])");
       final Matcher matcher = pattern.matcher(formatString);
       // The index for the format field within the string
       int formatIdx = 0;
@@ -234,7 +239,18 @@ public class Pass1PrintfIntrinsicRewrite extends Pass2SsaOptimization {
                // Check if the parameter type is 8-bit or 32-bit
                RValue paramValue = getParameterValue(parameters, paramIdx, printfCall);
                SymbolType paramType = SymbolTypeInference.inferType(getProgramScope(), paramValue);
-               if(SymbolType.BYTE.equals(paramType) || SymbolType.SBYTE.equals(paramType)) {
+               if(paramValue instanceof ConstantInteger) {
+                  long val = ((ConstantInteger) paramValue).getInteger();
+                  if(val > 65535L || val < -32768L) {
+                     printf_number_procedure = signed ? PRINTF_SLONG : PRINTF_ULONG;
+                  } else if(signed && val >= -128L && val <= 127L) {
+                     printf_number_procedure = PRINTF_SCHAR;
+                  } else if(!signed && val >= 0L && val <= 255L) {
+                     printf_number_procedure = PRINTF_UCHAR;
+                  } else {
+                     printf_number_procedure = signed ? PRINTF_SINT : PRINTF_UINT;
+                  }
+               } else if(SymbolType.BYTE.equals(paramType) || SymbolType.SBYTE.equals(paramType)) {
                   // Integer (8bit)
                   printf_number_procedure = signed ? PRINTF_SCHAR : PRINTF_UCHAR;
                } else if(SymbolType.DWORD.equals(paramType) || SymbolType.SDWORD.equals(paramType)) {
@@ -247,6 +263,9 @@ public class Pass1PrintfIntrinsicRewrite extends Pass2SsaOptimization {
             } else if(lengthField.equals("hh")) {
                // Integer (8bit)
                printf_number_procedure = signed ? PRINTF_SCHAR : PRINTF_UCHAR;
+            } else if(lengthField.equals("h")) {
+               // Integer (16bit short)
+               printf_number_procedure = signed ? PRINTF_SINT : PRINTF_UINT;
             } else if(lengthField.equals("l")) {
                // Integer (32bit)
                printf_number_procedure = signed ? PRINTF_SLONG : PRINTF_ULONG;
@@ -272,7 +291,21 @@ public class Pass1PrintfIntrinsicRewrite extends Pass2SsaOptimization {
                         new ConstantInteger(upperCase, SymbolType.BYTE),
                         radix
                   ));
-            addPrintfCall(printf_number_procedure, Arrays.asList(putcRef, getParameterValue(parameters, paramIdx, printfCall), format_number_struct), stmtIt, printfCall);
+            SymbolType expectedParamType;
+            if(printf_number_procedure.equals(PRINTF_SCHAR)) expectedParamType = SymbolType.SBYTE;
+            else if(printf_number_procedure.equals(PRINTF_UCHAR)) expectedParamType = SymbolType.BYTE;
+            else if(printf_number_procedure.equals(PRINTF_SINT)) expectedParamType = SymbolType.SWORD;
+            else if(printf_number_procedure.equals(PRINTF_UINT)) expectedParamType = SymbolType.WORD;
+            else if(printf_number_procedure.equals(PRINTF_SLONG)) expectedParamType = SymbolType.SDWORD;
+            else expectedParamType = SymbolType.DWORD;
+
+            RValue paramVal = getParameterValue(parameters, paramIdx, printfCall);
+            SymbolType paramType = SymbolTypeInference.inferType(getProgramScope(), paramVal);
+            if(!expectedParamType.equals(paramType)) {
+               paramVal = new CastValue(expectedParamType, paramVal);
+            }
+
+            addPrintfCall(printf_number_procedure, Arrays.asList(putcRef, paramVal, format_number_struct), stmtIt, printfCall);
             paramIdx++;
          } else if(typeField.equals("c")) {
             // Print char
