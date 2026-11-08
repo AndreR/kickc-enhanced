@@ -83,7 +83,8 @@ This document outlines the compiler architecture, completed milestones, planned 
 * **Goal:** Allow functions returning 16-bit values to pass the low byte in `A` and the high byte in `X`, avoiding Zero-Page allocation for function returns and leaf parameters.
 
 ### Feature 16: Compact 8x8->16 Multiplication without 16-Bit Zero Extension
-* **Goal:** For multiplications of `uint8_t` by constants where the result fits in 16-bit, accumulate the calculation in 8-bit shifts and additions before promoting to 16-bit, halving code size and Zero-Page register consumption.
+* **Status:** ✅ Completed in `v0.10.0-dev`.
+* **Summary:** In Pass 2 (`Pass2MultiplyToShiftRewriting`), factors out trailing zeros $2^k$ and recovers underlying 8-bit operands from SSA casts, emitting compact shift-add decomposition that promotes to 16-bit before final shifting. Bit-exact across the full 8-bit domain ($0..255$), saving over 50% code size and eliminating intermediate 16-bit register allocations. Pass 5 multi-label predecessor tracking hardened.
 
 ---
 
