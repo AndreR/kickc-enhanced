@@ -292,6 +292,25 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          }
          case CParser.PRAGMA_CODE_SEG -> this.currentSegmentCode = pragmaParamName(pragmaParamSingle(ctx));
          case CParser.PRAGMA_DATA_SEG -> this.currentSegmentData = pragmaParamName(pragmaParamSingle(ctx));
+         case CParser.PRAGMA_SEGMENT_TYPE -> {
+            if(ctx.pragmaParam().size() < 2)
+               throw new CompileError("#pragma segment_type expects at least two parameters: (segmentName, type [, id])", new StatementSource(ctx));
+            String segName = pragmaParamName(ctx.pragmaParam(0));
+            String typeStr = pragmaParamName(ctx.pragmaParam(1)).toUpperCase();
+            int id = -1;
+            if(ctx.pragmaParam().size() >= 3) {
+               id = pragmaParamNumber(ctx.pragmaParam(2)).intValue();
+            }
+            SegmentTypeInfo.Kind kind;
+            switch(typeStr) {
+               case "ROM" -> kind = SegmentTypeInfo.Kind.ROM;
+               case "ROM_BANK" -> kind = SegmentTypeInfo.Kind.ROM_BANK;
+               case "RAM_RESIDENT", "RAM" -> kind = SegmentTypeInfo.Kind.RAM_RESIDENT;
+               case "RAM_OVERLAY" -> kind = SegmentTypeInfo.Kind.RAM_OVERLAY;
+               default -> throw new CompileError("Unknown segment type '" + typeStr + "'. Expected ROM, ROM_BANK, RAM_RESIDENT or RAM_OVERLAY", new StatementSource(ctx));
+            }
+            program.setSegmentType(segName, new SegmentTypeInfo(kind, id));
+         }
          case CParser.PRAGMA_BANK -> {
             if(ctx.pragmaParam().size() != 2)
                throw new CompileError("#pragma expects two parameters!", new StatementSource(ctx));
@@ -660,6 +679,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       boolean isLibrary = program.isLibraryFile(statementSource != null ? statementSource.getFileName() : null);
       String segCode = isLibrary ? Scope.SEGMENT_CODE_DEFAULT : currentSegmentCode;
       String segData = isLibrary ? Scope.SEGMENT_DATA_DEFAULT : currentSegmentData;
+      if(program.isSegmentRom(segData)) {
+         segData = Scope.SEGMENT_DATA_DEFAULT;
+      }
       Bank bank = isLibrary ? Bank.COMMON : currentBank;
 
       Procedure procedure = new Procedure(varDecl.getVarName(), (SymbolTypeProcedure) varDecl.getEffectiveType(), program.getScope(), segCode, segData, currentCallingConvention, bank);
@@ -1204,6 +1226,14 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             String segData = program.isLibraryFile(declSource != null ? declSource.getFileName() : null) ? Scope.SEGMENT_DATA_DEFAULT : currentSegmentData;
             VariableBuilder varBuilder = new VariableBuilder(varName, getCurrentScope(), false, false, effectiveType, effectiveDirectives, segData, program.getTargetPlatform().getVariableBuilderConfig());
             Variable variable = varBuilder.build();
+            if(program.isSegmentRom(variable.getDataSegment())) {
+               boolean isGlobalOrStatic = ScopeRef.ROOT.equals(variable.getScope().getRef()) || variable.isPermanent();
+               if(!isGlobalOrStatic) {
+                  variable.setDataSegment(Scope.SEGMENT_DATA_DEFAULT);
+               } else if(!variable.isNoModify() && !variable.isKindConstant() && !variable.isDeclarationOnly()) {
+                  throw new CompileError("Cannot allocate non-const variable '" + varName + "' in read-only ROM segment '" + variable.getDataSegment() + "'", declSource);
+               }
+            }
             if(isStructMember && (initializer != null))
                throw new CompileError("Initializer not supported inside structs " + effectiveType.toCDecl(), declSource);
             if(variable.isDeclarationOnly()) {
@@ -1862,6 +1892,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       Variable lValue;
       if(varType != null) {
          String segData = program.isLibraryFile(statementSource != null ? statementSource.getFileName() : null) ? Scope.SEGMENT_DATA_DEFAULT : currentSegmentData;
+         if(program.isSegmentRom(segData)) {
+            segData = Scope.SEGMENT_DATA_DEFAULT;
+         }
          VariableBuilder varBuilder = new VariableBuilder(varName, blockScope, false, false, varType, varDecl.getDeclDirectives(), segData, program.getTargetPlatform().getVariableBuilderConfig());
          lValue = varBuilder.build();
       } else {

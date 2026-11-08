@@ -55,6 +55,8 @@ public class Program {
 
    /** Reserved ZP addresses that the compiler cannot use. PASS 0-5 (STATIC) */
    private List<Integer> reservedZps;
+   /** Segment type metadata configured via #pragma segment_type. PASS 0-5 (STATIC) */
+   private final Map<String, SegmentTypeInfo> segmentTypes = new LinkedHashMap<>();
    /** Resource files that should be copied to the output folder to be compiled with the generated ASM. PASS 0-5 (STATIC) */
    private final List<Path> asmResourceFiles;
    /** Comments for the (main) file. PASS 0-4 (STATIC) */
@@ -550,6 +552,20 @@ public class Program {
 
    public void setReservedZps(List<Integer> reservedZps) {
       this.reservedZps = reservedZps;
+   }
+
+   public void setSegmentType(String segmentName, SegmentTypeInfo info) {
+      this.segmentTypes.put(segmentName, info);
+   }
+
+   public SegmentTypeInfo getSegmentType(String segmentName) {
+      return this.segmentTypes.get(segmentName);
+   }
+
+   public boolean isSegmentRom(String segmentName) {
+      if(segmentName == null) return false;
+      SegmentTypeInfo info = this.segmentTypes.get(segmentName);
+      return info != null && info.isRom();
    }
 
    public CompileLog getLog() {

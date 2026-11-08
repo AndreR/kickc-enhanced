@@ -81,6 +81,10 @@ public class CParser {
      */
     public static final String PRAGMA_DATA_SEG = "data_seg";
     /**
+     * #pragma segment_type(name, ROM|ROM_BANK|RAM|RAM_RESIDENT|RAM_OVERLAY [, id]) specifies segment memory type and banking.
+     */
+    public static final String PRAGMA_SEGMENT_TYPE = "segment_type";
+    /**
      * #pragma start_address(...) specifies the start address of the program.
      */
     public static final String PRAGMA_START_ADDRESS = "start_address";

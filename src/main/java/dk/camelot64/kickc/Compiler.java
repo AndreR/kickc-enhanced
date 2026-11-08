@@ -317,6 +317,7 @@ public class Compiler {
       program.clearCallGraph();
       new Pass1AssertNoRecursion(program).execute();
       new Pass1AssertInterrupts(program).execute();
+      new Pass1AssertCrossSegmentCalls(program).execute();
 
       if(getLog().isVerbosePass1CreateSsa()) {
          getLog().append("INITIAL CONTROL FLOW GRAPH");
