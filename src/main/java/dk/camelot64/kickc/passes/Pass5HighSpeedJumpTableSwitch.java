@@ -108,7 +108,13 @@ public class Pass5HighSpeedJumpTableSwitch extends Pass5AsmOptimization {
                double density = (double) uniqueVals.size() / span;
 
                // Apply optimization only if range <= 32, density >= 0.5, 0 <= minVal <= maxVal <= 255
-               if(span <= 32 && density >= 0.5 && minVal >= 0 && maxVal <= 255) {
+               Set<String> uniqueTargets = new HashSet<>();
+               for(CaseBranch cb : chain) {
+                  uniqueTargets.add(cb.targetLabel);
+               }
+
+               // Apply optimization only if multi-way switch (>=3 distinct targets), range <= 32, density >= 0.5, 0 <= minVal <= maxVal <= 255
+               if(uniqueTargets.size() >= 3 && span <= 32 && density >= 0.5 && minVal >= 0 && maxVal <= 255) {
                   // Determine default target
                   CaseBranch lastCase = chain.get(chain.size() - 1);
                   LineRef lastRef = lastCase.linesToRemove.get(lastCase.linesToRemove.size() - 1);
@@ -157,7 +163,7 @@ public class Pass5HighSpeedJumpTableSwitch extends Pass5AsmOptimization {
                      String tableLoName = "__switch_lo_" + tableCounter;
                      String tableHiName = "__switch_hi_" + tableCounter;
 
-                     String defLabelForTable = defaultIsFallthrough ? ("!__sw_def_" + tableCounter) : defaultTarget;
+                     String defLabelForTable = defaultIsFallthrough ? ("__sw_def_" + tableCounter) : defaultTarget;
 
                      // Build table strings
                      StringBuilder loBuilder = new StringBuilder();
@@ -190,11 +196,7 @@ public class Pass5HighSpeedJumpTableSwitch extends Pass5AsmOptimization {
                      dispatchAsm.append("cmp #").append(span).append("\n");
                      dispatchBytes += 2;
 
-                     if(defaultIsFallthrough) {
-                        dispatchAsm.append("bcs !+").append("\n");
-                     } else {
-                        dispatchAsm.append("bcs ").append(defaultTarget).append("\n");
-                     }
+                     dispatchAsm.append("bcs ").append(defLabelForTable).append("\n");
                      dispatchBytes += 2;
 
                      dispatchAsm.append("tax\n");
@@ -247,7 +249,9 @@ public class Pass5HighSpeedJumpTableSwitch extends Pass5AsmOptimization {
                      firstRef.chunk.getLines().add(insertPos++, hiTableLine);
 
                      if(defaultIsFallthrough) {
-                        firstRef.chunk.getLines().add(insertPos++, new AsmLabel("!"));
+                        AsmLabel defLabelLine = new AsmLabel("__sw_def_" + tableCounter);
+                        defLabelLine.getTags().add("nooptimize");
+                        firstRef.chunk.getLines().add(insertPos++, defLabelLine);
                      }
 
                      getLog().append("Pass 5: Converted switch with " + chain.size() + " cases (span=" + span + ") to Jump Table " + tableLoName);
