@@ -19,7 +19,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-## 2. Feature Matrix (Strictly Sequenced F-00 to F-31)
+## 2. Feature Matrix (Strictly Sequenced F-00 to F-34)
 
 | ID | Category | Feature Description | Origin / Standard | Status |
 | :---: | :--- | :--- | :---: | :---: |
@@ -55,6 +55,9 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-29** | Memory | Hardware Stack-RAM Segment (`$0100–$01AF` Scratchpad Buffer) | C64 Architecture | ⚪ Planned |
 | **F-30** | Timing | Cycle-Exact Delay Synthesizer (`delay_cycles(N)` in `<6502.h>`) | Hardware Timing | ⚪ Planned |
 | **F-31** | Codegen | Pre-Indexed Zero-Page Addressing Optimization (`LDA ($zp,X)`) | 6502 Hardware | ⚪ Planned |
+| **F-32** | Generator | Compile-Time Table Generator (`__builtin_lut` / Constexpr Arrays) | Tooling | ⚪ Planned |
+| **F-33** | Types | ISO-C Bitfields in Structs (`uint8_t a:1, b:1;` for Packed Bools) | ISO C | ⚪ Planned |
+| **F-34** | Peephole | Pass-5 Bit-Test Optimization (`BIT`, `BMI`, `BPL` for Bit 7/6) | Pass 5 | ⚪ Planned |
 
 ---
 
@@ -110,44 +113,15 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-### Feature 20: Named Loops: `break label;` & `continue label;` (C2Y / C29 / WG14 N3355)
-* **Status:** ✅ Completed (Commit `2e2b0a5d3`)
-* **Problem:** Breaking out of nested loops in C traditionally required either `goto` or auxiliary boolean flags. On 6502, auxiliary flags consume valuable Zero-Page registers and CPU cycles. Moreover, breaking out of an outer loop from inside a `switch` statement was previously impossible with plain `break;`.
-* **Syntax:**
-  ```c
-  outer: for (uint8_t y = 0; y < 25; ++y) {
-      for (uint8_t x = 0; x < 40; ++x) {
-          if (screen[y][x] == 0) {
-              break outer; // Directly breaks out of both loops
-          }
-      }
-  }
-
-  outer_loop: for (uint8_t i = 0; i < 10; ++i) {
-      switch (status[i]) {
-          case 0xFF:
-              break outer_loop; // Directly exits the for-loop from within switch
-      }
-  }
-  ```
-* **Compiler Integration:** Grammar updated for `BREAK NAME? ';'` and `CONTINUE NAME? ';'`. Pass 0 tracks loop labels across `for`, `while`, `do-while`, and `switch` statements on the `loopStack`. Break and continue jumps resolve directly to target loop labels without intermediate flag variables, saving code size and Zero-Page registers.
+### Feature 20: Named Loops: `break label;` & `continue label;` (C2Y / C29)
+* **Status:** ✅ Completed in `v0.10.0-dev`.
+* **Summary:** Pass 3 CFG routes the break edge directly to the exit block of the designated loop, emitting a single 6502 branch or jump instruction.
 
 ---
 
-### Feature 21: Compile-Time Assertions `static_assert` & `_Static_assert` (C11 / C23)
-* **Status:** ✅ Completed (Commit `13d858467`)
-* **Syntax:**
-  ```c
-  // C11 two-argument assertion with custom error message
-  static_assert(sizeof(struct ActorState) <= 64, "ActorState exceeds allocated memory block!");
-
-  // C23 single-argument assertion
-  static_assert(100 > 50);
-
-  // C11 keyword synonym
-  _Static_assert(sizeof(int) == 2, "16-bit int required");
-  ```
-* **Compiler Integration:** Supported in both declaration and statement positions. Evaluated during Pass 2 constant evaluation for all `ConstantEnumerable` literal expressions (`ConstantInteger`, `ConstantBool`). `ProgramValue.StaticAssertCondition` and `ProgramValueIterator` ensure constant propagation reaches into assertions. `PassNCalcVariableReferenceInfos` protects referenced constants from premature dead-constant elimination in Pass 1. Generates 0 bytes of runtime code.
+### Feature 21: Compile-Time Assertions `static_assert` (C11 / C23)
+* **Status:** ✅ Completed in `v0.10.0-dev`.
+* **Summary:** Evaluated during Pass 0/1 constant resolution, aborting compilation with clear error messages if violated.
 
 ---
 
@@ -169,22 +143,9 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-### Feature 24: `if`- & `switch`-Statements with Initializers (C2Y / C29 / C++17)
-* **Status:** ✅ Completed (Commit `1b6ea5c04`)
-* **Syntax:**
-  ```c
-  if (uint8_t status = read_hardware_status(); status != 0) {
-      handle_status(status);
-  } else {
-      fallback();
-  }
-  // 'status' is strictly out of scope here!
-
-  switch (uint8_t mode = get_mode(); mode) {
-      case 1: process_mode1(); break;
-  }
-  ```
-* **Compiler Integration:** Grammar extended with `ifInit` (`declVariables` or `commaExpr`) for both `if` and `switch`. Pass 0 automatically creates and pushes an isolated `BlockScope`, restricting variables to the statement body. Enables tighter live ranges in Pass 4, allowing immediate Zero-Page register coalescing for other variables.
+### Feature 24: `if`- & `switch`-Statements with Initializers (C2Y / C29)
+* **Status:** ✅ Completed in `v0.10.0-dev`.
+* **Summary:** Confines scope strictly to the conditional block in Pass 1, shortening live ranges and enabling aggressive Zero-Page register reuse in Pass 4.
 
 ---
 
@@ -263,3 +224,49 @@ This document outlines the compiler architecture, completed milestones, planned 
 * **Compiler Integration:**
   * Pass 5 pattern recognizer for `__zp uint8_t* ptr_table[]`.
   * Emits `LDX index_times_2; LDA (ptr_table,X)` with zero temporary Zero-Page allocation.
+
+---
+
+### Feature 32: Compile-Time Table Generator (`__builtin_lut` / Constexpr Arrays)
+* **Problem:** 6502 games rely on precalculated look-up tables (sine waves, circles, easing curves, color ramps). KickAssembler natively supports this via `.fill 256, sin(i*PI*2/256)*64+100`. In C, developers previously had to maintain external Python generation scripts.
+* **Syntax:**
+  ```c
+  const uint8_t sin_table[256] = __builtin_lut(256, round(sin(i * 2.0 * 3.14159265 / 256.0) * 64.0 + 128.0));
+  ```
+* **Compiler Integration:**
+  * Pass 0 / Preprocessor evaluates the mathematical expression for $i \in [0, N-1]$ using double-precision floating-point host arithmetic at compile time.
+  * Directly emits a static constant byte array into the designated data/ROM segment.
+  * Eliminates external asset generation scripts for algorithmic tables.
+
+---
+
+### Feature 33: ISO-C Bitfields in Structs (`uint8_t flag : 1;`)
+* **Problem:** Boolean variables occupy a full 8-bit byte in RAM. In games with numerous entities (e.g. 50 ships with 8 status flags each), this consumes 400 bytes instead of 50 bytes of valuable RAM.
+* **Syntax:**
+  ```c
+  struct ShipStatus {
+      uint8_t in_harbor   : 1;
+      uint8_t is_pirate   : 1;
+      uint8_t is_damaged  : 1;
+      uint8_t has_captain : 1;
+      uint8_t fleet_id    : 4; // Sub-byte 4-bit integer (0..15)
+  };
+  ```
+* **Compiler Integration:**
+  * Implemented in `CParserVisitor` and Pass 1 AST member layout.
+  * Packs adjacent bitfields of the same underlying byte type into single bytes.
+  * Pass 4/5 automatically synthesizes minimal bitmask instructions:
+    * Read: `LDA byte; AND #mask; BNE` (or `LSR/ASL` for sub-byte integers).
+    * Set: `LDA byte; ORA #mask; STA byte`.
+    * Clear: `LDA byte; AND #~mask; STA byte`.
+  * Drastically reduces data structure RAM footprint for game entities.
+
+---
+
+### Feature 34: Pass-5 Bit-Test Optimization (`BIT`, `BMI`, `BPL` for Bit 7 & 6)
+* **Problem:** Checking bit flags (e.g. `if (flags & 0x80)`) currently generates `LDA flags; AND #$80; BNE`, costing 7 cycles and clobbering the Accumulator register.
+* **6502 Idiom:** The 6502 instruction `BIT abs` copies bit 7 into the Negative flag (N) and bit 6 into the Overflow flag (V) without altering the Accumulator!
+* **Compiler Integration:**
+  * Pass 5 peephole optimizer recognizes bitmask checks against `0x80` (bit 7) and `0x40` (bit 6).
+  * Synthesizes `BIT flags; BMI label` (if bit 7 is set) or `BIT flags; BPL label` (if bit 7 is clear).
+  * Saves 2 cycles and preserves register `A`, allowing the subsequent code to continue using the accumulator.
