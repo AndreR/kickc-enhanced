@@ -33,8 +33,14 @@ public class PassNCalcRegisterUpliftProgram extends PassNCalcBase<RegisterUplift
          // Find live range equivalence classes for the scope
          List<LiveRangeEquivalenceClass> equivalenceClasses = new ArrayList<>();
          for(LiveRangeEquivalenceClass equivalenceClass : equivalenceClassSet.getEquivalenceClasses()) {
-            VariableRef variableRef = equivalenceClass.getVariables().get(0);
-            if(variableRef.getScopeNames().equals(scopeRef.getFullName())) {
+            boolean matches = false;
+            for(VariableRef varRef : equivalenceClass.getVariables()) {
+               if(varRef.getScopeNames().equals(scopeRef.getFullName())) {
+                  matches = true;
+                  break;
+               }
+            }
+            if(matches) {
                equivalenceClasses.add(equivalenceClass);
             }
          }

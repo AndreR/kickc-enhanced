@@ -56,14 +56,35 @@ public class Pass4RegisterUpliftPotentialInitialize extends Pass2Base {
          } else {
             Registers.Register defaultRegister = equivalenceClass.getRegister();
             List<Registers.Register> potentials = new ArrayList<>();
-            potentials.add(defaultRegister);
             boolean isByte2 = defaultRegister.isMem() && defaultRegister.getBytes() == 1;
-            if(isByte2  && !varVolatile(equivalenceClass)) {
-               potentials.add(Registers.getRegisterA());
-               potentials.add(Registers.getRegisterX());
-               potentials.add(Registers.getRegisterY());
+            if(isByte2 && !varVolatile(equivalenceClass)) {
+               Integer leafParamIdx = getLeafProcedureParameterIndex(equivalenceClass);
+               if(leafParamIdx != null) {
+                  if(leafParamIdx == 0) {
+                     potentials.add(Registers.getRegisterA());
+                     potentials.add(Registers.getRegisterX());
+                     potentials.add(defaultRegister);
+                     potentials.add(Registers.getRegisterY());
+                  } else if(leafParamIdx == 1) {
+                     potentials.add(Registers.getRegisterX());
+                     potentials.add(Registers.getRegisterA());
+                     potentials.add(defaultRegister);
+                     potentials.add(Registers.getRegisterY());
+                  } else {
+                     potentials.add(Registers.getRegisterY());
+                     potentials.add(defaultRegister);
+                     potentials.add(Registers.getRegisterX());
+                  }
+               } else {
+                  potentials.add(defaultRegister);
+                  potentials.add(Registers.getRegisterA());
+                  potentials.add(Registers.getRegisterX());
+                  potentials.add(Registers.getRegisterY());
+               }
                if(getProgram().getTargetCpu().getCpu65xx().hasRegisterZ())
                   potentials.add(Registers.getRegisterZ());
+            } else {
+               potentials.add(defaultRegister);
             }
             registerPotentials.setPotentialRegisters(equivalenceClass, potentials);
          }
@@ -77,6 +98,56 @@ public class Pass4RegisterUpliftPotentialInitialize extends Pass2Base {
     * @param equivalenceClass The variable equivalence class
     * @return true if any variable is volatile
     */
+   
+   private Integer getLeafProcedureParameterIndex(LiveRangeEquivalenceClass equivalenceClass) {
+      CallGraph callGraph = getProgram().getCallGraph();
+      if(callGraph == null) return null;
+      for(VariableRef varRef : equivalenceClass.getVariables()) {
+         Variable variable = getProgram().getScope().getVariable(varRef);
+         if(variable == null) continue;
+         dk.camelot64.kickc.model.symbols.Scope scope = variable.getScope();
+         if(scope instanceof dk.camelot64.kickc.model.symbols.Procedure procedure) {
+            if(procedure.getInterruptType() != null || procedure.isDeclaredIntrinsic()) {
+               continue;
+            }
+            if(dk.camelot64.kickc.model.symbols.Procedure.CallingConvention.STACK_CALL.equals(procedure.getCallingConvention())) {
+               continue;
+            }
+            String procName = procedure.getLocalName();
+            if("main".equals(procName) || "__start".equals(procName)) {
+               continue;
+            }
+            CallGraph.CallBlock callBlock = callGraph.getCallBlock(procedure.getRef());
+            if(callBlock != null && callBlock.getCalls() != null && !callBlock.getCalls().isEmpty()) {
+               continue;
+            }
+            boolean hasCalls = false;
+            for(var block : getProgram().getGraph().getAllBlocks()) {
+               if(procedure.getRef().equals(block.getScope())) {
+                  for(dk.camelot64.kickc.model.statements.Statement stmt : block.getStatements()) {
+                     if(stmt instanceof dk.camelot64.kickc.model.statements.StatementCalling) {
+                        hasCalls = true;
+                        break;
+                     }
+                  }
+               }
+               if(hasCalls) break;
+            }
+            if(hasCalls) continue;
+
+            List<Variable> params = procedure.getParameters();
+            if(params != null && !params.isEmpty() && params.size() <= 3) {
+               for(int i = 0; i < params.size(); i++) {
+                  if(params.get(i).getRef().equals(varRef)) {
+                     return i;
+                  }
+               }
+            }
+         }
+      }
+      return null;
+   }
+
    private boolean varVolatile(LiveRangeEquivalenceClass equivalenceClass) {
       for(VariableRef variableRef : equivalenceClass.getVariables()) {
          Variable variable = getSymbols().getVariable(variableRef);

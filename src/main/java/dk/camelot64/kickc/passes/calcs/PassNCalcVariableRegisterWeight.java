@@ -65,6 +65,38 @@ public class PassNCalcVariableRegisterWeight extends PassNCalcBase<VariableRegis
             }
          }
       }
+      // Boost register weight of leaf procedure parameters so they are prioritized for register passing
+      for(dk.camelot64.kickc.model.symbols.Procedure procedure : getProgram().getScope().getAllProcedures(true)) {
+         if(procedure.getInterruptType() != null || procedure.isDeclaredIntrinsic()) continue;
+         if(dk.camelot64.kickc.model.symbols.Procedure.CallingConvention.STACK_CALL.equals(procedure.getCallingConvention())) continue;
+         String procName = procedure.getLocalName();
+         if("main".equals(procName) || "__start".equals(procName)) continue;
+         CallGraph.CallBlock callBlock = callGraph.getCallBlock(procedure.getRef());
+         if(callBlock != null && callBlock.getCalls() != null && !callBlock.getCalls().isEmpty()) continue;
+         boolean hasCalls = false;
+         for(var block : getProgram().getGraph().getAllBlocks()) {
+            if(procedure.getRef().equals(block.getScope())) {
+               for(Statement stmt : block.getStatements()) {
+                  if(stmt instanceof dk.camelot64.kickc.model.statements.StatementCalling) {
+                     hasCalls = true;
+                     break;
+                  }
+               }
+            }
+            if(hasCalls) break;
+         }
+         if(hasCalls) continue;
+         java.util.List<dk.camelot64.kickc.model.symbols.Variable> params = procedure.getParameters();
+         if(params != null && !params.isEmpty() && params.size() <= 3) {
+            for(int i = 0; i < params.size(); i++) {
+               dk.camelot64.kickc.model.symbols.Variable param = params.get(i);
+               if(param.getType() != null && param.getType().getSizeBytes() == 1) {
+                  double boost = 100000.0 - (i * 1000.0);
+                  variableRegisterWeights.addWeight((VariableRef) param.getRef(), boost);
+               }
+            }
+         }
+      }
       return variableRegisterWeights;
    }
 
