@@ -67,14 +67,13 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
       long tPreStart = System.currentTimeMillis();
       int preFixedCount = preFixLongBranches();
       long tPreElapsed = System.currentTimeMillis() - tPreStart;
-      if(preFixedCount > 0) {
+      if(preFixedCount > 0 && getLog().isVerboseFixLongBranch()) {
          System.out.println(String.format("      [PASS5 PRE-FIX LONG BRANCHES] fixed %d branches in %4.2f s", preFixedCount, tPreElapsed / 1000.0));
       }
 
       // Relaxation pass: relax short branches back to 2-byte branches and eliminate 0-distance trampolines
-      // int relaxedCount = relaxShortBranches();
       int relaxedCount = relaxShortBranches();
-      if(relaxedCount > 0) {
+      if(relaxedCount > 0 && getLog().isVerboseFixLongBranch()) {
          System.out.println(String.format("      [PASS5 RELAX SHORT BRANCHES] relaxed %d trampolines", relaxedCount));
       }
 
@@ -90,13 +89,15 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
             new Pass5DoubleJumpElimination(getProgram()).optimize();
          }
          long tStepElapsed = System.currentTimeMillis() - tStepStart;
-         System.out.println(String.format("      [PASS5 LONG BRANCH iter %d] took %6.2f s (fixed=%b)", iter, tStepElapsed / 1000.0, stepOptimized));
+         if(getLog().isVerboseFixLongBranch()) {
+            System.out.println(String.format("      [PASS5 LONG BRANCH iter %d] took %6.2f s (fixed=%b)", iter, tStepElapsed / 1000.0, stepOptimized));
+         }
          if(stepOptimized) anyOptimized = true;
       }
 
       // Second relaxation pass after long branch resolution and code shrinking
       int postRelaxedCount = relaxShortBranches();
-      if(postRelaxedCount > 0) {
+      if(postRelaxedCount > 0 && getLog().isVerboseFixLongBranch()) {
          System.out.println(String.format("      [PASS5 POST-RELAX SHORT BRANCHES] relaxed %d trampolines", postRelaxedCount));
          anyOptimized = true;
          // Verify with KickAssembler that no branch was pushed out of range
@@ -611,7 +612,9 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
       }
       String output = kickAssOut.toString();
       long tKasm = System.currentTimeMillis() - t1;
-      System.out.println(String.format("         (writeAsm=%4.2fs, kasm=%4.2fs, res=%d)", tWrite / 1000.0, tKasm / 1000.0, asmRes));
+      if(getLog().isVerboseFixLongBranch()) {
+         System.out.println(String.format("         (writeAsm=%4.2fs, kasm=%4.2fs, res=%d)", tWrite / 1000.0, tKasm / 1000.0, asmRes));
+      }
 
       if(getLog().isVerboseFixLongBranch())
          getLog().append("Pass5FixLongBranches: ASM process result " + asmRes);

@@ -545,8 +545,10 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
             getLog().append("  " + unknownFragment);
          }
       }
-      System.out.printf("      [Uplift Breakdown] %d attempts: blks=%.2fs, outScore=%.2fs, iter=%.2fs, overlap=%.2fs, codegen=%.2fs, clobber=%.2fs, score=%.2fs, update=%.2fs%n",
-            countAttempts, timeBlocksNs/1e9, timeOutsideNs/1e9, timeIteratorNs/1e9, timeOverlapNs/1e9, timeCodeGenNs/1e9, timeClobberNs/1e9, timeScoreNs/1e9, timeUpdateNs/1e9);
+      if(getLog().isVerboseUplift()) {
+         System.out.printf("      [Uplift Breakdown] %d attempts: blks=%.2fs, outScore=%.2fs, iter=%.2fs, overlap=%.2fs, codegen=%.2fs, clobber=%.2fs, score=%.2fs, update=%.2fs%n",
+               countAttempts, timeBlocksNs/1e9, timeOutsideNs/1e9, timeIteratorNs/1e9, timeOverlapNs/1e9, timeCodeGenNs/1e9, timeClobberNs/1e9, timeScoreNs/1e9, timeUpdateNs/1e9);
+      }
       return cache;
    }
 
