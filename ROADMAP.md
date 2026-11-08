@@ -19,7 +19,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-## 2. Feature Matrix (Strictly Sequenced F-00 to F-24)
+## 2. Feature Matrix (Strictly Sequenced F-00 to F-31)
 
 | ID | Category | Feature Description | Origin / Standard | Status |
 | :---: | :--- | :--- | :---: | :---: |
@@ -27,7 +27,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-01** | Codegen | Split Jump-Tables for dense `switch` via 12-cycle RTS dispatch | 6502 Idiom | ✅ Completed |
 | **F-02** | Types | C11 Anonymous Unions & 2–4 Byte Assignment Loop-Unrolling | C11 | ⚪ Planned |
 | **F-03** | Intrinsics | Atomic Status Intrinsics (`__builtin_bit7/6`, `SEC`, `CLC`, etc.) | KickC Ext | ✅ Completed |
-| **F-04** | Codegen | Zero-Syntax Auto Pointer-to-SMC (Self-Modifying Code in RAM) | 6502 Idiom | ⚪ Planned |
+| **F-04** | Codegen | Zero-Syntax Auto Pointer-to-SMC & Dynamic Call Dispatch (RAM) | 6502 Idiom | ⚪ Planned |
 | **F-05** | Assembler | Zero-Waste Conditional Page-Boundary Alignment (`.align $100`) | KickAss Ext | ✅ Completed |
 | **F-06** | Allocator | Inter-Segment Zero-Page Coalescing across disjoint data segments | KickC Core | ✅ Completed |
 | **F-07** | Controlflow | Count-Down Loop-Inversion (`BPL`) & `__countdown` directive | 6502 Idiom | ✅ Completed |
@@ -48,6 +48,13 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-22** | Metaprog | `_Generic` Type-Dispatch for Polymorphic 8/16-Bit Macros | C11 | ⚪ Planned |
 | **F-23** | Lexer | Digit Separators (`0b1100_0011`, `1_000`) & C23 Keywords (`nullptr`, `{}`) | C23 | ✅ Completed |
 | **F-24** | Controlflow | `if`-Statements with Initializers for Strict Scope Limitation | C2Y (C29) | ⚪ Planned |
+| **F-25** | ABI / Opt | Auto Carry-Flag Boolean Returns (`__carry` / Auto-Carry ABI) | 6502 Idiom | ⚪ Planned |
+| **F-26** | ABI / Opt | Leaf-Function Automatic Register Parameter Passing (A, X, Y) | Calling Conv | ⚪ Planned |
+| **F-27** | Types | 8.8 Fixed-Point Data Type (`fixed8_8`) & 0-Cycle Shift Fusing | ISO TR 18037 | ⚪ Planned |
+| **F-28** | Numerics | BCD Decimal Accumulator Arithmetic (`__bcd` / `SED` Support) | 6502 Hardware | ⚪ Planned |
+| **F-29** | Memory | Hardware Stack-RAM Segment (`$0100–$01AF` Scratchpad Buffer) | C64 Architecture | ⚪ Planned |
+| **F-30** | Timing | Cycle-Exact Delay Synthesizer (`delay_cycles(N)` in `<6502.h>`) | Hardware Timing | ⚪ Planned |
+| **F-31** | Codegen | Pre-Indexed Zero-Page Addressing Optimization (`LDA ($zp,X)`) | 6502 Hardware | ⚪ Planned |
 
 ---
 
@@ -56,8 +63,10 @@ This document outlines the compiler architecture, completed milestones, planned 
 ### Feature 02: C11 Anonymous Unions & 2–4 Byte Assignment Loop-Unrolling
 * **Goal:** Direct 16/32-bit field aliasing without intermediate named structs, and unrolling small `struct` assignments into direct `LDA`/`STA` pairs rather than emitting overhead-heavy memory copy loops.
 
-### Feature 04: Zero-Syntax Pointer-to-SMC Uplift (Self-Modifying Code)
-* **Goal:** For code marked in `RAM_RESIDENT`, detect hot sequential pointer loops and transform indirect indexed addressing (`LDA ($zp),Y`) into direct self-modifying immediate operands (`LDA $xxxx`). Saves 2 cycles per byte and frees Zero-Page registers.
+### Feature 04: Zero-Syntax Pointer-to-SMC Uplift & Dynamic Call Dispatch (RAM)
+* **Goal:** 
+  1. For code marked in `RAM_RESIDENT`, detect hot sequential pointer loops and transform indirect indexed addressing (`LDA ($zp),Y`) into direct self-modifying immediate operands (`LDA $xxxx`). Saves 2 cycles per byte and frees Zero-Page registers.
+  2. For dynamic function pointer calls, replace heavy Zero-Page indirect trampolines (`JMP ($zp)`) with direct self-modifying `JSR $0000` operand patching in RAM, executing dynamic dispatches in a native 6 cycles.
 
 ### Feature 09: 8-Bit Indexing for $\le 128$ Word-Arrays & `__lohi` Split Arrays
 * **Goal:** When indexing 16-bit word arrays with $\le 128$ elements, avoid 16-bit pointer arithmetic. Generate `ASL; TAX; LDA tab,X; LDA tab+1,X` (12 cycles) or split low/high arrays `LDA tab_lo,X; LDY tab_hi,X` (8 cycles).
@@ -86,43 +95,23 @@ This document outlines the compiler architecture, completed milestones, planned 
 * **Compiler Integration:**
   * Implemented in the preprocessor and Pass 0 AST visitor.
   * Direct stream-expansion into array initializer expressions or optimized `.import binary` representations in KickAssembler output.
-  * Eliminates external asset compilation scripts.
 
 ---
 
 ### Feature 18: Typed 8-Bit Enumerations `enum : uint8_t` (C23)
-* **Problem:** In traditional C, `enum` defaults to at least `int` (16-bit or 32-bit). On 6502 systems, 16-bit enumeration variables waste Zero-Page storage and require multi-cycle instructions.
-* **Syntax:**
-  ```c
-  enum ScreenMode : uint8_t {
-      MODE_TEXT,
-      MODE_BITMAP,
-      MODE_EXTENDED
-  };
-  ```
-* **Compiler Integration:**
-  * Pass 1 (`CParserVisitor` & `SymbolType`): Enforces `BYTE_UNSIGNED` as the underlying representation.
-  * Guarantees 1-byte storage, zero integer-promotion overhead, and full compiler type safety.
+* **Status:** ✅ Completed in `v0.10.0-dev`.
+* **Summary:** Enforces `BYTE_UNSIGNED` as the underlying representation in Pass 1, guaranteeing 1-byte storage and eliminating 16-bit integer-promotion overhead.
 
 ---
 
 ### Feature 19: Compile-Time Array Length Operator `countof()` (C2Y / C29)
-* **Problem:** Calculating array length via `sizeof(arr) / sizeof(arr[0])` is verbose, repetitive, and error-prone when array element types change.
-* **Syntax:**
-  ```c
-  const uint8_t lookup_table[] = { 10, 20, 30, 40 };
-  for (uint8_t i = 0; i < countof(lookup_table); ++i) {
-      process(lookup_table[i]);
-  }
-  ```
-* **Compiler Integration:**
-  * Resolved entirely in Pass 0/1 constant evaluation as an immediate integer literal.
-  * Zero runtime cycles, zero code size overhead.
+* **Status:** ✅ Completed in `v0.10.0-dev`.
+* **Summary:** Evaluated at compile-time in Pass 0/1 constant resolution as an immediate integer literal, replacing error-prone `sizeof(arr)/sizeof(arr[0])`.
 
 ---
 
 ### Feature 20: Named Loops: `break label;` & `continue label;` (C2Y / C29)
-* **Problem:** Breaking out of nested loops in C traditionally required either `goto` or auxiliary boolean flags (e.g. `bool abort = true; if (abort) break;`). On 6502, auxiliary flags consume valuable Zero-Page registers and CPU cycles.
+* **Problem:** Breaking out of nested loops in C traditionally required either `goto` or auxiliary boolean flags. On 6502, auxiliary flags consume valuable Zero-Page registers and CPU cycles.
 * **Syntax:**
   ```c
   outer: for (uint8_t y = 0; y < 25; ++y) {
@@ -133,27 +122,20 @@ This document outlines the compiler architecture, completed milestones, planned 
       }
   }
   ```
-* **Compiler Integration:**
-  * Pass 0/1 associates the label with the outer iteration statement.
-  * Pass 3 (Statement to SSA Control Flow Graph) directly routes the break edge to the exit block of the designated loop.
-  * Generates a single conditional or unconditional 6502 branch (`BNE`/`BEQ` or `JMP`) without intermediate flag variables.
+* **Compiler Integration:** Pass 3 CFG routes the break edge directly to the exit block of the designated loop, emitting a single 6502 branch or jump instruction.
 
 ---
 
 ### Feature 21: Compile-Time Assertions `static_assert` (C11 / C23)
-* **Problem:** Retro systems have strict memory window constraints (e.g. structures fitting within 256-byte boundaries or bank overlays). Structural overflows were often only detected via runtime crashes.
 * **Syntax:**
   ```c
   static_assert(sizeof(struct ActorState) <= 64, "ActorState exceeds allocated memory block!");
   ```
-* **Compiler Integration:**
-  * Evaluated during Pass 0/1 constant resolution.
-  * Emits clear compiler errors with source line numbers during compilation if the condition is false.
+* **Compiler Integration:** Evaluated during Pass 0/1 constant resolution, aborting compilation with clear error messages if violated.
 
 ---
 
 ### Feature 22: `_Generic` Compile-Time Type Dispatch (C11)
-* **Problem:** On 6502, functions and assembly fragments are strictly specialized into 8-bit and 16-bit variants (e.g. `abs8` vs `abs16`, `fast_mul8u` vs `mul16u`). Developers had to call type-specific function names manually.
 * **Syntax:**
   ```c
   #define abs(x) _Generic((x), \
@@ -161,36 +143,99 @@ This document outlines the compiler architecture, completed milestones, planned 
       int16_t: abs16(x) \
   )
   ```
-* **Compiler Integration:**
-  * Evaluated at the macro/AST level in Pass 0 based on the resolved argument type.
-  * Enables clean, unified APIs that map directly to the optimal assembly fragment without runtime overhead.
+* **Compiler Integration:** Resolves polymorphic macros at compile time without runtime dispatch overhead.
 
 ---
 
 ### Feature 23: Digit Separators (`0b1100_0011`, `1_000`) & C23 Keywords
-* **Problem:** Hardware registers on retro platforms (VIC-II, CIAs, SID) are bitmask-driven. Large binary and hex literals without grouping are prone to off-by-one bit errors.
-* **Syntax:**
-  ```c
-  uint8_t vic_control = 0b0001_1000;
-  uint16_t raster_line = 1_000;
-  struct Entity e = {}; // C23 empty zero-initialization
-  void* ptr = nullptr;  // C23 typed null pointer
-  ```
-* **Compiler Integration:**
-  * Updated `KickCLexer.g4` to allow underscores inside binary, decimal, and hexadecimal literal tokens.
-  * Native recognition of `nullptr`, `true`, `false`, and empty struct initialization `{}`.
+* **Status:** ✅ Completed in `v0.10.0-dev`.
+* **Summary:** Underscores supported in integer literals in `KickCLexer.g4`, plus native recognition of `nullptr`, `true`, `false`, and empty struct initialization `{}`.
 
 ---
 
 ### Feature 24: `if`-Statements with Initializers (C2Y / C29)
-* **Problem:** Declaring temporary variables outside an `if` statement prolongs their live range, preventing KickC's SSA coalescing pass from reusing the Zero-Page register for unrelated code.
 * **Syntax:**
   ```c
   if (uint8_t status = read_hardware_status(); status != 0) {
       handle_status(status);
   }
-  // 'status' is immediately out of scope here
   ```
+* **Compiler Integration:** Confines scope strictly to the conditional block in Pass 1, shortening live ranges and enabling aggressive Zero-Page register reuse in Pass 4.
+
+---
+
+## 5. Detailed Specification: 6502 Hardware & Idiom Optimizations
+
+### Feature 25: Auto Carry-Flag Boolean Returns (`__carry` / Auto-Carry ABI)
+* **Problem:** Standard C functions returning boolean values store `0` or `1` into a Zero-Page register via `LDA #0/#1; STA return_val`. The caller then re-loads it and executes `CMP #0; BNE/BEQ`. This costs ~12 cycles and burns a Zero-Page register.
+* **6502 Idiom:** In 6502 assembly, condition checks return results in the **Carry flag** (`SEC` for true, `CLC` for false), and callers branch immediately via `BCS` or `BCC`.
 * **Compiler Integration:**
-  * Syntactic scope of the declared variable is strictly confined to the `if`/`else` body in Pass 1.
-  * Shortens the live range in Pass 4, allowing immediate Zero-Page register reuse.
+  * **Fully Automatic (Whole-Program Analysis):** If Pass 4/5 detects that a function's boolean return value is strictly used in conditional branches (`if`, `while`, `&&`, `||`) across all call sites, the compiler automatically synthesizes:
+    * Callee: Ends with `SEC; RTS` or `CLC; RTS`.
+    * Caller: Emits immediate `BCS` or `BCC`.
+  * **Explicit Attribute:** Optional `__carry bool func()` or `[[carry_return]]` for exported assembly interfaces.
+* **Savings:** Saves 10–12 cycles, 6–8 bytes of code, and 1 Zero-Page byte per call site.
+
+---
+
+### Feature 26: Leaf-Function Automatic Register Parameter Passing (A, X, Y)
+* **Problem:** Even small leaf functions allocate dedicated Zero-Page parameter memory, leading to memory store instructions prior to every `JSR`.
+* **6502 Idiom:** Small leaf routines take up to three byte arguments directly in CPU registers `A`, `X`, and `Y`.
+* **Compiler Integration:**
+  * Whole-program analysis in Pass 4 identifies leaf functions (no child calls).
+  * The first 3 unsigned byte arguments are mapped directly to physical registers: `arg0 -> A`, `arg1 -> X`, `arg2 -> Y`.
+  * Eliminates Zero-Page allocation and eliminates `STA param_zp` at call sites.
+
+---
+
+### Feature 27: 8.8 Fixed-Point Data Type (`fixed8_8` / ISO TR 18037) & 0-Cycle Shift Fusing
+* **Problem:** 2D retro games calculate physics, velocity, and subpixel positions using 8.8 fixed-point numbers. In standard C, using `uint16_t` requires awkward downcasts `(uint8_t)(pos >> 8)` that frequently compile to expensive 8-step runtime shift loops.
+* **6502 Idiom:** Reading the integer part of an 8.8 fixed-point variable on 6502 is a **zero-cycle operation**: simply read the high byte (`LDA pos+1`)!
+* **Compiler Integration:**
+  1. Introduction of `fixed8_8` (or `short _Accum` per ISO TR 18037).
+  2. Compile-time literal folding: `fixed8_8 vel = 1.25;` folds directly to constant `$0140`.
+  3. Expression `(uint8_t)pos` compiles directly to `LDA pos+1` with zero shifting.
+  4. Multiplication `pos * vel` emits table-driven 8.8 fixed-point multiplication.
+
+---
+
+### Feature 28: BCD Decimal Accumulator Arithmetic (`__bcd` / `SED` Support)
+* **Problem:** Game scores, player cash, and timer counters require frequent conversion between binary and decimal for on-screen display, consuming hundreds of cycles in division subroutines.
+* **6502 Idiom:** The 6502 hardware Decimal Mode (`SED`) natively executes additions and subtractions directly in Binary Coded Decimal (BCD). Screen display is trivial since each nibble directly corresponds to an ASCII character (`+ '0'`).
+* **Compiler Integration & Safety Guards:**
+  * Supported as a specialized accumulator type `__bcd uint16_t` or `__bcd uint32_t`, supporting `+=`, `-=`, `++`, `--`, and comparison.
+  * **Critical IRQ Safety:** On NMOS 6502, hardware interrupts do not automatically clear the `D` flag. The compiler strictly wraps BCD operations (`SED; ADC ...; CLD;`) or enforces `CLD` insertion in all interrupt handlers.
+
+---
+
+### Feature 29: Hardware Stack-RAM Segment (`$0100–$01AF` Scratchpad Buffer)
+* **Problem:** The MOS 6502 hardware stack occupies Page 1 (`$0100–$01FF`). Because KickC uses a static call graph rather than dynamic stack frames, the active stack rarely exceeds 15–20 bytes (remaining above `$01E0`). Consequently, ~176 bytes in `$0100–$01AF` sit completely unutilized.
+* **Compiler Integration:**
+  * Predefined memory segment `STACK_RAM` mapping memory addresses `$0100` to `$01AF`.
+  * Provides an 80-byte safety buffer below the maximum possible descent of the hardware stack pointer.
+  * Allows developers to place transient buffers (e.g. screen fade buffers, decompression scratchpads, tile staging arrays) via `#pragma data_seg(StackRam)`.
+  * **Gain:** Frees up to 176 bytes of valuable resident main memory below `$5600`.
+
+---
+
+### Feature 30: Cycle-Exact Delay Synthesizer (`delay_cycles(N)` in `<6502.h>`)
+* **Problem:** Raster splits, VIC-II border opening, and hardware register changes require cycle-exact delays to avoid 1-pixel video glitches. C loops introduce compiler-dependent jitter.
+* **Syntax:** `delay_cycles(18);` (parameter must be a compile-time constant).
+* **Compiler Integration:**
+  * Pass 5 peephole synthesizer generates the optimal cycle-exact, register-safe instruction sequence:
+    * 2 cycles: `NOP` (1 byte)
+    * 3 cycles: `BIT $00` (2 bytes, preserves A, X, Y)
+    * 4 cycles: `NOP; NOP` (2 bytes)
+    * 5 cycles: `BIT $00; NOP` (3 bytes)
+    * 6 cycles: `PHA; PLA` (2 bytes)
+    * 7 cycles: `PHA; PLA; NOP` (3 bytes)
+    * $\ge 8$ cycles: Synthesized combination of `PHA; PLA`, `BIT`, `NOP`, or unrolled decrement loops.
+
+---
+
+### Feature 31: Pre-Indexed Zero-Page Addressing Optimization (`LDA ($zp,X)`)
+* **Problem:** Accessing an array of 16-bit pointers (`ptr_table[x][0]`) currently copies the pointer from the array into two temporary Zero-Page bytes and executes `LDA ($zp),Y`, taking 20–25 cycles and burning Zero-Page registers.
+* **6502 Idiom:** When an array of pointers is placed in the Zero Page, the 6502 instruction `LDA ($zp,X)` dereferences the pointer directly in a single 6-cycle operation.
+* **Compiler Integration:**
+  * Pass 5 pattern recognizer for `__zp uint8_t* ptr_table[]`.
+  * Emits `LDX index_times_2; LDA (ptr_table,X)` with zero temporary Zero-Page allocation.
