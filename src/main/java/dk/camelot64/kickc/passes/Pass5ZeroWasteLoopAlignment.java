@@ -3,7 +3,6 @@ package dk.camelot64.kickc.passes;
 import dk.camelot64.cpufamily6502.CpuAddressingMode;
 import dk.camelot64.kickc.asm.*;
 import dk.camelot64.kickc.model.Program;
-import dk.camelot64.kickc.model.SegmentTypeInfo;
 
 import java.util.*;
 
@@ -115,12 +114,6 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
                   if(targetRef != null && targetRef.offset < branchRef.offset) {
                      // Check segment compatibility
                      if(targetRef.segment != null && targetRef.segment.equals(branchRef.segment)) {
-                        // Skip RAM_OVERLAY segments to preserve tight memory boundaries
-                        SegmentTypeInfo segType = getProgram().getSegmentType(targetRef.segment);
-                        if(segType != null && segType.getKind() == SegmentTypeInfo.Kind.RAM_OVERLAY) {
-                           continue;
-                        }
-
                         // Verify that all lines within the loop are contiguous in the same segment without data chunks
                         boolean validLoop = true;
                         for(int k = targetRef.index; k <= branchRef.index; k++) {
