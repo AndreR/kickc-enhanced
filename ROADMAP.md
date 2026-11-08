@@ -25,7 +25,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | :---: | :--- | :--- | :---: | :---: |
 | **F-00** | Architecture | Segment Type Classification (`#pragma segment_type`) & Cross-Bank Verification | KickC Ext | ✅ Completed |
 | **F-01** | Codegen | Split Jump-Tables for dense `switch` via 12-cycle RTS dispatch | 6502 Idiom | ✅ Completed |
-| **F-02** | Types | C11 Anonymous Unions & 2–4 Byte Assignment Loop-Unrolling | C11 | ⚪ Planned |
+| **F-02** | Types | C11 Anonymous Unions & 2–4 Byte Assignment Loop-Unrolling | C11 | ✅ Completed |
 | **F-03** | Intrinsics | Atomic Status Intrinsics (`__builtin_bit7/6`, `SEC`, `CLC`, etc.) | KickC Ext | ✅ Completed |
 | **F-04** | Codegen | Zero-Syntax Auto Pointer-to-SMC & Dynamic Call Dispatch (RAM) | 6502 Idiom | ⚪ Planned |
 | **F-05** | Assembler | Zero-Waste Conditional Page-Boundary Alignment (`.align $100`) | KickAss Ext | ✅ Completed |
@@ -89,6 +89,22 @@ This document outlines the compiler architecture, completed milestones, planned 
 ---
 
 ## 4. Detailed Specification: Modern C Standards Track (C11 / C23 / C2Y)
+
+### Feature 2: C11 Anonymous Unions & 2–4 Byte Assignment Loop-Unrolling (C11)
+* **Status:** ✅ **Implemented & Verified (Commit 76c5d183f)**.
+* **Summary:** Added full support for ISO C11 §6.7.2.1 anonymous structures and unions (`structDef ';'` in `structMembers`), recursively flattening anonymous members into the enclosing structure/union with precise byte offset calculation. Added `Pass5SmallMemcpyUnrollingOptimization` to unroll small 2..4 byte struct/union copy loops (both forward and countdown patterns) into direct inline `LDA/STA` pairs, completely eliminating loop branches and register pressure. Tested bit-exact in VICE on port 6541.
+* **Syntax:**
+  ```c
+  struct Vector {
+      union {
+          struct { uint8_t x, y; };
+          uint16_t raw;
+      };
+      uint8_t id;
+  };
+  ```
+
+---
 
 ### Feature 17: `#embed` Direct Binary Asset Embedding (C23)
 * **Status:** ✅ Completed in `v0.10.0-dev`.
