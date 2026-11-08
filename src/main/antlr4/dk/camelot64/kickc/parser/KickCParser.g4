@@ -242,6 +242,7 @@ expr
     | COUNTOF expr #exprCountOf
     | TYPEID PAR_BEGIN typeName PAR_END  #exprTypeIdType
     | TYPEID expr  #exprTypeId
+    | GENERIC PAR_BEGIN expr COMMA genericAssocList PAR_END #exprGeneric
     | DEFINED PAR_BEGIN? NAME PAR_END? #exprDefined
     | expr BRACKET_BEGIN commaExpr BRACKET_END #exprArray
     | PAR_BEGIN typeName PAR_END expr #exprCast
@@ -340,4 +341,14 @@ asmExpr
     | ASM_CURLY_BEGIN ASM_NAME ASM_CURLY_END #asmExprReplace
     | ASM_NUMBER #asmExprInt
     | ASM_CHAR #asmExprChar
+    ;
+
+
+genericAssocList
+    : genericAssociation (COMMA genericAssociation)*
+    ;
+
+genericAssociation
+    : typeName COLON expr #genericAssocType
+    | DEFAULT COLON expr  #genericAssocDefault
     ;

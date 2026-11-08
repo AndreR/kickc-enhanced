@@ -2943,6 +2943,217 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return OperatorTypeId.getTypeIdConstantVar(program.getScope(), type);
    }
 
+   public static boolean isCompatibleGeneric(SymbolType controlling, SymbolType assoc) {
+      if(controlling == null || assoc == null) return false;
+      SymbolType c = controlling.getQualified(false, false);
+      SymbolType a = assoc.getQualified(false, false);
+      if(c instanceof SymbolTypeProcedure) {
+         c = new SymbolTypePointer(c);
+      }
+      if(c.equals(a)) return true;
+      if(SymbolType.NUMBER.equals(c) && SymbolType.SWORD.equals(a)) return true;
+      if(c instanceof SymbolTypePointer && a instanceof SymbolTypePointer) {
+         SymbolTypePointer cp = (SymbolTypePointer) c;
+         SymbolTypePointer ap = (SymbolTypePointer) a;
+         if(cp.getArraySpec() != null && ap.getArraySpec() == null) {
+            return cp.getElementType().getQualified(false, false).equals(ap.getElementType().getQualified(false, false));
+         }
+      }
+      return false;
+   }
+
+   private SymbolType inferCommaExprType(KickCParser.CommaExprContext ctx) {
+      if(ctx instanceof KickCParser.CommaNoneContext) {
+         return inferExprType(((KickCParser.CommaNoneContext) ctx).expr());
+      } else if(ctx instanceof KickCParser.CommaSimpleContext) {
+         return inferExprType(((KickCParser.CommaSimpleContext) ctx).expr());
+      }
+      return null;
+   }
+
+   private SymbolType inferExprType(KickCParser.ExprContext ctx) {
+      if(ctx == null) return null;
+      if(ctx instanceof KickCParser.ExprParContext) {
+         return inferCommaExprType(((KickCParser.ExprParContext) ctx).commaExpr());
+      } else if(ctx instanceof KickCParser.ExprIdContext) {
+         String name = ((KickCParser.ExprIdContext) ctx).NAME().getText();
+         Symbol symbol = getCurrentScope().findSymbol(name);
+         if(symbol != null) {
+            return symbol.getType();
+         }
+         return null;
+      } else if(ctx instanceof KickCParser.ExprNumberContext) {
+         try {
+            ConstantLiteral lit = NumberParser.parseIntegerLiteral(ctx.getText());
+            return lit.getType(program.getScope());
+         } catch(Exception e) {
+            return SymbolType.NUMBER;
+         }
+      } else if(ctx instanceof KickCParser.ExprStringContext) {
+         return new SymbolTypePointer(SymbolType.BYTE);
+      } else if(ctx instanceof KickCParser.ExprCharContext) {
+         return SymbolType.BYTE;
+      } else if(ctx instanceof KickCParser.ExprBoolContext) {
+         return SymbolType.BOOLEAN;
+      } else if(ctx instanceof KickCParser.ExprNullPtrContext) {
+         return new SymbolTypePointer(SymbolType.VOID);
+      } else if(ctx instanceof KickCParser.ExprCastContext) {
+         return (SymbolType) this.visit(((KickCParser.ExprCastContext) ctx).typeName());
+      } else if(ctx instanceof KickCParser.ExprUnaryContext) {
+         KickCParser.ExprUnaryContext unaryCtx = (KickCParser.ExprUnaryContext) ctx;
+         String op = unaryCtx.getChild(0).getText();
+         SymbolType operandType = inferExprType(unaryCtx.expr());
+         if("&".equals(op)) {
+            return operandType != null ? new SymbolTypePointer(operandType) : null;
+         } else if("!".equals(op)) {
+            return SymbolType.BOOLEAN;
+         } else {
+            OperatorUnary operatorUnary = Operators.getUnary(op);
+            if(operatorUnary != null && operandType != null) {
+               return operatorUnary.inferType(operandType);
+            }
+            return operandType;
+         }
+      } else if(ctx instanceof KickCParser.ExprPtrContext) {
+         SymbolType ptrType = inferExprType(((KickCParser.ExprPtrContext) ctx).expr());
+         if(ptrType instanceof SymbolTypePointer) {
+            return ((SymbolTypePointer) ptrType).getElementType();
+         }
+         return null;
+      } else if(ctx instanceof KickCParser.ExprPreModContext) {
+         return inferExprType(((KickCParser.ExprPreModContext) ctx).expr());
+      } else if(ctx instanceof KickCParser.ExprPostModContext) {
+         return inferExprType(((KickCParser.ExprPostModContext) ctx).expr());
+      } else if(ctx instanceof KickCParser.ExprBinaryContext) {
+         KickCParser.ExprBinaryContext binCtx = (KickCParser.ExprBinaryContext) ctx;
+         String op = binCtx.getChild(1).getText();
+         if("==".equals(op) || "!=".equals(op) || "<".equals(op) || "<=".equals(op) || ">".equals(op) || ">=".equals(op) || "&&".equals(op) || "||".equals(op)) {
+            return SymbolType.BOOLEAN;
+         }
+         SymbolType left = inferExprType(binCtx.expr(0));
+         SymbolType right = inferExprType(binCtx.expr(1));
+         OperatorBinary binOp = Operators.getBinary(op);
+         if(binOp != null && left != null && right != null) {
+            return binOp.inferType(left, right);
+         }
+         return left != null ? left : right;
+      } else if(ctx instanceof KickCParser.ExprTernaryContext) {
+         return inferExprType(((KickCParser.ExprTernaryContext) ctx).expr(1));
+      } else if(ctx instanceof KickCParser.ExprDotContext) {
+         KickCParser.ExprDotContext dotCtx = (KickCParser.ExprDotContext) ctx;
+         SymbolType structType = inferExprType(dotCtx.expr());
+         if(structType instanceof SymbolTypeStruct) {
+            StructDefinition structDef = ((SymbolTypeStruct) structType).getStructDefinition(program.getScope());
+            if(structDef != null) {
+               Variable member = structDef.getMember(dotCtx.NAME().getText());
+               if(member != null) return member.getType();
+            }
+         }
+         return null;
+      } else if(ctx instanceof KickCParser.ExprArrowContext) {
+         KickCParser.ExprArrowContext arrowCtx = (KickCParser.ExprArrowContext) ctx;
+         SymbolType ptrType = inferExprType(arrowCtx.expr());
+         if(ptrType instanceof SymbolTypePointer && ((SymbolTypePointer) ptrType).getElementType() instanceof SymbolTypeStruct) {
+            StructDefinition structDef = ((SymbolTypeStruct) ((SymbolTypePointer) ptrType).getElementType()).getStructDefinition(program.getScope());
+            if(structDef != null) {
+               Variable member = structDef.getMember(arrowCtx.NAME().getText());
+               if(member != null) return member.getType();
+            }
+         }
+         return null;
+      } else if(ctx instanceof KickCParser.ExprArrayContext) {
+         SymbolType arrType = inferExprType(((KickCParser.ExprArrayContext) ctx).expr());
+         if(arrType instanceof SymbolTypePointer) {
+            return ((SymbolTypePointer) arrType).getElementType();
+         }
+         return null;
+      } else if(ctx instanceof KickCParser.ExprCallContext) {
+         KickCParser.ExprCallContext callCtx = (KickCParser.ExprCallContext) ctx;
+         SymbolType fnType = inferExprType(callCtx.expr());
+         if(fnType instanceof SymbolTypeProcedure) {
+            return ((SymbolTypeProcedure) fnType).getReturnType();
+         }
+         if(fnType instanceof SymbolTypePointer && ((SymbolTypePointer) fnType).getElementType() instanceof SymbolTypeProcedure) {
+            return ((SymbolTypeProcedure) ((SymbolTypePointer) fnType).getElementType()).getReturnType();
+         }
+         return null;
+      } else if(ctx instanceof KickCParser.ExprSizeOfContext || ctx instanceof KickCParser.ExprSizeOfTypeContext || ctx instanceof KickCParser.ExprCountOfContext || ctx instanceof KickCParser.ExprCountOfTypeContext || ctx instanceof KickCParser.ExprTypeIdContext || ctx instanceof KickCParser.ExprTypeIdTypeContext) {
+         return SymbolType.WORD;
+      } else if(ctx instanceof KickCParser.ExprAssignmentContext) {
+         return inferExprType(((KickCParser.ExprAssignmentContext) ctx).expr(0));
+      } else if(ctx instanceof KickCParser.ExprAssignmentCompoundContext) {
+         return inferExprType(((KickCParser.ExprAssignmentCompoundContext) ctx).expr(0));
+      } else if(ctx instanceof KickCParser.ExprGenericContext) {
+         return inferGenericType((KickCParser.ExprGenericContext) ctx);
+      }
+      return null;
+   }
+
+   private SymbolType inferGenericType(KickCParser.ExprGenericContext ctx) {
+      SymbolType controllingType = inferExprType(ctx.expr());
+      if(controllingType == null) return null;
+      KickCParser.ExprContext selectedExpr = null;
+      KickCParser.ExprContext defaultExpr = null;
+      for(KickCParser.GenericAssociationContext assocCtx : ctx.genericAssocList().genericAssociation()) {
+         if(assocCtx instanceof KickCParser.GenericAssocDefaultContext) {
+            defaultExpr = ((KickCParser.GenericAssocDefaultContext) assocCtx).expr();
+         } else if(assocCtx instanceof KickCParser.GenericAssocTypeContext) {
+            KickCParser.GenericAssocTypeContext typeAssoc = (KickCParser.GenericAssocTypeContext) assocCtx;
+            SymbolType assocType = (SymbolType) this.visit(typeAssoc.typeName());
+            if(selectedExpr == null && isCompatibleGeneric(controllingType, assocType)) {
+               selectedExpr = typeAssoc.expr();
+            }
+         }
+      }
+      if(selectedExpr == null) selectedExpr = defaultExpr;
+      return selectedExpr != null ? inferExprType(selectedExpr) : null;
+   }
+
+   @Override
+   public Object visitExprGeneric(KickCParser.ExprGenericContext ctx) {
+      SymbolType controllingType = inferExprType(ctx.expr());
+      if(controllingType == null) {
+         throw new CompileError("Cannot determine type of controlling expression in _Generic", new StatementSource(ctx));
+      }
+
+      KickCParser.ExprContext selectedExpr = null;
+      KickCParser.ExprContext defaultExpr = null;
+      List<SymbolType> seenTypes = new ArrayList<>();
+
+      for(KickCParser.GenericAssociationContext assocCtx : ctx.genericAssocList().genericAssociation()) {
+         if(assocCtx instanceof KickCParser.GenericAssocDefaultContext) {
+            if(defaultExpr != null) {
+               throw new CompileError("Multiple default cases in _Generic", new StatementSource(assocCtx));
+            }
+            defaultExpr = ((KickCParser.GenericAssocDefaultContext) assocCtx).expr();
+         } else if(assocCtx instanceof KickCParser.GenericAssocTypeContext) {
+            KickCParser.GenericAssocTypeContext typeAssoc = (KickCParser.GenericAssocTypeContext) assocCtx;
+            SymbolType assocType = (SymbolType) this.visit(typeAssoc.typeName());
+            for(SymbolType seen : seenTypes) {
+               if(isCompatibleGeneric(seen, assocType)) {
+                  throw new CompileError("Duplicate type in _Generic association list: " + assocType.toCDecl(), new StatementSource(typeAssoc));
+               }
+            }
+            seenTypes.add(assocType);
+
+            if(selectedExpr == null && isCompatibleGeneric(controllingType, assocType)) {
+               selectedExpr = typeAssoc.expr();
+            }
+         }
+      }
+
+      if(selectedExpr == null) {
+         if(defaultExpr != null) {
+            selectedExpr = defaultExpr;
+         } else {
+            throw new CompileError("Controlling expression type " + controllingType.toCDecl() + " not matched in _Generic", new StatementSource(ctx));
+         }
+      }
+
+      return this.visit(selectedExpr);
+   }
+
+
    @Override
    public Object visitExprCall(KickCParser.ExprCallContext ctx) {
       List<RValue> parameters;

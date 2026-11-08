@@ -100,6 +100,7 @@ ENUM : 'enum' ;
 SIZEOF : 'sizeof' ;
 COUNTOF : 'countof' | '_Countof' ;
 STATIC_ASSERT : 'static_assert' | '_Static_assert' ;
+GENERIC : '_Generic' ;
 NULLPTR : 'nullptr' ;
 TYPEID : 'typeid' ;
 DEFINED : 'defined' ;

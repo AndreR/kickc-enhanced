@@ -45,7 +45,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-19** | Operators | Compile-Time Array Length Operator `countof()` | C2Y (C29) | ✅ Completed |
 | **F-20** | Controlflow | Named Loops: `break label;` & `continue label;` | C2Y (C29) | ✅ Completed |
 | **F-21** | Safety | Compile-Time Assertions (`static_assert` / `_Static_assert`) | C11 / C23 | ✅ Completed |
-| **F-22** | Metaprog | `_Generic` Type-Dispatch for Polymorphic 8/16-Bit Macros | C11 | ⚪ Planned |
+| **F-22** | Metaprog | `_Generic` Type-Dispatch for Polymorphic 8/16-Bit Macros | C11 | ✅ Completed |
 | **F-23** | Lexer | Digit Separators (`0b1100_0011`, `1_000`) & C23 Keywords (`nullptr`, `{}`) | C23 | ✅ Completed |
 | **F-24** | Controlflow | `if`- & `switch`-Statements with Initializers | C2Y (C29) | ✅ Completed |
 | **F-25** | ABI / Opt | Auto Carry-Flag Boolean Returns (`__carry` / Auto-Carry ABI) | 6502 Idiom | ⚪ Planned |
