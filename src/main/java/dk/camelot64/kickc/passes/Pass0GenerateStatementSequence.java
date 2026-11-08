@@ -2357,6 +2357,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    }
 
    private EnumDefinition currentEnum = null;
+   private SymbolType currentEnumUnderlyingType = null;
 
    @Override
    public Object visitEnumDef(KickCParser.EnumDefContext ctx) {
@@ -2367,21 +2368,28 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          } else {
             enumDefName = getCurrentScope().allocateIntermediateVariableName();
          }
+         SymbolType enumUnderlyingType = SymbolType.BYTE;
+         if(ctx.type() != null) {
+            visit(ctx.type());
+            enumUnderlyingType = varDecl.getEffectiveType();
+         }
          EnumDefinition enumDefinition = new EnumDefinition(enumDefName, getCurrentScope());
          getCurrentScope().add(enumDefinition);
          this.currentEnum = enumDefinition;
+         this.currentEnumUnderlyingType = enumUnderlyingType;
          scopeStack.push(currentEnum);
          visit(ctx.enumMemberList());
          scopeStack.pop();
          this.currentEnum = null;
+         this.currentEnumUnderlyingType = null;
          // Copy all members to upper-level scope
          Scope parentScope = getCurrentScope();
          while(parentScope instanceof StructDefinition || parentScope instanceof TypeDefsScope)
             parentScope = parentScope.getScope();
          for(Variable member : enumDefinition.getAllConstants(false)) {
-            parentScope.add(Variable.createConstant(member.getLocalName(), SymbolType.BYTE, parentScope, member.getInitValue(), currentSegmentData));
+            parentScope.add(Variable.createConstant(member.getLocalName(), enumUnderlyingType, parentScope, member.getInitValue(), currentSegmentData));
          }
-         varDecl.setDeclType(SymbolType.BYTE);
+         varDecl.setDeclType(enumUnderlyingType);
          return null;
       } catch(CompileError e) {
          throw new CompileError(e.getMessage(), new StatementSource(ctx));
@@ -2390,6 +2398,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public Object visitEnumMember(KickCParser.EnumMemberContext ctx) {
+      SymbolType underlyingType = currentEnumUnderlyingType != null ? currentEnumUnderlyingType : SymbolType.BYTE;
       String memberName = ctx.NAME().getText();
       ConstantValue enumValue;
       if(ctx.expr() != null) {
@@ -2402,19 +2411,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          // No specific value - find previous value
          List<Variable> values = new ArrayList<>(currentEnum.getAllConstants(false));
          if(values.isEmpty()) {
-            enumValue = new ConstantInteger(0L, SymbolType.BYTE);
+            enumValue = new ConstantInteger(0L, underlyingType);
          } else {
             Variable prevEnumMember = values.get(values.size() - 1);
             ConstantValue prevValue = prevEnumMember.getInitValue();
             if(prevValue instanceof ConstantInteger) {
-               enumValue = new ConstantInteger(((ConstantInteger) prevValue).getInteger() + 1, SymbolType.BYTE);
+               enumValue = new ConstantInteger(((ConstantInteger) prevValue).getInteger() + 1, underlyingType);
             } else {
-               enumValue = new ConstantBinary(prevValue, Operators.PLUS, new ConstantInteger(1L, SymbolType.BYTE));
-
+               enumValue = new ConstantBinary(prevValue, Operators.PLUS, new ConstantInteger(1L, underlyingType));
             }
          }
       }
-      currentEnum.add(Variable.createConstant(memberName, SymbolType.BYTE, getCurrentScope(), enumValue, currentSegmentData));
+      currentEnum.add(Variable.createConstant(memberName, underlyingType, getCurrentScope(), enumValue, currentSegmentData));
       return null;
    }
 
@@ -2907,6 +2915,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       PointerDereferenceIndexed pointerDereferenceIndexed = new PointerDereferenceIndexed(array, index);
       addExprToConsume(pointerDereferenceIndexed);
       return pointerDereferenceIndexed;
+   }
+
+   @Override
+   public RValue visitExprNullPtr(KickCParser.ExprNullPtrContext ctx) {
+      return new ConstantCastValue(new SymbolTypePointer(SymbolType.VOID), new ConstantInteger(0L));
    }
 
    @Override

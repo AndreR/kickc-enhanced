@@ -93,7 +93,9 @@ public class Initializers {
          initValue = constantifyUnion((UnionDesignator) initValue, (SymbolTypeStruct) typeSpec.getType(), program, source);
       } else if(initValue instanceof ValueList) {
          ValueList initList = (ValueList) initValue;
-         if(typeSpec.getType() instanceof SymbolTypePointer && ((SymbolTypePointer) typeSpec.getType()).getArraySpec() != null) {
+         if(initList.getList().isEmpty()) {
+            initValue = createZeroValue(typeSpec, source);
+         } else if(typeSpec.getType() instanceof SymbolTypePointer && ((SymbolTypePointer) typeSpec.getType()).getArraySpec() != null) {
             // Type is an array
             initValue = constantifyArray(initList, (SymbolTypePointer) typeSpec.getType(), program, source);
          } else if(typeSpec.getType() instanceof SymbolTypeStruct) {
