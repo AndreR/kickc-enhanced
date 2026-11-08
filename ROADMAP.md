@@ -69,7 +69,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-43** | Library | Library Bugfix: `stdint.h` & `limits.h` (32-Bit Limits, Macro Conversion, `limits.h`) | ISO C Library | ✅ Completed |
 | **F-44** | Library | Library Bugfix: `sine.c` (`sin16s_gen2` Precedence) & `c64-tod.c` (AM/PM Masking) | 6502 Library | ✅ Completed |
 | **F-45** | Math | Library Math: Fast 6502 Division & Zero-RAM Square Root (`sqrt16`, `div16u`) | 6502 Math | 🟢 Completed |
-| **F-46** | Math | Library Math: Trig & Multiplier Optimization (Sine Quadrant Symmetries, CORDIC) | 6502 Math | ⚪ Planned |
+| **F-46** | Math | Library Math: Trig & Multiplier Optimization (Sine Quadrant Symmetries, CORDIC) | 6502 Math | ⚪ 🟢 Completed |
 | **F-47** | Library | Library: High-Performance Retro-Game Utilities (PRNG Suite, Multiplexer, Fast `strlen`) | 6502 Library | ⚪ Planned |
 | **F-48** | Hardware | Library C64: Hardware Drivers (Commodore 1351 Mouse, REU DMA & Raster Sync) | C64 Hardware | ⚪ Planned |
 | **F-49** | Graphics | Library C64: Asset & Graphics Pipeline (Universal ZX02 Decompressor, Fading) | C64 Graphics | ⚪ Planned |
