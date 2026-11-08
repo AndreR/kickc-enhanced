@@ -74,6 +74,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-48** | Hardware | Library C64: Hardware Drivers (Commodore 1351 Mouse, REU DMA & Raster Sync) | C64 Hardware | 🟢 Completed |
 | **F-49** | Graphics | Library C64: Asset & Graphics Pipeline (Universal ZX02 Decompressor, Fading) | C64 Graphics | 🟢 Completed |
 | **F-50** | I/O | Library C64: High-Speed Disk I/O Suite (Hardware Probing, Turbo Read/Write, ELoad) | C64 I/O | 🟢 Completed |
+| **F-51** | Compression | Library: Ultra-Fast Run-Length Encoding (RLE) Compression Suite (<rle.h>) | 6502 Library | 🟢 Completed |
 
 ---
 
