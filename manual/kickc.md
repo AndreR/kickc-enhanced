@@ -1,66 +1,102 @@
 
 
-# BETA
+# KickC Enhanced Reference Manual
 
-KickC is currently in beta, and occasionally crash with a cryptic error or create ASM code that does not work properly. Feel free to test it and report any problems or errors you encounter. Also, be prepared that breaking changes (to syntax, to semantics, etc.) may be implemented in the next versions.
+KickC is an optimizing C-to-6502 cross-compiler designed to generate readable, ultra-compact, and cycle-efficient machine code for MOS 6502-family systems (such as the Commodore 64, VIC-20, Plus/4, Atari 8-bit, NES, MEGA65, and Commander X16).
+
+## Table of Contents
+
+- [1 What is KickC?](#1-what-is-kickc)
+  - [1.1 The KickC Language](#11-the-kickc-language)
+  - [1.2 Supported 6502-based platforms](#12-supported-6502-based-platforms)
+  - [1.3 Optimized and Readable Assembler Code](#13-optimized-and-readable-assembler-code)
+  - [1.4 Getting Started](#14-getting-started)
+- [2 KickC Language Reference](#2-kickc-language-reference)
+  - [2.1 Variables](#21-variables)
+  - [2.2 Data Types](#22-data-types)
+  - [2.3 Expressions and Operators](#23-expressions-and-operators)
+  - [2.4 Statements](#24-statements)
+  - [2.5 Functions](#25-functions)
+  - [2.6 Comments](#26-comments)
+  - [2.7 Splitting Code into Multiple Files](#27-splitting-code-into-multiple-files)
+  - [2.8 Variable Directives](#28-variable-directives)
+  - [2.9 Function Directives](#29-function-directives)
+  - [2.10 Controlling the Compilation](#210-controlling-the-compilation)
+  - [2.11 Standard and Retro-Computing Library Suite](#211-standard-and-retro-computing-library-suite)
+  - [2.12 Comparison with Standard C](#212-comparison-with-standard-c)
+- [3 Working with KickC](#3-working-with-kickc)
+  - [3.1 Controlling Output Files](#31-controlling-output-files)
+  - [3.2 KickC Command Line Reference](#32-kickc-command-line-reference)
+- [4 The Compiler Architecture](#4-the-compiler-architecture)
+  - [4.1 Loading and Parsing (Pass 0)](#41-loading-and-parsing-pass-0)
+  - [4.2 SSA Control Flow Graph & Symbol Table Generation (Pass 1)](#42-ssa-control-flow-graph-symbol-table-generation-pass-1)
+  - [4.3 SSA Optimization Micro-Passes (Pass 2)](#43-ssa-optimization-micro-passes-pass-2)
+  - [4.4 Live-Range Analysis & Call Graph Resolution (Pass 3)](#44-live-range-analysis-call-graph-resolution-pass-3)
+  - [4.5 Register Allocation & Variable Uplift (Pass 4)](#45-register-allocation-variable-uplift-pass-4)
+  - [4.6 Assembler Code Generation (Pass 4)](#46-assembler-code-generation-pass-4)
+  - [4.7 Pass 5 Assembler Code Optimization](#47-pass-5-assembler-code-optimization)
+- [5 Assembler Fragment Subsystem](#5-assembler-fragment-subsystem)
+  - [5.1 Fragment Naming Conventions](#51-fragment-naming-conventions)
+  - [5.2 Fragment Synthesis & Adding Missing Fragments](#52-fragment-synthesis-adding-missing-fragments)
+
+---
 
 # 1 What is KickC?
 
 KickC is a C-compiler for 6502-based platforms creating optimized and readable assembler code.
 
-The KickC language is classic C with a few limitations, and a few extensions to ensure an optimal fit for creating 6502 assembler code. 
+The KickC language is classic C with a few intentional architectural differences to match the 8-bit 6502 architecture, augmented by selective high-leverage modern features from **C11**, **C23**, and **C2Y**, plus low-level 6502 extensions.
 
 ## 1.1 The KickC Language
 
-The language is 95% standard C and supports most of the basic features of C, so it should be quite easy to get started with if you have programmed in C or any similar language.
+The language is largely standard C (based on C99 with modern C11/C23/C2Y features) and supports most core language constructs, so it is intuitive to get started with for any C programmer.
 
-Here is a simple “hello world” program, that prints “hello world!” on the screen. 
+Here is a simple "hello world" program that prints "hello world!" on the screen:
 
-```C
+```c
 #include <stdio.h>
 void main() {
-	printf(“hello world!”);
+    printf("hello world!");
 }
 ```
 
-The language has some limitations compared to standard C, for example no support for unions or reentrant functions. Some features were omitted because they cannot be realized in a way that creates optimized 6502 assembler code. Others were omitted simply because they have not yet been implemented in the language.
+Unlike desktop C compilers, KickC does not rely on a dynamic runtime stack frame or automatic integer promotion to 16-bit `int`, both of which would cause severe performance degradation on an 8-bit CPU. Instead, KickC compiles code via an SSA (Static Single Assignment) Control Flow Graph, a static call graph, global variable live-range analysis, and aggressive Zero-Page register allocation.
 
-The language also has a few extensions to standard C. The modifications and extensions were included either to allow creation of better 6502 assembler code or for convenience. 
-
-All limitations, modifications and extensions are described in the following sections.
+The language also provides powerful extensions tailored specifically for 8-bit hardware, such as split low/high word arrays (`__lohi`), struct-of-arrays flattening (`__soa`), packed 4-bit nibble arrays (`uint4_t`), fixed-point math types and suffixes (`fixed8_8`, `fixed16_8`, `f8`, `f16`), the 16-bit register calling convention (`__ax`), auto carry-flag boolean returns (`__carry`), cycle-exact delay synthesis (`delay_cycles`), binary asset embedding (`#embed`), and memory segment typing (`#pragma segment_type`).
 
 ## 1.2 Supported 6502-based platforms
 
-The KickC-compiler includes all necessary linker and header files to makes it easy to create and test binaries for the following 6502-based platforms out-of-the-box:
-  - Commodore VIC 20
+The KickC compiler includes target configurations and linker scripts for the following platforms out-of-the-box:
+  - Commodore VIC-20
   - Commodore 64
-  - Commodore Plus/4 ( also usable for Commodore 16 and Commodore 116)
+  - Commodore Plus/4 (also usable for Commodore 16 and Commodore 116)
   - Atari 2600
-  - Atari XL/XE 
+  - Atari XL/XE
   - Nintendo NES
   - MEGA65
   - Commander X16
 
+For convenience, KickC supports compiling, assembling, and executing directly in an emulator from the command line (`-e`).
 
-For convenience KickC supports compiling and running in a suitable emulator directly from the command line.
+Custom platforms and memory configurations can be easily added by supplying a platform target definition (`.tgt`) and a KickAssembler linker script (`.ld`).
 
-If you wish to develop for another 6502-based platform, then you can create your own linker and header-files for that platform.
-
-KickC uses the very versatile [Kick Assembler](http://theweb.dk/KickAssembler). The KickC Compiler produces assembler code for the MOS Technology 6502 processor family. Specifically the compiler supports 6502, 65C02, 65CE02 and 45GS02 CPUs.
+KickC generates assembler code for the [Kick Assembler](http://theweb.dk/KickAssembler). Specifically, the compiler supports the `6502`, `6502x` (with stable undocumented/illegal opcodes), `65C02`, `65CE02`, and `45GS02` CPUs.
 
 ## 1.3 Optimized and Readable Assembler Code
-The compiler uses a number of modern optimization methods to create 6502-family assembler code that executes as fast as possible and does not contain unnecessary boilerplate. The optimization techniques include:
-  - Detection of constant values and expressions
-  - Optimized allocation of registers to variables
-  - Optimized parameter and return value passing to/from functions
-  - Minimizing the number of zero-page addresses used for storing variables
-  - Choosing optimal assembler instructions to represent each statement
-  - Removing unused functions, variables and code
-  - Peephole optimization of the generated assembler code   
 
-The optimization techniques are also explained in more detail in later sections.
+The compiler uses advanced optimization techniques to produce readable 6502 assembly that rivals hand-crafted machine code:
+  - **Constant propagation and folding:** Immediate evaluation of constant expressions at compile time.
+  - **Aggressive Zero-Page and CPU register allocation:** Phi-lifting, variable live-range coalescing, and combination uplift into registers A, X, and Y.
+  - **Static register and flag tracking:** Interprocedural and intra-block tracking of accumulator, index registers, and processor status flags (Carry, Zero, Negative).
+  - **NMOS-6510 Undocumented Opcodes (`mos6502x` / `rom6502x`):** Automatic synthesis of stable, deterministic green opcodes (`LAX`, `SAX`, `ALR`, `DCP`, `ISC`).
+  - **Tail Call Optimization (TCO):** Automatically converts tail `JSR <proc>; RTS` sequences into direct `JMP <proc>` instructions, and relaxes long-branch return trampolines.
+  - **High-speed Switch Jump-Tables:** Dense `switch` statements ($\ge 4$ cases) compile to split 12-cycle RTS dispatch tables rather than slow comparison cascades.
+  - **Pointer-to-SMC Optimization:** Replaces sequential Zero-Page pointer dereferences in writable RAM segments with direct absolute self-modifying code operands.
+  - **Dead Store & Dead Load-Store Elimination:** Uses recursive `CanonicalResolver` symbol tracking to eliminate dead SSA temporaries and unused register loads.
+  - **Zero-Waste Page Boundary Loop Alignment:** Aligns time-critical inner loops to avoid 1-cycle 256-byte page crossing penalties.
+  - **Removal of unused functions and data:** Whole-program analysis removes unreachable procedures and unreferenced global tables.
 
-Below is a slightly more complex version of hello world, which prints “hello world!” with an added space between each letter on the first and third line of the C64 default screen at 0x400. This example illustrates how the KickC compiler creates optimized readable 6502 assembler.
+Below is a slightly more complex version of hello world, which prints "hello world!" with an added space between each letter on the first and third line of the C64 default screen at 0x400. This example illustrates how the KickC compiler creates optimized readable 6502 assembler.
 
 **helloworld2.c**
 ```C
@@ -136,7 +172,7 @@ The KickC Compiler creates readable 6502 assembler code for the helloworld2 prog
   - Creating a local named scope in the assembler-code for the methods `main` and `print2` by enclosing them in curly braces.
   - Placing method-local data and labels inside the method scope.This allows other assembler code to access the local data/labels using dot-syntax eg. `main.hello` or `print2.at`.
 
-# 1.4 Getting Started
+## 1.4 Getting Started
 
 The KickC development is hosted on gitlab (https://gitlab.com/camelot/kickc). Here it is possible to follow the development and to download the latest binary release.
 
@@ -192,1391 +228,1659 @@ To create your own KickC-programs use any text-editor to create a source file co
 
 # 2 KickC Language Reference
 
-KickC is a C-family language, and 95% of the syntax and semantics is the same as C99. In the following the different parts of the language are explained. Finally the differences between KickC and standard C are listed.
+KickC is a C-family language based on C99 with selective high-leverage modern C extensions from C11, C23, and C2Y, tailored specifically for optimal 6502 code generation.
 
 ## 2.1 Variables
 
-The selected text discusses variable declaration in C programming language. Here are the key points:
+Variables are declared by **type name** and can include an optional **initialization assignment**:
 
-- Variables are declared by **type name** and can include an optional **initialization assignment**. For example, `char size = 12;` declares a signed char variable named 'size' with an initial value of 12.
-- If variables do not have an initial assignment, they will be initialized with the **default value zero**.
-- It's possible to declare multiple variables of the same type by separating the names and optional initializations with commas. For example, `unsigned int a = 4, b;` declares two unsigned int variables 'a' and 'b'. 'a' is initialized to 4 while 'b' is initialized to the default value (zero).
-- In KickC, variables can be declared at any point in the program, outside functions or inside function declarations.
+- `char size = 12;` declares an unsigned char variable named `size` initialized to 12.
+- Uninitialized global variables are initialized with the **default value zero**.
+- Multiple variables of the same type can be declared together: `unsigned int a = 4, b;`.
+- Variables can be initialized with the standard C23 empty initializer `{}`: `struct Point pt = {};` or `char buffer[32] = {};`, ensuring all members are set to zero.
+- Variables can be declared at any point in the program (global scope, local block scope, or inside `for`/`if`/`switch` statement headers).
 
 ## 2.2 Data Types
 
-### 2.2.1 Integers
+### 2.2.1 Integers & Digit Separators
 
-KickC supports the standard C integer data types such as `char`, `short`, `int`, `long`. Additionally, it introduces some fixed-size integer types that are more familiar on the 6502 platform: `byte`, `word`, `dword`.
+KickC supports standard ISO C integer types as well as fixed-size 6502-friendly aliases and the standard `<stdint.h>` exact-width types:
 
-| Type Name | Description |
-| --- | --- |
-| `char`, `unsigned char`, `byte`, `unsigned byte` | An unsigned 8 bit (1 byte) integer. Range is [0;255]. |
-| `signed char`, `signed byte` | A signed 8 bit (1 byte) integer in two’s complement. Range is [-128;127]. |
-| `unsigned short`, `unsigned int`, `unsigned`, `word`, `unsigned word` | An unsigned 16 bit (2 byte) integer. Range is [0;65,535]. |
-| `short`, `signed short`, `int`, `signed int`, `signed`, `signed word` | A signed 16 bit (2 byte) integer in two’s complement. Range is [−32,767; +32,767]. |
-| `unsigned long`, `dword`, `unsigned dword` | An unsigned 32 bit (4 byte) integer. Range is [0, 4,294,967,295]. |
-| `long`, `signed long`, `signed dword` | A signed 32 bit (4 byte) integer in two’s complement. Range is [−2,147,483,647, 2,147,483,647]. |
+| Type Name | Standard Header Type | Size (Bytes) | Representation / Range |
+| :--- | :--- | :---: | :--- |
+| `char`, `unsigned char`, `byte`, `unsigned byte` | `uint8_t` | 1 | Unsigned 8-bit integer: [0; 255] |
+| `signed char`, `signed byte` | `int8_t` | 1 | Signed 8-bit integer (two's complement): [-128; 127] |
+| `unsigned short`, `unsigned int`, `unsigned`, `word`, `unsigned word` | `uint16_t` | 2 | Unsigned 16-bit integer: [0; 65,535] |
+| `short`, `signed short`, `int`, `signed int`, `signed`, `signed word` | `int16_t` | 2 | Signed 16-bit integer (two's complement): [−32,768; +32,767] |
+| `__uint24`, `uint24_t` | `uint24_t` | 3 | Unsigned 24-bit integer: [0; 16,777,215] |
+| `__int24`, `int24_t` | `int24_t` | 3 | Signed 24-bit integer (two's complement): [−8,388,608; +8,388,607] |
+| `unsigned long`, `dword`, `unsigned dword` | `uint32_t` | 4 | Unsigned 32-bit integer: [0; 4,294,967,295] |
+| `long`, `signed long`, `signed dword` | `int32_t` | 4 | Signed 32-bit integer (two's complement): [−2,147,483,648; +2,147,483,647] |
 
-- If the 8-bit integer types (`char`, `byte`) are declared without an `unsigned/signed` prefix, they default to `unsigned`.
-- If the C 16+bit integer types (`short`, `int`, `long`) are declared without an `unsigned/signed` prefix, they default to `signed`, except `char` which defaults to `unsigned`.
-- If the 16+bit 6502-friendly integer types (`word`, `dword`) are declared without an `unsigned/signed` prefix, they default to `unsigned`.
-- Integer literals can be either decimal, hexadecimal or binary. The syntax for hexadecimal integer literals supports both C syntax (prefixing with `0x`) and 6502 assembler syntax (prefixing with `$`). Similarly, the syntax for binary supports both prefixing with `0b` and `%`.
+Key behavioral rules:
+- Unadorned 8-bit integer types (`char`, `byte`) default to **`unsigned`**.
+- Unadorned 16-bit and 32-bit types (`short`, `int`, `long`) default to **`signed`**.
+- The 6502-friendly types `word` and `dword` default to **`unsigned`**.
+- 24-bit integer types (`uint24_t`, `int24_t`) take exactly 3 bytes in memory, making them ideal for 24-bit memory systems, coordinates on large scrolling maps, and high-precision accumulator buffers.
 
-| Prefix | Format | Examples |
-| --- | --- | --- |
-| Decimal | No prefix | `12`, `53280` |
-| Hexadecimal | `0x` or `$` | `0x40`, `$dc01` |
-| Binary | `0b` or `%` | `0b101`, `%1100110011001100` |
+#### Integer Literals & Digit Separators (C23)
 
-**Character Literals**: Character literals are unsigned bytes/chars. The syntax for a character literal is the character enclosed in single quotes. For example, `char c = 'c';`.
+Integer literals can be expressed in decimal, hexadecimal, or binary:
 
-**Escape Sequences**: Escape sequences can be used to represent special characters such as newline. The following character escape sequences are supported:
+| Format | Prefix | Examples |
+| :--- | :--- | :--- |
+| Decimal | None | `12`, `53280`, `1_000_000` |
+| Hexadecimal | `0x` or `$` | `0x40`, `$dc01`, `0xff_00` |
+| Binary | `0b` or `%` | `0b101`, `%1100_1100`, `0b1010_0101` |
 
+Digit separators (`_` or `'` as per C23) may be used freely within decimal, hexadecimal, and binary literals to improve readability when defining hardware bitmasks, screen coordinates, or memory addresses.
+
+#### Character Literals & Escape Sequences
+
+Character literals are unsigned 8-bit chars enclosed in single quotes (`'c'`). The supported escape sequences are:
 - `'\n'`: newline
 - `'\r'`: carriage return
 - `'\f'`: form feed
+- `'\t'`: horizontal tab
 - `'\'`: single quote
 - `'\"'`: double quote
 - `'\\'`: backslash
+- `'\0'`: null character
 
-**Character Encoding**: Numerically, a character is represented by whatever value the character has in the current character encoding. The default encoding depends on the platform you are compiling for. You can change the encoding by changing the target platform or by using `#pragma encoding()`.
+Character encoding is determined by the active `#pragma encoding(...)` or literal suffix (see Section 2.10.5).
 
-### 2.2.1 Booleans
+### 2.2.2 Packed 4-Bit Nibbles (`uint4_t` / `__nibble`)
 
-KickC also has a boolean type called `bool`. The boolean literals are `true` and `false`. Underlying the boolean type is a byte containing either 0 (if false) or 1 (if true). The following is an example of a boolean variable called enabled.
-
-```c
-bool enabled = true;
-```
-
-### 2.2.2 Pointers
-
-Pointers to all integer types and booleans are supported and declared using the syntax `type*`. The following is an example, where `screen` is a pointer to a `char` and `pos` is a pointer to a signed integer.
+KickC provides first-class support for 4-bit unsigned integers via `uint4_t` (defined in `<stdint.h>`) and the `__nibble` storage modifier:
 
 ```c
-char* screen; 
-int* pos;
+#include <stdint.h>
+
+uint4_t color_cache[1000]; // Allocates (1000 + 1) / 2 = 500 bytes in memory
 ```
 
-Pointers to pointers are also supported. Here an example of a pointer to a pointer to an unsigned char.
+Features:
+- **Automatic pairwise byte packing:** Array elements are stored pairwise in memory (2 nibbles per byte), halving RAM usage for 4-bit data structures (such as C64 Color-RAM caches).
+- **Transparent indexing:** Reads and writes (`color_cache[i] = 7;` or `val = color_cache[i];`) automatically handle nibble extraction, shifting, and masking in optimized assembly.
+- **Accurate introspection:** `countof(color_cache)` evaluates to 1000 (element count), while `sizeof(color_cache)` evaluates to 500 (allocated byte size).
+
+### 2.2.3 Fixed-Point Numbers & Literal Suffixes
+
+Fixed-point arithmetic is the standard zero-overhead solution for physics, subpixel motion, and trigonometry on 8-bit systems. KickC provides a complete fixed-point family in `<fixedpoint.h>` along with native compiler literal suffixes:
+
+| Type | Int / Frac Bits | Range | Typical Use Case |
+| :--- | :---: | :--- | :--- |
+| `fixed8_8` / `ufixed8_8` | 8.8 (16-bit) | Signed: [-128.0; +127.996]<br>Unsigned: [0.0; 255.996] | Single-screen sprites (< 256 px), velocities, physics |
+| `fixed16_8` / `ufixed16_8` | 16.8 (24-bit) | Signed: [-32768.0; +32767.996]<br>Unsigned: [0.0; 65535.996] | Scrolling world coordinates, camera tracking |
+| `fixed8_16` / `ufixed8_16` | 8.16 (24-bit) | Signed: [-128.0; +127.99998]<br>Unsigned: [0.0; 255.99998] | High-precision angles, normalized vector directions |
+| `fixed16_16` / `ufixed16_16` | 16.16 (32-bit) | Signed: [-32768.0; +32767.99998]<br>Unsigned: [0.0; 65535.99998] | 3D transformation matrices, raycasting, Z-buffers |
+| `fixed24_8` / `ufixed24_8` | 24.8 (32-bit) | Signed: [-8388608.0; +8388607.996]<br>Unsigned: [0.0; 16777215.996] | Massive coordinates with subpixel precision |
+| `fixed8_24` / `ufixed8_24` | 8.24 (32-bit) | Signed: [-128.0; +127.9999999]<br>Unsigned: [0.0; 255.9999999] | Extreme precision normalized wave calculations |
+
+#### Native Fixed-Point Literals
+
+Literals can be suffixed directly in source code:
+- `f8`: 8.8 fixed-point (e.g. `fixed8_8 pos = 10.5f8;`)
+- `f16`: 16.16 or 8.16 fixed-point (e.g. `fixed16_16 m = 1.5f16;`)
+- `f24`: 24-bit fractional fixed-point (e.g. `fixed8_24 ratio = 0.7071f24;`)
+
+#### Transparent Member Access & Fixed-Point Math
+
+24-bit and 32-bit fixed-point types are transparent unions, allowing direct access to the raw value, the integer part, the fractional subpixel byte, or raw bytes:
 
 ```c
-unsigned char** screenptr = &screen; 
+#include <fixedpoint.h>
+
+fixed16_8 player_x = 100.5f8; // Integer 100, fraction 128
+player_x.integer += 5;        // Modify integer part directly with 0-cycle shift
+uint8_t sub = player_x.frac;  // Read subpixel fraction
+
+// Optimized fixed-point math operations:
+fixed8_8 pos = 12.5f8;
+fixed8_8 vel = -0.25f8;
+pos = fixed_add(pos, vel);
+fixed8_8 prod = fixed_mul(pos, 2.0f8);
+int8_t px = fixed_int(pos);   // Fast integer extraction
 ```
 
-For functions it is only possible to use pointers to functions that has no return value and take no parameters.
+### 2.2.4 Booleans
 
-### 2.2.3 Arrays 
-
-Arrays are supported using the syntax `type a[]` or `type a[size]`. For most practical purposes array variables are treated exactly like pointers. 
-
-Arrays can be initialized by an array literal written as comma-separated values inside curly braces eg. `{ 1, 2, 3 }`. They can also be initialized with all zero values just by declaring the array to have a specific size.
-
-String literals can also be used to initialize an array of unsigned bytes. The syntax for a string literal is a string enclosed in double quotes. Strings can use escape sequences to represent special characters such as newline. See character literals above for a list of the escape sequences. Stings are per default zero terminated. It is possible to create a string that is not zero terminated by adding the special suffix z after the last double quote. 
-
-Arrays that are initialized will allocate the memory needed for the size.
-
-In the following example, `sums` is array of 3 signed chars initialized with zeros, `fibs` is an array of  6 signed integers containing the first Fibonacci numbers. `msg` is an unsigned char array containing the numeric value of the 5 characters ‘h’, ‘e’, ‘l’, ‘l’ and ‘o’ plus a sixth value that is zero (because strings are zero terminated) while `msg2` only has the 5 characters without the final zero. Finally `bs` is simply a pointer to a boolean.
+KickC provides a standard boolean type `bool` (with header `<stdbool.h>`). The boolean literals are `true` (1) and `false` (0). Functions can also return conditions directly in the CPU Carry flag via `__carry` (see Section 2.5.4).
 
 ```c
-signed char sums[3];
-int fibs[] = { 1, 1, 2, 3, 5, 8 };
-char msg[] = "hello";
-char msg2[] = "hello"z;
-bool bs[];
+#include <stdbool.h>
+bool active = true;
 ```
 
-Arrays of arrays are not supported.
+### 2.2.5 Pointers and nullptr (C23)
 
-### 2.2.4 Constants
-
-Constants can be declared by using the const keyword. 
+Pointers are declared with `type*`. KickC supports pointers to all integer types, fixed-point types, structs, unions, and booleans:
 
 ```c
-const char SIZE = 42;
+char* screen = (char*)0x0400;
+uint16_t* ptr_to_word;
+unsigned char** screenptr = &screen; // Pointer to pointer
 ```
 
-The compiler is quite good at detecting constants automatically, so it is not strictly necessary to declare any constants. However declaring a constant can help make the code more readable and will generate an error if any code tries to modify the value.   
+#### Function Pointers
 
-When an array is declared constant only the pointer to the array is constant. The contents of the array can still be modified.
+KickC supports function pointers using standard C syntax:
 
-### 2.2.5 No Floating Point Types
+```c
+void my_routine() { ... }
+void (*call_ptr)() = &my_routine;
 
-KickC has no floating point types, as the 6502 processor has no instructions for handling these.
+void dispatch() {
+    call_ptr(); // Indirect procedure call via JMP ($xxxx)
+}
+```
 
-### 2.3 Expressions
+#### The `nullptr` Keyword (C23)
 
-Expressions in KickC consist of operands and operators. Operands are either data type literals or names of variables or constants. All well-known expression operators from C and similar languages also exist in KickC. An example of an expression is `(bits & $80) != 0`.
+KickC supports the C23 `nullptr` keyword, representing a type-safe null pointer constant:
+
+```c
+char* ptr = nullptr;
+if (ptr != nullptr) { ... }
+```
+
+#### RAM Pointer-to-SMC Optimization
+
+When sequential pointer dereferences (`*ptr++ = val`) occur in writable RAM segments, KickC's Pass 5 optimizer automatically transforms indirect-indexed Zero-Page addressing `sta (ptr),y` into direct absolute self-modifying code `sta $ffff` with dynamic operand increments. This frees Zero-Page register pressure and saves 2 CPU cycles per store.
+
+### 2.2.6 Arrays & Advanced Array Layouts
+
+Arrays are declared with `type a[]` or `type a[size]`. For most practical purposes, array variables are treated like pointers to their first element.
+
+Arrays can be initialized with comma-separated literals, empty initializers (`{}`), zero-filling by specifying size, string literals, or compiled KickAssembler macros:
+
+```c
+signed char sums[3];                   // Zero-initialized 3-byte array
+int fibs[] = { 1, 1, 2, 3, 5, 8 };     // 6-word initialized array
+char msg[] = "hello";                  // 6 bytes (null-terminated with '\0')
+char msg2[] = "hello"z;                // 5 bytes (non-zero terminated via suffix 'z')
+bool flags[8];                         // Boolean array
+```
+
+> [!NOTE]
+> Multidimensional arrays of arrays (`type arr[M][N]`) are not supported directly on 6502 architectures to avoid costly 2D pointer dereferencing and multiplication overhead. Instead, flat 1D arrays with precomputed index lookup tables, parallel split arrays (`__lohi`), or arrays of structs (`__soa`) should be used.
+
+#### Split Low/High Word Arrays (`__lohi`)
+
+Standard 16-bit word arrays on the 6502 require index doubling (`ASL`) and 16-bit pointer math. The `__lohi` directive declares a 16-bit array up to 256 elements split into parallel low- and high-byte tables in memory:
+
+```c
+__lohi uint16_t lookup[200];
+__lohi uint16_t init_tab[4] = { 0x1234, 0x5678, 0x9abc, 0xdef0 };
+```
+
+Accessing `lookup[i]` lowers directly to two 4-cycle absolute indexed operations:
+```asm
+lda lookup, x      // Low byte
+ldy lookup+200, x  // High byte
+```
+This requires only **8 CPU cycles** (compared to 22+ cycles for normal word indexing) and avoids register clobbering. Natural `countof(lookup)` (200) and `sizeof(lookup)` (400) are fully preserved.
+
+#### Direct Binary Asset Embedding (`#embed` - C23)
+
+The C23 `#embed` directive allows embedding raw binary assets directly into array initializers at compile time:
+
+```c
+const uint8_t font[] = {
+    #embed "assets/font.bin"
+};
+
+const uint8_t sprite_header[] = {
+    #embed "assets/sprites.bin" limit(64) prefix(0x00, ) suffix(, 0xff)
+};
+```
+
+Parameters supported:
+- `limit(N)`: Embed at most $N$ bytes.
+- `prefix(...)`: Prepend constant tokens before the embedded bytes.
+- `suffix(...)`: Append constant tokens after the embedded bytes.
+- `if_empty(...)`: Tokens emitted if the file is 0 bytes.
+- `__has_embed("file.bin")`: Preprocessor conditional operator to query asset availability.
+
+### 2.2.7 Structures, Unions, and Bitfields
+
+KickC supports standard C structures, C11 anonymous structures and unions, and ISO-C bitfields.
+
+#### Struct-of-Arrays Flattening (`__soa`)
+
+Arrays of structures normally require dynamic multiplication by `sizeof(struct)` at runtime. The `__soa` directive automatically transposes an array of structures up to 256 elements into parallel column arrays in memory:
+
+```c
+struct Particle {
+    uint8_t x, y;
+    int8_t  vx, vy;
+};
+
+__soa struct Particle particles[32];
+```
+
+Accessing `particles[i].x` or updating `particles[i].vy += 1;` compiles directly to single-instruction 4-cycle absolute indexed addressing:
+```asm
+lda particles, x        // Accesses .x
+inc particles+96, x     // Updates .vy
+```
+This completely eliminates Zero-Page pointer math and runtime multiplication. Natural `sizeof(particles)` (128 bytes) and `countof(particles)` (32) are preserved.
+
+#### Anonymous Structures & Unions (C11 §6.7.2.1)
+
+Structures and unions can be nested anonymously, flattening their members directly into the enclosing scope:
+
+```c
+struct Vector {
+    union {
+        struct { uint8_t x, y; };
+        uint16_t raw;
+    };
+    uint8_t id;
+};
+
+struct Vector vec;
+vec.x = 10;     // Direct access to anonymous union member
+vec.y = 20;
+vec.raw = 0x1234;
+```
+
+KickC's Pass 5 unrolls small 2..4 byte structure and union copy assignments directly into inline `LDA/STA` pairs, eliminating loop overhead.
+
+#### ISO-C Bitfields in Structs
+
+KickC provides full support for ISO-C bitfields:
+
+```c
+struct StatusRegister {
+    uint8_t carry     : 1;
+    uint8_t zero      : 1;
+    uint8_t mode      : 3;
+    uint8_t reserved  : 3;
+};
+```
+
+The compiler packs adjacent bitfields into container integer units and synthesizes optimal single-instruction bitmasking (`AND`, `ORA`, and shifts) during reads and writes.
+
+### 2.2.8 Enumerations & Typed 8-Bit Enums (C23)
+
+Standard C enums promote to 16-bit integers. KickC supports standard enums and introduces C23 typed enumerations to enforce 1-byte storage:
+
+```c
+enum GameState : uint8_t {
+    STATE_TITLE   = 0,
+    STATE_INGAME  = 1,
+    STATE_GAMEOVER = 2
+};
+
+GameState current_state = STATE_TITLE; // Stored in 1 byte, no 16-bit promotion!
+```
+
+### 2.2.9 BCD (Binary Coded Decimal) Arithmetic
+
+6502 processors include a hardware decimal mode (`SED`/`CLD`). KickC provides `<bcd.h>` with dedicated types `bcd8_t` and `bcd16_t`:
+
+```c
+#include <bcd.h>
+
+bcd8_t score = 0x45;
+score = bcd8_add(score, 0x15); // Result: 0x60 (45 + 15 = 60 in BCD)
+bcd16_t high_score = bcd16_add(0x1999, 0x0001); // Result: 0x2000
+```
+
+The runtime functions safely manage the processor decimal flag, and interrupt handlers automatically enforce `CLD` guards to prevent decimal corruption in ISRs.
+
+### 2.2.10 Constants
+
+Constants are declared with `const`. KickC's compiler optimizes constant evaluation and constant propagation across scopes:
+
+```c
+const uint8_t SPRITE_COUNT = 8;
+const char* const SCREEN = (char*)0x0400; // Constant pointer to constant data
+```
+
+### 2.2.11 No Floating Point Types
+
+KickC does not include IEEE floating point types (`float`, `double`), as the 6502 has no hardware FPU and software floating point emulation consumes prohibitive memory and CPU cycles. Developers are strongly encouraged to use the `<fixedpoint.h>` fixed-point types (`fixed8_8`, `fixed16_8`, `fixed16_16`) which operate with native 6502 integer instructions and 0 runtime overhead.
+
+## 2.3 Expressions and Operators
+
+Expressions in KickC consist of operands and operators. Operands are either literals, variables, or constant symbols. All standard expression operators from C exist in KickC, complemented by 6502-specific low/high operators, compile-time introspection operators (`countof`, `_Generic`), and cycle-exact intrinsics.
 
 ### 2.3.1 Arithmetic Operators
 
-The arithmetic operators support performing simple numeric calculations:
+The arithmetic operators support numeric calculations:
 
 - `a + b`: Addition
 - `a - b`: Subtraction
-- `- a`: Negation
-- `+ a`: Positive
+- `- a`: Unary Negation
+- `+ a`: Unary Plus
 - `a * b`: Multiplication
 - `a / b`: Division
-- `a % b`: Modulo
+- `a % b`: Modulo / Remainder
 
-Multiplication, division, and remainder are allowed, however, there is limited run-time support for these operators as the 6502 has no instructions supporting them. Any multiplication/division/remainder that is a part of a calculation of a constant value is allowed. There is also runtime-support for unsigned multiplication of a variable by a constant.
+#### 6502 Arithmetic Optimizations
+
+The MOS 6502 has no hardware multiplication or division instructions. KickC provides deep compiler optimization to handle arithmetic efficiently:
+- **Compile-time Constant Evaluation:** All calculations on constants (e.g. `40 * 25`, `1024 / 64`) are evaluated during compilation with 0 runtime cost.
+- **Factored Shift-Add Multiplication:** Multiplications with constant factors (e.g. `x * 24`, `x * 40`, `x * 320`) are rewritten into minimal sequences of shifts and additions without 16-bit zero-extension overhead.
+- **Reciprocal Constant Division & Modulo:** Constant divisions and modulo operations on 8-bit integers (such as `/ 10`, `% 10`) are optimized via reciprocal multiplication and bit shifts in Pass 2 SSA.
+- **High-Speed Quarter-Square Multiplication (`<multiply.h>`):** Tabular 8-bit multiplication `fast_mul8u(a, b)` computes products in ~24 cycles using ROM tables, compared to ~150 cycles for loop-based software multiplication.
+- **Carry-Chain 16-Bit Division (`<math.h>` / `<division.h>`):** Cycle-optimized unrolled 6502 carry-chain routines (`div16u`, `rem16u`, `div8u`, `rem8u`).
 
 ### 2.3.2 Bitwise Operators
 
-The bitwise operators operate on the individual bits of the numeric operands:
+Bitwise operators manipulate the individual bits of numeric values:
 
-- `a & b`: Bitwise and
-- `a | b`: Bitwise or
-- `a ^ b`: Bitwise exclusive or
-- `~ a`: Bitwise not
-- `a << n`: Bitwise shift left n bits
-- `a >> n`: Bitwise shift right n bits
+- `a & b`: Bitwise AND
+- `a | b`: Bitwise OR
+- `a ^ b`: Bitwise XOR
+- `~ a`: Bitwise NOT (one's complement)
+- `a << n`: Bitwise Shift Left by $n$ bits
+- `a >> n`: Bitwise Shift Right by $n$ bits
+
+Pass 5 peephole optimizations automatically recognize 16-to-8 bit right-shifts by 2 or more bits and collapse them directly into accumulator `LSR` sequences, eliminating redundant high-byte stores.
 
 ### 2.3.3 Relational Operators
 
-The relational operators compare values and have a boolean value result:
+Relational operators compare values and produce a boolean result (`true` or `false`):
 
-- `a == b`: Equal to 
+- `a == b`: Equal to
 - `a != b`: Not equal to
 - `a < b`: Less than
 - `a <= b`: Less than or equal to
 - `a > b`: Greater than
 - `a >= b`: Greater than or equal to
 
+KickC includes full 6502 fragment coverage for unsigned and signed 8-bit, 16-bit, and 32-bit comparisons. Comparisons against zero (e.g. `if (val != 0)`) automatically utilize the 6502 status flags set by preceding `LDA`, `TAX`, or math operations, eliminating redundant `CMP #0` instructions.
+
 ### 2.3.4 Logical Operators
 
-The logical operators operate on boolean operands and have a boolean result:
+Logical operators operate on boolean expressions:
 
-- `a && b`: Logical and
-- `a || b`: Logical or
-- `! a`: Logical not
+- `a && b`: Logical AND (short-circuit evaluated)
+- `a || b`: Logical OR (short-circuit evaluated)
+- `! a`: Logical NOT
 
-When `&&` and `||` are used in if, while, do-while or similar statements they are short circuit-evaluated meaning that if a evaluates to true in if(a || b) { … } then b is never evaluated. Similarly if a evaluates to false in if(a && b) { … } then b is never evaluated.
+When `&&` and `||` are used in control flow (`if`, `while`, `do-while`), evaluation short-circuits: in `if (a || b)`, `b` is never evaluated if `a` is true; in `if (a && b)`, `b` is never evaluated if `a` is false.
+
+The logical NOT operator (`!`) synthesizes optimal branchless sequences (`EOR #1`) for Zero-Page and memory boolean variables.
 
 ### 2.3.5 Conditional Operator
 
-The conditional operator is also called ternary operator because it is the only operator using three operands. It is used to choose between two different values.
+The conditional (ternary) operator evaluates a boolean condition and selects between two expressions:
 
-`a ? b : c` Conditional
+`condition ? expr_if_true : expr_if_false`
 
-It evaluates the first operand, which should be boolean. If the first operand evaluates to true it returns the value of the second operator. If the first operand evaluates to true it returns the value of the third operator. It uses short-circuit-evaluation meaning that only one of the two last operands are evaluated depending on the value of the first operand.
-
-In this example d will be set to the value of c if c is positive and to -c if c is negative.
+It uses short-circuit evaluation, executing only the chosen branch.
 
 ```c
-char d = c>0 ? c : -c; 
+char d = (c > 0) ? c : -c;
 ```
 
 ### 2.3.6 Comma Operator
 
-The comma operator can be used to evaluate multiple values in place of an expression. It evaluates the first operand and discards the results. Then it evaluates the second operand and returns the results.
+The comma operator evaluates the left operand, discards its result, and then evaluates the right operand, returning its value:
 
-`a , b` Comma
+`expr1 , expr2`
 
-Using it can produce code that is hard to read, however it can come to good use in for()-statements to increment multiple variables. Here an example of a for()-loop with two loop variables i and j.
+This is frequently used in `for` loops to update multiple index variables simultaneously:
 
 ```c
-for(unsigned char i=0, j=0; i<32; i++, j+=2) { … }
+for (uint8_t i = 0, j = 0; i < 40; i++, j += 2) { ... }
 ```
 
 ### 2.3.7 Assignment Operators
 
-Assigning a value to a variable is also an expression operator that returns the value assigned. This means that assignments can be nested inside expressions, and that they can be chained if multiple variables should be assigned the same value like a = b = 0. An assignment of course has side effects, as it modifies the assigned variable.
+Assignment is an expression returning the assigned value, enabling chained assignments (`a = b = 0;`). Compound assignment operators provide convenient read-modify-write shorthand:
 
-Compound assignment operators, such as a += b is a convenient shorthand for updating the value of a variable. It works exactly like a = a + b.
+| Operator | Meaning |
+| :--- | :--- |
+| `a = b` | Direct assignment |
+| `a += b` | Addition assignment (`a = a + b`) |
+| `a -= b` | Subtraction assignment (`a = a - b`) |
+| `a *= b` | Multiplication assignment |
+| `a /= b` | Division assignment |
+| `a %= b` | Modulo assignment |
+| `a <<= b` | Left shift assignment |
+| `a >>= b` | Right shift assignment |
+| `a &= b` | Bitwise AND assignment |
+| `a |= b` | Bitwise OR assignment |
+| `a ^= b` | Bitwise XOR assignment |
 
-```c
-a = b	Assignment
-a += b	Addition assignment
-a -= b	Subtract assignment
-a *= b	Multiply assignment
-a /= b	Divide assignment
-a %= b	Modulo assignment
-a <<=b	Left shift assignment
-a >>=b	Right shift assignment
-a &= b	Bitwise and assignment
-a |= b	Bitwise or assignment
-a ^= b	Bitwise exclusive or assignment
-```
+Small 2..4 byte struct or union assignments unroll into direct inline `LDA/STA` pairs in Pass 5.
 
-### 2.3.8 Increment/decrement Operators
+### 2.3.8 Increment and Decrement Operators
 
-The pre-increment/decrement and post-increment/decrement operators is a convenient way of incrementing/decrementing the value of a numeric variable just before or just after the value is used in an expression.
+Pre- and post-increment/decrement operators increment or decrement numeric variables:
 
-- `++a`: Pre-increment
-- `--a`: Pre-decrement
-- `a++`: Post-increment
-- `a--`: Post-decrement
+- `++a`: Pre-increment (increments variable, evaluates to new value)
+- `--a`: Pre-decrement (decrements variable, evaluates to new value)
+- `a++`: Post-increment (evaluates to original value, then increments variable)
+- `a--`: Post-decrement (evaluates to original value, then decrements variable)
 
-Pre-incrementing works just like incrementing the value of c before the statement, meaning that `a = b + ++c;` is the same as `c += 1; a = b + c;` Similarly post-incrementing works just like incrementing the value after the statement, meaning that `a = b + c--;` is the same as `a = b + c; c -= 1;`.
+KickC generates optimal 6502 `INC`/`DEC` instructions for memory variables and `INX`/`DEX`/`INY`/`DEY` for index registers.
 
-### 2.3.9 Pointer and Array Operators 
+### 2.3.9 Pointer and Array Operators
 
-The two basic pointer operators are the `&a` address-of operator, which creates a pointer to a variable and the `*a` pointer dereference operator, which supports reading and writing the value pointed to by the pointer.
+- `&a`: Address-of operator (returns pointer to variable)
+- `*a`: Pointer dereference (reads or writes pointed memory)
+- `a[b]`: Array indexing (equivalent to `*(a + b)`)
 
-The array indexing operator `a[b]`, which supports reading and writing of array elements, is in fact also a pointer operator. Because an array variable is actually a pointer to the start of the array the array dereference operator `a[b]`, which is actually shorthand for `*(a+b)`.
+When operating in writable RAM segments, sequential pointer dereferences (`*ptr++ = val`) are automatically uplifted to direct self-modifying code operands (see Section 2.2.5).
 
-- `&a`: Address of 
-- `*a`: Pointer dereference
-- `a[b]`: Array indexing
+### 2.3.10 Low/High Byte and Word Operators
 
-### 2.3.10 Low/High Operators
+KickC includes low/high byte operators familiar from 6502 assembly language:
 
-An extension in KickC is the inclusion of operators that allow addressing the low/high byte of a word, and the low/high words of a dword. These are well known from 6502 assemblers.
+- `<a`: Low-byte of a 16-bit word, or low-word of a 32-bit dword.
+- `>a`: High-byte of a 16-bit word, or high-word of a 32-bit dword.
 
-The low-operator `<a` addresses the low-byte of the word a, or the low-word if a is a dword. Similarly the high-operator `>a` addresses the high-byte of a word or high-word of a dword.
-
-The low/high operator can also be used on the left side of assignments to modify only the low/high byte of a word or low/high word of a dword.
-
-- `<a`: Low part of
-- `>a`: High part of
-
-The following example sets the low part of the word in a to 0. If a was `$0428` before the assignment it will be `$0400` afterwards.
+These operators can also appear on the left side of an assignment to modify only the low or high part of a variable without masking:
 
 ```c
-<a = 0; 
+uint16_t ptr = 0x0400;
+<ptr = 0x28; // ptr becomes 0x0428 (compiled to direct STA ptr)
+>ptr = 0x05; // ptr becomes 0x0528 (compiled to direct STA ptr+1)
 ```
 
-### 2.3.11 Function Calls
+### 2.3.11 Compile-Time Array Length Operator (`countof` - C2Y N3169)
 
-Function that returns a value can be called as part of an expression. Functions are called by the normal parenthesis-syntax with parameter values separated by commas. How to create a function is described in the section Functions.
-
-`f(a,b)`: Function Call
-
-### 2.3.12 Automatic Type Conversion and Type Casting
-
-KickC handles automatic type conversions differently than standard C. Where standard C converts all small integers to int before evaluating expressions, KickC supports evaluating operators for all types and only performs conversions if they are strictly necessary. Limiting the number of automatic type conversions helps creating better optimized 6502 assembler. In many cases KickC can even handle operators for two values of different type directly. For instance adding a byte to a word can be done in more optimal 6502 code than first converting the byte to a word and then adding the two words. In practice, the difference to standard C rarely has any consequences.
-
-Like standard C, KickC will ensure automatic type conversion (if necessary) as long as the type of one value can contain all values of the type of the other. For instance an unsigned char can be automatically converted to a signed int as signed ints can hold all possible unsigned char values. An unsigned char cannot be automatically converted to a signed char since a signed char cannot hold all possible unsigned char values.
-
-The automatic conversions that KickC can perform for each type are described in following sections.
-
-| Type | Can be automatically converted to |
-| --- | --- |
-| `unsigned char` | `unsigned int`, `signed int`, `unsigned long`, `signed long` |
-| `signed char` | `signed long`, `signed long` |
-| `unsigned int` | `unsigned long`, `signed long` |
-| `signed int` | `signed long` |
-| `unsigned long` | - |
-| `signed long` | - |
-
-The cast operator can be used to perform explicit type conversion. Casting also allows conversions to a type that cannot hold all possible values, and where some information may be lost in the conversion, for example casting a signed char to an unsigned char.
+KickC implements the upcoming ISO C2Y `countof()` compile-time array length operator:
 
 ```c
-(type)a // Casting
+const uint8_t tiles[] = { 10, 20, 30, 40, 50 };
+static_assert(countof(tiles) == 5);
+
+for (uint8_t i = 0; i < countof(tiles); i++) {
+    render_tile(tiles[i]);
+}
 ```
 
-For sub-expressions containing only constants, the KickC compiler tries to infer the type of the sub-expression. This is done by performing the calculation and then checking which types can hold the calculated value. For instance, the calculation `$4000/$80` is inferred to match any integer type except signed char (since a signed char cannot hold 128). This also differs from standard C, where all constant integer numbers are ints unless specified otherwise.
+Key advantages:
+- Evaluates the exact element count at compile time with **0 runtime instructions**.
+- Replaces the error-prone classic macro `#define countof(a) (sizeof(a)/sizeof(a[0]))`.
+- **Formally rejects decayed pointer types:** Calling `countof(ptr)` on a pointer produces a compile-time error (`CompileError`), preventing subtle out-of-bounds memory bugs.
 
-### 2.3.13 Operator Precedence and Parenthesis
+### 2.3.12 Compile-Time Generic Type Dispatch (`_Generic` - C11)
 
-Operators precedence decides which operators are applied first when multiple operators are combined in an expression. For instance multiplication is performed before addition in `a*b+c`. In KickC operators generally have the same precedence as in standard C. 
+KickC supports ISO C11 `_Generic` expressions to perform compile-time type matching:
 
-Precedence rules can be overridden by using explicit parentheses in expressions. For instance to perform addition before multiplication `(a+b)*c`.
+```c
+#define format_type(X) _Generic((X), \
+    char: 1, \
+    int: 2, \
+    long: 3, \
+    default: 0 \
+)
+```
 
-`( a )`: Parenthesis
+In the KickC standard library, `<stdlib.h>` uses `_Generic` to provide a zero-overhead polymorphic `abs()` macro that selects between 8-bit `abs8()`, 16-bit `abs16()`, and 32-bit `labs()` at compile time.
 
-The following table shows KickC operator precedences. Operators at the top of the table binds most tightly.
+### 2.3.13 Compile-Time Table Generator (`__builtin_lut`)
 
-| Precedence | Operators | Associativity |
-| --- | --- | --- |
-| 1 | `a++` `a--` `f( )` `a[b]` | Left-to-right |
-| 2 | `++a` `--a` `+a` `~a` `!a` `(t)a` `*a` `&a` | Right-to-left |
-| 3 | `a*b` `a/b` `a%b` | Left-to-right |
-| 4 | `a+b` `a-b` | Left-to-right |
-| 5 | `a<<b` `a>>b` | Left-to-right |
-| 6 | `<a` `>a` | Left-to-right |
-| 7 | `a<b` `a<=b` `a>b` `a>=b` | Left-to-right |
-| 8 | `a==b` `a!=b` | Left-to-right |
-| 9 | `a&b` | Left-to-right |
-| 10 | `a^b` | Left-to-right |
-| 11 | `a\|b` | Left-to-right |
-| 12 | `a&&b` | Left-to-right |
-| 13 | `a\|\|b` | Left-to-right |
-| 14 | `a?b:c` | Right-to-left |
-| 15 | `a=b` `a+=b` `a-=b` `a*=b` `a/=b` `a%=b` `a<<=b` `a>>=b` `a&=b` `a^=b` `a\|=b` | Right-to-left
-| 16 |	`a,b` |	Left-to-right |
+The `__builtin_lut(size, expression)` intrinsic generates constant lookup tables at compile time from a mathematical expression:
+
+```c
+#include <math.h>
+
+// Automatically populates a 256-byte sine table at compile time:
+const uint8_t sin_table[256] = __builtin_lut(256, 127.5 + 127.5 * sin(i * 2 * PI / 256));
+
+// 16-bit word table:
+const uint16_t screen_rows[25] = __builtin_lut(25, 0x0400 + i * 40);
+```
+
+Within the expression, `i` represents the table index ($0 \dots \text{size}-1$). KickC delegates the evaluation to KickAssembler's built-in math engine (`.fill` / `.fillword`), eliminating the need for offline Python generator scripts.
+
+### 2.3.14 Atomic Status Intrinsics (`<6502.h>`)
+
+KickC provides intrinsics for atomic hardware flag operations and register-safe bit testing:
+
+```c
+#include <6502.h>
+
+// Direct instruction intrinsics:
+SEC(); // Set Carry flag (SEC)
+CLC(); // Clear Carry flag (CLC)
+CLD(); // Clear Decimal flag (CLD)
+SED(); // Set Decimal flag (SED)
+NOP(); // No Operation (NOP)
+
+// Bit-test intrinsics without clobbering Register A:
+if (__builtin_bit7(0xd011)) { ... } // Generates BIT $d011; BMI / BPL
+if (__builtin_bit6(0xd011)) { ... } // Generates BIT $d011; BVS / BVC
+```
+
+### 2.3.15 Cycle-Exact Delay Synthesizer (`delay_cycles`)
+
+Precise raster timing and hardware bit-banging frequently require exact cycle delays. The `delay_cycles(N)` intrinsic in `<6502.h>` synthesizes the minimal instruction sequence for the specified number of cycles:
+
+```c
+#include <6502.h>
+
+delay_cycles(8); // Synthesizes 4x NOP (8 cycles)
+delay_cycles(7); // Synthesizes bit $00 (3 cycles) + 2x NOP (4 cycles)
+```
+
+The intrinsic requires no function call overhead (`JSR`/`RTS`) and guarantees cycle accuracy on standard NMOS 6502 hardware.
+
+### 2.3.16 Function Calls
+
+Functions returning values can be called as part of any expression: `uint8_t result = compute(x, y);`. Calling conventions and register-pair passing are detailed in Section 2.5.
+
+### 2.3.17 Automatic Type Conversion and Type Casting
+
+KickC evaluates operators using the natural width of operands and avoids unnecessary integer promotions to 16-bit `int`. Limiting automatic promotions produces compact, fast 8-bit assembly.
+
+Type widening occurs automatically when an operand can safely hold all values of another type (e.g. `uint8_t` to `uint16_t`). Explicit casting `(type)val` forces conversion when precision might be narrowed:
+
+```c
+uint8_t low_byte = (uint8_t)(word_val >> 2);
+```
+
+### 2.3.18 Operator Precedence and Associativity
+
+The following table summarizes operator precedence in KickC (highest precedence at the top):
+
+| Precedence | Operators | Description | Associativity |
+| :---: | :--- | :--- | :---: |
+| 1 | `a++` `a--` `f()` `a[b]` `.` `->` | Postfix operators, calls, indexing, member access | Left-to-right |
+| 2 | `++a` `--a` `+a` `-a` `~a` `!a` `(type)a` `*a` `&a` `countof` `_Generic` | Prefix increment/decrement, unary math, casts, dereference, address-of, compile-time operators | Right-to-left |
+| 3 | `a * b` `a / b` `a % b` | Multiplicative | Left-to-right |
+| 4 | `a + b` `a - b` | Additive | Left-to-right |
+| 5 | `a << b` `a >> b` | Bitwise shifts | Left-to-right |
+| 6 | `<a` `>a` | 6502 Low / High byte operators | Left-to-right |
+| 7 | `a < b` `a <= b` `a > b` `a >= b` | Relational ordering | Left-to-right |
+| 8 | `a == b` `a != b` | Relational equality | Left-to-right |
+| 9 | `a & b` | Bitwise AND | Left-to-right |
+| 10 | `a ^ b` | Bitwise XOR | Left-to-right |
+| 11 | `a \| b` | Bitwise OR | Left-to-right |
+| 12 | `a && b` | Logical AND | Left-to-right |
+| 13 | `a \|\| b` | Logical OR | Left-to-right |
+| 14 | `a ? b : c` | Conditional (ternary) | Right-to-left |
+| 15 | `a = b` `a += b` `a -= b` `*=` `/=` `%=` `<<=` `>>=` `&=` `^=` `\|=` | Assignment and compound assignment | Right-to-left |
+| 16 | `a , b` | Comma operator | Left-to-right |
 
 ## 2.4 Statements
 
-The statements of a KickC program control the flow of execution. KickC supports most statements supported by standard C. 
+The statements of a KickC program control the flow of execution. KickC supports standard C control flow, modern C2Y/C++17 statements with initializers, named loops, countdown loop inversion, and compile-time assertions.
 
-Statements are separated by semicolons stmt; stmt; and can be grouped together in blocks using curly braces { stmt; stmt; }.
+Statements are separated by semicolons (`stmt;`) and can be grouped into blocks using curly braces (`{ stmt1; stmt2; }`).
 
-#### 2.4.1 Expressions and Assignments
+### 2.4.1 Expressions and Assignments
 
-All expressions are valid statements.There are two typical ways of using expressions as statements. The first is an assignment, which is an expression, modifying the value of a variable.
+Any expression followed by a semicolon is a valid statement. Typical examples include variable assignments, increment operations, and function calls:
 
 ```c
 a += 2;
+x++;
+printf("hello world!\n");
 ```
 
-The second is calling a function that has a side effect.
+### 2.4.2 If and If with Initializers (C2Y / C++17)
+
+The body of an `if` statement executes only when the condition evaluates to true. An optional `else` branch executes when the condition is false:
 
 ```c
-print(“hello”);
-```
-
-#### 2.4.2 If 
-
-The body of an if-statement is only executed if the condition is true. The if-statement can have an else-body, that is executed if the condition is not true.
-
-The following if-statement prints “even” to the screen if a is even.
-
-```c
-if((a&1)==0) { print(“even”); } 
-```
-
-The following if-statement increases b if a is less than 10 and decreases.
-
-
-### 2.4.3 Switch
-
-The switch-statement is used to choose between a number of cases. It is usable when you would otherwise use several consecutive if-statements. Switch works by examining a single expression and comparing the value to a number of cases labeled with a constant value. The execution starts at the case where the label matches the value. Execution then continues forward through the statements of the following cases. A break-statement can be used to break out of the switch. At the end, a special default-case can be used for catching values that were not matched by any other case.
-
-The following switch-statement examines the char c and chooses what to do: if c is a zero, it exits the function; if c is a TAB or newline, it prints a space - and for all other values of c, it prints c itself.
-
-```C
-switch(c) {
-case 0:
-	return;
-case '\t':
-case '\n':
-	print(' ');
-	break;
-default:
-	print(c);
+if ((a & 1) == 0) {
+    print("even");
+} else {
+    print("odd");
 }
 ```
 
-Notice how the TAB case is empty, but since switch continues to execute statements from following cases, the execution will start at the `print(' ')`. The `return`-statement in case 0 also breaks the execution of the switch.
+#### If-Statements with Initializers (C2Y / C++17)
 
-Switch has the following syntax:
+KickC implements the modern `if` statement with an initializer:
 
-```C
-switch(expr) {
-case const1:
-  body1
-case const2:
-  body2
-…
-default:
-  body3
+```c
+if (uint8_t d = get_distance(); d < 10) {
+    handle_collision(d);
+} else {
+    log_safe(d);
 }
 ```
 
-Where `expr` is an expression giving the value to examine and `const1`, `const2`, … are expressions that must evaluate to constants. Finally, `body1`, `body2`, … are sequences of statements.
+The declared variable (`d`) is strictly scoped to the `if` and `else` blocks. This allows KickC's SSA live-range analyzer to immediately reuse that Zero-Page address for subsequent code, reducing overall Zero-Page footprint.
+
+### 2.4.3 Switch and RTS Jump Tables
+
+The `switch` statement dispatches execution to one of several constant cases:
+
+```c
+switch (c) {
+    case 0:
+        return;
+    case '\t':
+    case '\n':
+        print(' ');
+        break;
+    default:
+        print(c);
+        break;
+}
+```
+
+#### Switch-Statements with Initializers (C2Y / C++17)
+
+Variables can be initialized directly inside the `switch` header:
+
+```c
+switch (uint8_t cmd = fetch_command(); cmd) {
+    case CMD_ATTACK:  do_attack(); break;
+    case CMD_DEFEND:  do_defend(); break;
+    default:          break;
+}
+```
+
+#### High-Speed Switch Jump-Tables via RTS Dispatch
+
+For dense switch statements ($\ge 4$ contiguous cases), KickC's Pass 5 automatically synthesizes a split Lo/Hi jump table dispatched via the 6502 `RTS` trick:
+```asm
+tax
+lda jump_table_hi, x
+pha
+lda jump_table_lo, x
+pha
+rts
+```
+This guarantees constant-time dispatch in only **12–14 cycles**, completely eliminating long chains of linear `CMP`/`BEQ` comparisons.
 
 ### 2.4.4 While
 
-The body of a while-loop is executed repeatedly as long as the condition is still true. The while-loop is executed by first evaluating the condition. If the condition is true, the body is executed, and the loop starts over. If the condition is not true, execution continues after the loop. If the condition is not true the first time the loop is encountered, then the body is never executed.
-
-The following while-loop prints `i` dots on the screen, while counting `i` down to zero.
+A `while` loop evaluates its condition before executing the loop body. If the condition is false initially, the body is never executed:
 
 ```c
-while(i!=0) { print(“.”); i--; }
+while (i != 0) {
+    print(".");
+    i--;
+}
 ```
 
 ### 2.4.5 Do-While
 
-The do-while-loop is very similar to the while-loop. The body of a do-while-loop is executed repeatedly as long as the condition is true. In the do-while-loop, the body is executed first, and then the condition is evaluated. If the condition is true, the loop starts over. If the condition is not true, execution continues after the loop. The body of the loop is always executed at least once.
-
-The following do-while-loop keeps scanning the keyboard until the space key is pressed.
+A `do-while` loop executes its body first, then evaluates the condition. The body is always executed at least once:
 
 ```c
 do {
-  keyboard_event_scan();  
-} while (keyboard_event_get()!=KEY_SPACE)
+    keyboard_event_scan();
+} while (keyboard_event_get() != KEY_SPACE);
 ```
 
-### 2.4.6 For
+### 2.4.6 For, Ranged Loops, and __countdown
 
-The for-loop is a convenient way of creating a loop, where a loop variable is initialized, the body is executed, the loop variable is incremented, and finally the condition is evaluated to determine whether to repeat the loop again.
-
-A for-loop has the following syntax:
+A standard `for` loop has the syntax:
 
 ```c
-for(init; condition; increment) { body }
-```
-
-and is equivalent to the following KickC code:
-
-```c
-init;
-while(condition) {
-  body;
-  increment;
-} 
-```
-
-The condition is evaluated before the body and increment, enabling for-loops where the body and increment are never executed. 
-
-KickC has an additional convenience syntax for creating simple for-loops that loop over an integer range. The following for-loop executes the body 128 times with `i` having values `0,1,...,127`:
-
-```c
-for(char i : 0..127) { body }    
-```
-
-And is equivalent to:
-
-```c
-for(char i=0; i!=127+1; i++) { body } 
-```
-
-This convenience syntax only accepts constants or expressions evaluating to constants as the ends of the integer interval. It can loop both backward and forwards.
-
-### 2.4.7 Break and Continue
-
-The break statement terminates a loop or a switch, whereas a continue statement forces the next iteration of a loop. These statements are very useful when creating complex loop logic.
-
-The following loop prints a string on the screen, skipping all spaces by using the continue statement. When it encounters a zero char in the string, it stops printing using the break statement.
-
-```c
-char* screen = $400;
-char str[] = "hello brave new world!";
-for( char i: 0..255) {
-	if(str[i]==0) break;
-	if(str[i]==' ') continue;
-	*screen++ = str[i];
+for (init; condition; increment) {
+    body;
 }
 ```
 
-### 2.4.8 Goto and Labels
+#### Interval Ranged For-Loops
 
-The `goto` statement performs an unconditional jump to a labeled statement within the same function. In accordance with standard C, labels have function scope and can be placed anywhere in the function body, including inside or outside nested blocks, loops, and conditional statements.
-
-A label is declared by an identifier followed by a colon: `label:`
-A jump is performed using: `goto label;`
-
-The compiler automatically generates optimal 6502 code:
-- Unconditional `goto` statements produce direct 16-bit `JMP` instructions (or are eliminated as fallthrough if the target directly follows in the code stream).
-- Conditional branches (`if (cond) goto label;`) are automatically optimized: short branches within -128 to +127 bytes use native 6502 branch opcodes, while long branches beyond 127 bytes are automatically relaxed to reverse-condition jumps in Pass 5.
-
-Example: Breaking out of deeply nested loops:
+KickC provides a convenience syntax for looping over constant integer intervals:
 
 ```c
-char* const SCREEN = (char*)0x0400;
-for(char y: 0..24) {
-    for(char x: 0..39) {
-        if(SCREEN[y*40 + x] == '*') {
-            goto found;
+for (char i : 0..127) {
+    body;
+}
+```
+
+This is equivalent to `for(char i = 0; i <= 127; i++)` and can loop forward or backward.
+
+#### Countdown Loops & the `__countdown` Directive
+
+Counting down to zero on the 6502 allows branching on the Zero or Negative flags (`BNE`, `BPL`) without an explicit comparison instruction (`CPX`/`CPY`).
+
+The `__countdown` directive can be prefixed to a loop to instruct the compiler to invert iteration order:
+
+```c
+__countdown for (uint8_t i = 0; i < 40; i++) {
+    screen[i] = ' ';
+}
+```
+
+The compiler transforms this into a downward-counting loop ($39 \dots 0$) terminating with `DEX; BPL`, saving 2 CPU cycles and 2 bytes per iteration.
+
+### 2.4.7 Break, Continue, and Named Loops (C2Y N3355)
+
+The `break` statement exits the innermost loop or switch. The `continue` statement skips to the next iteration of the innermost loop.
+
+#### Named Loops (C2Y N3355)
+
+When loops are deeply nested or contain `switch` statements, KickC allows prefixing loops with a label to break or continue an outer loop directly:
+
+```c
+char found = 0;
+outer_loop: for (uint8_t y = 0; y < 25; y++) {
+    for (uint8_t x = 0; x < 40; x++) {
+        if (screen[y * 40 + x] == '*') {
+            found = 1;
+            break outer_loop; // Jumps directly out of both loops
         }
     }
 }
-return;
-
-found:
-print("found!");
 ```
+
+This eliminates the need for auxiliary flag variables or `goto`.
+
+### 2.4.8 Goto and Labels
+
+The `goto` statement performs an unconditional jump to a labeled statement within the same function:
+
+```c
+label_name:
+    // ...
+    goto label_name;
+```
+
+In accordance with standard C, labels have function scope. The compiler automatically optimizes branches: short jumps within -128 to +127 bytes use native 6502 branch opcodes, while long branches beyond 127 bytes are automatically relaxed to reverse-condition jumps in Pass 5.
+
+### 2.4.9 Compile-Time Assertions (`static_assert` - C11 / C23)
+
+KickC implements `static_assert` (and `_Static_assert`) from C11 and C23. It validates memory layouts, structure sizes, and constant invariants at compile time:
+
+```c
+static_assert(sizeof(char) == 1);
+static_assert(sizeof(struct Actor) <= 32, "Actor structure size exceeded 32 bytes!");
+static_assert(countof(font_tiles) == 64);
+```
+
+If the assertion expression evaluates to false (or 0), KickC aborts compilation with a descriptive `CompileError`. Compile-time assertions consume **0 bytes of memory and 0 runtime cycles**.
 
 ## 2.5 Functions
 
-Functions are named pieces of code that can be reused by calling them and passing different parameters.
+Functions are named blocks of reusable code. KickC analyzes the global call graph to statically allocate registers and Zero-Page memory, avoiding runtime stack frame overhead.
 
-### 2.5.1 Calling functions
+### 2.5.1 Calling Functions
 
-In the following code a function called `max` is called 3 times. The `max`-function takes 2 `char` parameters and returns the maximal value of the two. After this code `m` will have the value 31 and `n` will have the value 47.
+A function is called using standard C syntax: `result = name(param1, param2);`.
 
 ```c
-char m = max(31, 9 );
-char n = max(m, max(47, 7));  
+char m = max(31, 9);
+char n = max(m, max(47, 7));
 ```
 
-In general, a function is called using the syntax: `name(param1, param2, …)`
+### 2.5.2 Creating Functions
 
-### 2.5.2 Creating functions
-
-Functions are created by adding function declarations to your program. The following is a declaration of the `max`-function used above. It expects two `char` value parameters, finds the largest one and returns it.
+Functions are declared with return type, identifier, parameter list, and body:
 
 ```c
 char max(char a, char b) {
-  if(a>b) {
-    return a;
-  } else {
+    if (a > b) return a;
     return b;
-  }
 }
 ```
 
-In general a function declaration has the following syntax: `return-type name(param-type1 param-name1, param-type1 param-name1, ...) { body }`
+Functions returning no value declare return type `void`. The `return` statement immediately exits the function and optionally returns a value.
 
-If a function does not return a value it must declare the return type as `void`. 
+### 2.5.3 Calling Conventions
 
-The parameter declaration inside the parenthesis describes how many parameters must be passed when calling the function, the types of the parameters to be passed and names the parameters have inside the functions body code. The `max`-function above takes 2 `char` parameters, named `a` and `b`. 
+KickC supports multiple calling conventions to balance speed, memory, and hardware register usage:
 
-The function body is the code executed when calling the function. In the body code the declared parameters can be used as variables and will have the values passed by the call.
+- **`__phicall` (Default):** Static SSA-based parameter and return passing. Parameters are allocated directly to CPU registers (`A`, `X`, `Y`) or Zero-Page locations based on whole-program live-range analysis. This convention produces the fastest possible 6502 code with 0 stack pushes.
+- **`__ax` 16-Bit Register Pair Calling Convention:** Enables standard 6502 16-bit register pair passing:
+  - 16-bit return values are returned in accumulator `A` (low byte) and index register `X` (high byte).
+  - Single 16-bit parameters are received directly in `A` (low) and `X` (high), eliminating Zero-Page setup at the call site.
+  - Allows zero-overhead function chaining `f(g(x))` where the output of `g` flows directly into `f` without intervening memory operations.
+  ```c
+  __ax uint16_t get_screen_offset(uint16_t coord) {
+      return coord + 0x0400;
+  }
+  ```
+- **`__stackcall`:** Parameters are passed on the 6502 hardware stack (`PHA`/`PLA`). Useful when interfacing with re-entrant routines or external code.
+- **`__varcall`:** Parameters are passed through static global variables in main memory.
 
-The special statement `return` is used to return a value to the caller. The return statement exits the function immediately. 
+### 2.5.4 Auto Carry-Flag Boolean Returns (`__carry`)
 
-The following statement exits the function and returns the sum of values `a` and `b`.
+On the 6502, conditions are naturally tested in processor status flags. Converting a condition to a `0` or `1` integer byte in `A` and then comparing it at the call site incurs significant cycle and memory overhead.
+
+Functions can be marked with `__carry` (or are automatically optimized by Pass 5) to return boolean status directly in the processor Carry flag:
 
 ```c
-return a+b;
+__carry bool is_in_range(uint8_t val, uint8_t min, uint8_t max) {
+    return (val >= min && val <= max);
+}
+
+void test(uint8_t x) {
+    if (is_in_range(x, 10, 50)) { // Compiles directly to JSR is_in_range; BCS in_range!
+        on_valid();
+    }
+}
 ```
 
-### 2.5.3 The main() function
+The function exits with `SEC; RTS` (true) or `CLC; RTS` (false), and the caller branches directly with `BCS` or `BCC` with zero accumulator clobbering.
 
-All KickC programs must have exactly one function called main. The main function is the starting point of the program. In KickC the main() function takes no parameters and returns no value.
+### 2.5.5 Banked Functions & Far Calls (`__far`)
 
-The following is a very simple KickC program with a main function that turns the screen background color black and exits.
+For systems utilizing banking (e.g. cartridge ROMs or RAM expansions), functions located in swapped banks can be declared with `__far` or assigned to banked segments with `#pragma far_seg`:
+
+```c
+#pragma far_seg(Bank1, 1)
+__far void render_title_screen() {
+    // Executes inside Bank 1
+}
+```
+
+KickC automatically synthesizes the appropriate bank-switch preparation, execution, and bank-restoration trampolines.
+
+### 2.5.6 The main() Function
+
+Every KickC program must define exactly one `void main()` function as the entry point:
 
 ```c
 #include <c64.h>
 
 void main() {
-	*BGCOL = BLACK;
-}
-```
-
-When compiling, the main-function generates a C64 BASIC program containing a single SYS command which starts the execution of the compiled KickC program.
-
-The following is the KickAssembler code resulting from compiling the KickC program above. BasicUpstart is KickAssemblers way of creating a BASIC-program with a single SYS command.  
-
-```
-.pc = $801 "Basic"
-:BasicUpstart(main)
-.pc = $80d "Program"
-  .label BGCOL = $d021
-  .const BLACK = 0
-main: {
-    lda #BLACK
-    sta BGCOL
-    rts
-}
-```
-
-## 2.6 Comments
-
-Two types of comments are supported in KickC. Anything inside a comment has no effect on the generated code.
-
-Block comments, started with `/*` and ended with `*/` can span multiple lines. They can sometimes be useful for commenting out large parts of programs.
-
-```c
-/* A multi-line
-block comment */
-```
-
-Single line comments are started with double-slash `//` and ends at the next newline
-
-```c
-// a single-line comment
-```
-
-## 2.7 Splitting code into multiple files
-
-Like in C you can split code into multiple files by creating header-files (extension `.h`) and code-files (extension `.c`). The header-files typically contain only the interface of the module, ie. function declarations without body, extern variable declarations and `#defines`.
-
-For one C-file to be able to use the functions/variables from another file you can include the header using
-
-```c
-#include “other.h”
-```
-
-When including files the compiler first searches through the current folder where the file that has the `#include` statement is located, then it searches each library folder added by the `-I / -includedir` option to the compiler. 
-
-Include can be told to look in subfolders by prefixing the filename with a slash-separated path. Here is an example where graphics code files are located in a subfolder:
-
-```c
-#include “graphics/character.h”
-```
-
-Using `#include <file.h>` instead of `#include “file.h”` will cause the compiler to not look for the file in the current directory, only looking in the search folders. This is useful when including libraries.
-
-Unlike a normal C-compiler KickC does not support compiling each C-file individually and linking them later. Instead KickC insists on compiling all needed C-files in one go to be able to optimize better.
-
-When you include a header-file using `#include` the compiler will try to automatically find the matching C-file. This is done by looking for a file with the same name, but extension `.c` in the current folder and each library folder added by the `-L / -libdir` option to the compiler.  
-
-You can also choose to pass multiple C-files directly to the compiler.
-
-
-```
-kickc.sh main.c other.c
-```
-
-KickC also differs from standard C by automatically ensuring that any included file is only included once by automatically keeping track of which files have been included. This, combined with compiling all files in one go, means that with KickC you can skip the header-files and include C-files directly instead. This may be more convenient for you if you do not plan to port your code to other C-compilers.
-
-You can also choose to pass multiple C-files directly to the compiler by using the following command:
-
-```
-kickc.sh main.c other.c
-```
-
-KickC also differs from standard C by automatically ensuring that any included file is only included once by automatically keeping track of which files have been included. This, combined with compiling all files in one go, means that with KickC you can skip the header-files and include C-files directly instead. This may be more convenient for you if you do not plan to port your code to other C-compilers.
-
-I provided two variations for the code block, one with inline code and one with a separate code block. You can choose the one that suits your formatting preferences.
-
-## 2.8 Variables Directives
-
-KickC has a number of directives that can be used for controlling how a variable works. Variable directives can be added before or after the type of the variable.
-
-### 2.8.1 Const
-
-The `const` directive is used to declare that a variable cannot be modified by the program. The declaration must also contain an assignment, and the compiler will issue an error if the variable is assigned anywhere else.
-
-```c
-const char SPRITES = 8;
-```
-
-For pointers, the `const` directive can be used to declare either a constant pointer to a value or a pointer to a constant value. The choice is determined by the location of the `const` keyword relative to the `*`.
-
-- A constant pointer to a value means that the pointer cannot be modified, but the value it points to can be modified. It is declared by placing the `const` keyword after the `*`.
-
-  ```c
-  char * const SCREEN = 0x0400;
-  ```
-
-- A pointer to a constant value means that the program is not allowed to modify whatever the pointer points to, but the pointer itself can be modified. It is declared by placing the `const` keyword before the `*`.
-
-  ```c
-  const char * ROM = 0xA000;
-  ```
-
-### 2.8.2 Register
-
-The `register` directive is used to instruct the compiler to optimize a variable, putting it into a CPU-register if possible. The compiler is quite good at optimizing register usage, so using this directive should not be needed.
-
-```c
-char register i;
-```
-
-It is also possible to add a specific register in parenthesis to force the variable into a specific CPU-register. Using this directive can cause the compiler to fail if it is impossible to compile the program with the variable assigned to the register.
-
-```c
-char register(X) i;
-```
-
-### 2.8.3 Align
-
-The `__align` directive is used to control the placement of arrays and strings in memory. For instance, `__align(0x40)` will ensure that the memory address where the data is placed is a multiple of 0x40 bytes. This can be useful when trying to optimize the performance of your program.
-
-```c
-char __align(0x100) sine[0x100];
-```
-
-### 2.8.4 Address
-
-The `__address()` directive is used to place a variable at a specific address in memory. For instance, the following will place the integer variable at address 250 (on zeropage).
-
-```c
-__address(250) int num;
-```
-
-You can also use the directive for placing arrays at specific places in memory. This is quite useful for handling graphics data that must often be placed at specific addresses. The following places the array `SPRITES` at the memory location 0x2000.
-
-```c
-__address(0x2000) SPRITES[64*10];
-```
-
-For graphics, it can be especially useful to use inline KickAssembler for initializing the data array directly from a graphics file in a modern file format. See the section "Inline KickAssembler data array initialization."
-
-Please note that only global variable arrays can be placed at specific memory locations. `__address()` is not supported for local array variables.
-
-### 2.8.5 Volatile
-
-The `volatile` directive tells the compiler that the value of the variable might change at any time. The `volatile` keyword must be used for variables that are shared between code running "simultaneously." An example is when coding with interrupts (see the interrupt directive).
-
-The directive prevents the compiler from using all optimizations, where it assumes it can guess the value of the variable from the surrounding code. It will also ensure that the compiler does not produce code where the value of the variable is held in a register.
-
-```c
-volatile char sprite_ypos;
-```
-
-For pointers, the location of the `volatile` keyword relative to the `*` is used to distinguish between a volatile pointer and a pointer to volatile data. See `const` for a more thorough explanation.
-
-### 2.8.6 Extern
-
-The `extern` keyword on a variable specifies that this variable is defined somewhere else. The `extern` keyword is typically used in header-files when a variable defined in the C-file should be usable by other C-files.
-
-```c
-extern char cursor_onoff;
-```
-
-### 2.8.7 Export
-
-The `export` directive tells the compiler that the value of a data-variable must be included in the resulting ASM even if it is never used anywhere and would normally be deleted by the optimizer. The export keyword is only usable for global variables containing data, typically arrays.
-
-The directive prevents the compiler from deleting the variable during optimization.
-
-```c
-export char MESSAGE[] = "Hello World!";
-```
-
-## 2.9 Function Directives
-
-KickC also has a few directives that instruct the compiler to treat functions in a specific way.
-
-### 2.9.1 Inline
-
-The `inline` function directive instructs the compiler to inline the whole function body everywhere the function is called. This can be used for optimizing your code since it allows the compiler to optimize the code of each function call independently, for instance by identifying constants in each call. It also saves the CPU cycles normally needed to call the function and return from it. The trade-off is that your program will compile into more bytes of code.
-
-```c
-inline char sum(char a, char b) {
-    return a + b;
-}
-```
-
-### 2.9.2 Interrupt
-
-The `__interrupt` function directive is used for creating interrupt handler functions.
-
-```c
-__interrupt void irq() {
-    *BGCOL = WHITE;
     *BGCOL = BLACK;
 }
 ```
 
-The directive can be used with parentheses to specify a specific type of interrupt handler function. Different interrupt handler function types will generate slightly different code for entering/exiting the interrupt. For instance, `__interrupt(rom_sys_c64)` specifies that the C64 interrupt should exit by calling the kernel standard interrupt service routine at 0xea31, which scans the keyboard and more.
+For Commodore platforms, KickC automatically emits a BASIC upstart stub (`10 SYS 2061`) initiating execution at `main`.
 
-If you do not specify a type in parentheses, then the default interrupt type for the platform is used.
+## 2.6 Comments
 
-The following are the supported interrupt types:
-- `rom_min_c64`: C64 Interrupt served by the kernel called through 0x0314-5. Will exit through the kernel using 0xea81, which restores the registers and exits. (Default for C64)
-- `rom_sys_c64`: C64 Interrupt served by the kernel called through 0x0314-5. Will exit through the kernel using 0xea31, which runs the normal kernel service routine that includes checking and handling keyboard input.
-- `rom_min_vic20`: VIC20 Interrupt served by the kernel called through 0x0314-5. Will exit through the kernel using 0xeb18, which restores the registers and exits. (Default for VIC20)
-- `rom_sys_vic20`: VIC20 Interrupt served by the kernel called through 0x0314-5. Will exit through the kernel using 0xeabf, which runs the normal kernel service routine that includes checking and handling keyboard input.
-- `rom_min_plus4`: Plus/4 Interrupt served by the kernel called through 0x0314-5. Will exit through the kernel using 0xfcc3, which restores the registers and exits. (Default for Plus/4)
-- `rom_sys_plus4`: Plus/4 Interrupt served by the kernel called through 0x0314-5. Will exit through the kernel using 0xce0e, which runs the normal kernel service routine that includes checking and handling keyboard input.
-- `rom_min_cx16`: CX16 Interrupt served by the kernel called through 0x0314-5. Will exit through the kernel using 0xe049, which restores the registers and exits. (Default for CX16)
-- `rom_sys_cx16`: CX16 Interrupt served by the kernel called through 0x0314-5. Will exit through the kernel using 0xe034, which runs the normal kernel service routine that includes checking and handling keyboard input.
-- `hardware_all`: Interrupt served directly from hardware through 0xfffe-f or 0xfffa-b. Will exit through RTI and will save/restore all registers. (Default for Atari 2600, Atari XL, and NES)
-- `hardware_clobber`: Interrupt served directly from hardware through 0xfffe-f or 0xfffa-b. Will exit through RTI and will save necessary registers based on a clobber analysis of the interrupt handler code.
-- `hardware_none`: Interrupt served directly from hardware through 0xfffe-f or 0xfffa-b. Will exit through RTI and will save/restore NO registers.
-
-The hardware-interrupt types can be used on all platforms, since they do not rely on any code in ROM.
-
-In general, interrupts are set up by assigning a pointer to an interrupt handler function to one of the interrupt vectors placed at a specific address in memory. Below is a C64 example of setting up the kernel IRQ vector (at $314 in memory) to run the `irq()` function declared above. When setting up interrupts, it is good practice to surround the code with the SEI/CLI instructions to prevent any interrupt from occurring during the setup itself.
+KickC supports standard C comments:
 
 ```c
-#include <c64.h>
-#include <6502.h>
+// Single-line comment
 
-void main() {
-    SEI();
-    *KERNEL_IRQ = &irq;
-    CLI();
+/* Multi-line
+   block comment */
+```
+
+## 2.7 Splitting Code into Multiple Files
+
+Code can be organized into header files (`.h`) and implementation files (`.c`):
+
+```c
+#include "graphics/sprites.h"
+#include <stdio.h>
+```
+
+Search order:
+1. Current folder of the including file (for `"..."`).
+2. Include directories specified via `-I` or `-includedir`.
+3. Standard KickC library folder.
+
+Unlike conventional compilers that compile `.c` files independently into `.o` object files and link them afterwards, KickC compiles all source files simultaneously as a whole program. This whole-program compilation enables global SSA optimizations, dead code elimination, and cross-module Zero-Page coalescing:
+
+```pwsh
+kickc.bat main.c graphics.c sound.c
+```
+
+KickC automatically tracks included files and guarantees that each header or source file is parsed exactly once.
+
+## 2.8 Variable Directives
+
+Variable directives control memory placement, alignment, and optimization.
+
+### 2.8.1 Const
+
+Declares immutable variables or pointers:
+- `const uint8_t MAX_PLAYERS = 4;`
+- `char* const SCREEN = (char*)0x0400;` (constant pointer to mutable data)
+- `const char* ROM = (const char*)0xa000;` (mutable pointer to constant data)
+
+### 2.8.2 Register
+
+Requests placement in a CPU register (`A`, `X`, or `Y`):
+
+```c
+register(X) uint8_t i;
+```
+
+KickC's register allocator automatically places high-frequency loop and index variables into CPU registers; manual register directives are rarely required.
+
+### 2.8.3 Align (`__align`)
+
+Aligns array data to a specific byte boundary in memory (e.g. page boundary `0x100`):
+
+```c
+__align(0x100) uint8_t sine_table[256];
+```
+
+### 2.8.4 Address (`__address`)
+
+Binds a global variable or buffer to a specific physical memory address:
+
+```c
+__address(0xd020) volatile uint8_t BORDER_COLOR;
+__address(0x2000) uint8_t SPRITE_BITMAPS[64 * 8];
+```
+
+### 2.8.5 Zero-Page Allocation (`__zp`)
+
+Explicitly forces variable storage into Zero-Page memory:
+
+```c
+__zp uint8_t* ptr;
+__zp uint16_t zx02_offset;
+```
+
+This is essential for time-critical routines (e.g. decompression pointers, raster interrupt counters) where variables must reside on Zero-Page and must not spill to main memory or be clobbered by register allocation.
+
+### 2.8.6 Main Memory Allocation (`__mem`)
+
+Explicitly forces variable storage into Main Memory (`Data` segment):
+
+```c
+__mem uint8_t background_cache[64];
+```
+
+Prevents the variable from being lifted into precious Zero-Page registers, reserving Zero-Page space for inner loops and pointers.
+
+### 2.8.7 Volatile
+
+Informs the compiler that a variable can be modified externally (e.g. hardware I/O registers or variables shared with interrupt handlers). Prevents caching in registers or eliminating redundant accesses:
+
+```c
+volatile uint8_t raster_line;
+```
+
+### 2.8.8 Extern and Export
+
+- `extern`: Declares a variable defined in another compilation unit.
+- `export`: Prevents the optimizer from stripping an unused data symbol (e.g. binary tables intended for external tools).
+
+### 2.8.9 Split Word Arrays (`__lohi`)
+
+Splits a 16-bit word array up to 256 elements into parallel low- and high-byte tables in memory:
+
+```c
+__lohi uint16_t offsets[128];
+```
+
+Lowers indexing to 8-cycle indexed absolute instructions without 16-bit pointer math (see Section 2.2.6).
+
+### 2.8.10 Struct-of-Arrays Flattening (`__soa`)
+
+Automatically transposes an array of structures up to 256 elements into parallel column arrays in memory:
+
+```c
+__soa struct Actor actors[32];
+```
+
+Member accesses compile to single 4-cycle indexed operations (`lda actors_x, x`), eliminating runtime struct size multiplication (see Section 2.2.7).
+
+### 2.8.11 Packed 4-Bit Nibbles (`__nibble` / `uint4_t`)
+
+Packs 4-bit elements pairwise into bytes in memory:
+
+```c
+uint4_t nybble_buffer[500]; // Allocates 250 bytes
+```
+
+### 2.8.12 Binary Coded Decimal (`__bcd`)
+
+Declares variables intended for hardware BCD arithmetic with `<bcd.h>`.
+
+## 2.9 Function Directives
+
+### 2.9.1 Inline
+
+Instructs the compiler to inline the function body at every call site, eliminating `JSR`/`RTS` overhead and enabling call-specific constant folding:
+
+```c
+inline uint8_t clamp(uint8_t val, uint8_t min, uint8_t max) {
+    if (val < min) return min;
+    if (val > max) return max;
+    return val;
 }
 ```
 
-If your interrupt code needs to utilize global variables to communicate with other parts of the program or to store state between interrupt calls, these variables should be declared as `volatile`.
+### 2.9.2 Interrupt (`__interrupt`)
 
-### 2.9.3 Inline Assembler Code
+Declares an interrupt service routine:
 
-Programs can include inline assembler code inside a function body. This can, for instance, be useful for interfacing with machine code such as the BASIC/KERNAL or for modifying processor flags (such as the interrupt flag or decimal flag).
+```c
+__interrupt void irq_handler() {
+    *BORDER = 1;
+    *BORDER = 0;
+}
+```
 
-Inline assembler is created using the `asm` statement with a body containing the assembler code. The following is an example of setting the processor interrupt flag.
+Optional parameters specify the interrupt entry/exit convention:
+- `rom_min_c64`: C64 Kernal interrupt via `$0314/$0315`, exits via Kernal `$ea81` (Default for C64).
+- `rom_sys_c64`: C64 Kernal interrupt, exits via `$ea31` (runs keyboard scan and system timer).
+- `hardware_all`: Hardware vector interrupt (`$fffe`/`$fffa`), saves and restores all registers (`A`, `X`, `Y`) and exits with `RTI`.
+- `hardware_clobber`: Saves/restores only registers clobbered by the handler body, exits with `RTI`.
+- `hardware_none`: Saves no registers, exits with `RTI`.
+
+Interrupt routines automatically execute `CLD` to guarantee binary arithmetic mode during interrupt execution.
+
+### 2.9.3 16-Bit Register Calling Convention (`__ax`)
+
+Forces 16-bit argument passing and return value in the `A`/`X` register pair:
+
+```c
+__ax uint16_t compute_ptr(uint16_t base);
+```
+
+### 2.9.4 Auto Carry-Flag Returns (`__carry`)
+
+Returns boolean results directly in the 6502 Carry status flag (`SEC; RTS` / `CLC; RTS`):
+
+```c
+__carry bool is_collision(uint8_t x, uint8_t y);
+```
+
+### 2.9.5 Countdown Loop Inversion (`__countdown`)
+
+Instructs the compiler to invert loop counting to count down toward zero, allowing `BNE` or `BPL` branching without comparison instructions:
+
+```c
+__countdown for (uint8_t i = 0; i < 40; i++) { ... }
+```
+
+### 2.9.6 Banked Far Calls (`__far`)
+
+Declares functions residing in banked memory requiring trampoline banking switches:
+
+```c
+__far void load_world_map();
+```
+
+### 2.9.7 Inline Assembler Code (`asm`)
+
+Inline assembly allows direct 6502/65C02/65CE02/45GS02 machine instructions inside function bodies:
 
 ```c
 asm {
-  sei
+    sei
+    lda #$7f
+    sta $dc0d
 }
 ```
 
-The assembler language usable within the curly braces is pretty limited standard syntax 6502/65C02/65CE02/45GS02 assembler using the same syntax as KickAssembler (and most classical 6502 assemblers). The following is supported:
-- All 6502/6510 instructions and addressing modes
-- Immediate `lda #%10101010`
-- Absolute `eor 1024`
-- Zeropage `rol 2`
-- Relative `bne nxt`
-- Absolute indexed X `adc $2000,x`
-- Absolute indexed Y `cmp sintab,y`
-- Zeropage indexed X `sbc 2,x`
-- Zeropage indexed Y `stx $fe,y`
-- Zeropage indexed indirect X `lda ($20,x)`
-- Zeropage indirect indexed Y `ora (14),y`
-- Indirect `jmp ($1000)`
-- Implied (no operand) `tax`
+Features:
+- Supports all standard addressing modes (immediate, absolute, zero page, indexed, indirect, relative).
+- Supports NMOS-6510 illegal opcodes (`LAX`, `SAX`, `ALR`, `DCP`, `ISC`) when compiling with target CPU `mos6502x` or `rom6502x`.
+- References C constant symbols directly: `sta SCREEN+40`.
+- Scratchpad Zero-Page registers **`$fe` and `$ff`** are available for temporary storage.
+- The `clobbers` clause specifies modified registers: `asm(clobbers "A,X") { jsr $1000 }`.
 
-The 65CE02 instructions and addressing modes:
-- Indirect Zeropage Indexed by Z `lda ($12),z`
-- Stack Pointer Indirect Indexed `sta ($12,sp),y`
-- Immediate Word `phw #$1234`
-- Long Relative `lbra #$1234`
+### 2.9.8 Inline KickAssembler Code (`kickasm`)
 
-The 45GS02 instructions and addressing modes:
-- 32-bit Indirect Zeropage Z `lda (($12)),z`
-- 32-bit Indirect Zeropage `stq (($12))`
-
-Labels:
-- Normal labels `next:`
-- Multi labels `!next:`
-
-Data:
-- Bytes `.byte $10, $20`
-
-The parameters for instructions and the data bytes can be written as expressions supporting:
-- Literal numbers in decimal, binary, or hexadecimal using the same syntax as KickC literal numbers, e.g., `1024`, `$3fff`, `%10101010`
-- Literal characters, e.g., 'q'
-- Constant variables declared in the C-code, e.g., `SCREEN`
-- Labels declared within the assembler code
-- Math operators `+ - * / < > << >>`
-- Parentheses using `[` and `]` to avoid the assembler interpreting them as an indirect addressing mode.
-
-The ability to reference constant variables declared outside the assembler code allows the inline assembler to interact with data in the C-part of the program. The following is an example referencing the constant variable `SCREEN`.
+Allows embedding arbitrary KickAssembler macros, directives, loops, and binary imports into the compilation stream:
 
 ```c
-const char* SCREEN = $400;
-
-void main() { 
-	asm {
-		lda #'c'
-		sta SCREEN+40
-	}
+void fast_clear(char fill) {
+    kickasm(uses fill) {{
+        lda fill
+        .for (var i = 0; i < 1000; i++) {
+            sta $0400 + i
+        }
+    }}
 }
 ```
 
-There is also support for referencing labels declared inside inline ASM in other functions using the special `.` operator (e.g., `clearscreen.fillchar`). This makes it possible for ASM in one function to modify the code of ASM inside other scopes.
+The `uses` clause notifies KickC that a C symbol is referenced, preventing dead-code elimination.
 
-The KickC compiler understands the inline assembler code and attempts to optimize it during the compilation process. For instance, it can analyze which registers are clobbered by the inline assembler, and optimize surrounding KickC-code register usage.
+### 2.9.9 KickAssembler Data Array Initialization
 
-If your inline ASM contains a JSR call, the compiler assumes that all registers are clobbered. However, it is possible to add a `clobbers` directive in parenthesis specifying exactly which registers are clobbered by your inline assembler code. Here is an example of inline assembler where the directive is used to specify that the JSR only clobbers the A- and X-registers.
-
-```c
-void playMusic() {
-	asm(clobbers "AX") {
-		jsr $1000
-	}
-}
-```
-
-Since the compiler understands the inline assembler, it will also modify the assembler code if this leads to faster execution, for instance removing an immediate load-instruction that loads a value that the register is already guaranteed to contain.
-
-### 2.9.4 Inline KickAssembler Code
-
-The inline assembler code described above can be very useful, but only supports rudimentary assembler features. The limitations allow the compiler to understand the assembler code and include it in optimizations.
-
-If you need advanced assembler features in your code such as macros, loops, or importing binary files or images, it is possible to include inline KickAssembler code in your KickC program using the `kickasm` statement. The body of the `kickasm` statement must be enclosed in double curly braces and is passed directly to KickAssembler. The KickC compiler does not make any attempt to parse or understand the KickAssembler code. All advanced KickAssembler features are described in the manual [here](http://theweb.dk/KickAssembler).
-
-The following is an example of inline KickAssembler code creating assembler for really fast screen clearing (1000 STA operations with no looping).
+KickAssembler directives can initialize static constant arrays:
 
 ```c
-void clearscreen() {
-  kickasm(uses screen) {{
-    lda #0
-    .for (var i = 0; i < 1000; i++) {
-      sta screen+i
-    }
-  }}
-}
-```
-
-Inline KickAssembler can reference constant variables declared in the surrounding C-code. To ensure that the KickC compiler knows that the inline KickAssembler uses a constant, you should add a `uses` directive in parentheses. This will ensure that KickC knows that the symbol is used and, for instance, prevent the compiler from removing the symbol entirely if it is not used anywhere else.
-
-
-### 2.9.5 Inline KickAssembler data array initialization
-
-Inline KickAssembler can also be used to initialize data arrays. Here it allows utilizing KickAssembler's powerful macro language. The following is an example of a sine table:
-
-```c
-char sintab[0x100] = kickasm {{
-    .fill $100, 127.5 + 127.5*sin(i*2*PI/256)
-}};
-```
-
-To specify exactly where the resulting data bytes end up in memory, the `__address()` directive can be used. Here's an example of generating a table with sine values at a specific location:
-
-```c
-__address(0x1000) char sintab[] = kickasm {{
-    .fill $100, 127.5 + 127.5*sin(toRadians(i*360/256))
-}};
-```
-
-Please note that the `__address()` directive is only allowed for global variables.
-
-It is also possible to use inline KickAssembler for loading pictures, music, or other binary files and generating data bytes from these. When loading binary files in the inline KickAssembler code, it is necessary to inform the KickC compiler using a resource directive within parentheses. This is needed because KickC may have to copy the used resource files to the output directory where the compiled assembler code is written. Here's an example of including a sprite from a PNG image file and placing it at a specific memory address:
-
-```c
-__address(0xc00) char SPRITE[] = kickasm(resource "balloon.png") {{
-    .var pic = LoadPicture("balloon.png", List().add($000000, $ffffff))
-    .for (var y=0; y<21; y++)
-        .for (var x=0; x<3; x++)
-            .byte pic.getSinglecolorByte(x, y)
+const uint8_t sine_lut[256] = kickasm {{
+    .fill $100, 127.5 + 127.5 * sin(i * 2 * PI / 256)
 }};
 ```
 
 ## 2.10 Controlling the Compilation
 
-KickC offers a number of ways for you to tell the compiler how to perform the compilation. This can either be done through #pragma commands in the source code or through command line options. The #pragma commands can offer the advantage that your compilation options are documented directly in the source code.
+KickC offers extensive mechanisms to control code generation, memory layout, and optimization, both via `#pragma` directives in source files and command-line options.
 
 ### 2.10.1 Target Platform
 
-You can specify which target platform the compiler should compile for by using #pragma target(name) or the command line options -t name or -p name.
+You can select the target platform via `#pragma target(name)` or command-line options `-t name` / `-p name`. The platform configuration specifies the default linker script, emulator command, memory map, and system startup code.
 
-The target platform collects a linker file and a number of other compilation options into a single convenient choice that makes it easy to create binary files for a specific platform. The target platform also specifies the default emulator used to execute the binaries.
-
-The target platforms are specified through the tgt-files in the target folder in the KickC installation. You can add your own target platform by creating a new tgt-file and an ld-file (a linker specification file).
-
-The KickC-compiler includes the following target platforms out-of-the-box:
-- Commodore VIC 20
-- Commodore 64
-- Commodore Plus/4 (also usable for Commodore 16 and Commodore 116)
-- Atari 2600
-- Atari XL/XE
-- Nintendo NES
-- MEGA65
-- Commander X16
+Built-in platforms:
+- `c64`: Commodore 64 (Default)
+- `vic20`: Commodore VIC-20
+- `plus4`: Commodore Plus/4 (also C16 / C116)
+- `atari2600`: Atari 2600
+- `atarixl`: Atari XL/XE
+- `nes`: Nintendo Entertainment System
+- `mega65`: MEGA65
+- `cx16`: Commander X16
 
 ### 2.10.2 Linker Specification
 
-You can create your own linker specification describing exactly how to generate a binary file from the code and data of your program.
+Custom memory configurations and binary formats are specified using `#pragma link("filename.ld")` or `-T filename.ld`. Linker files use the KickAssembler segment syntax.
 
-You can tell the compiler to use a custom linker specification file by using #pragma link("filename") or the command line options -T filename.
-
-The linker specification file uses the KickAssembler segment format, as described in chapter 10 and 11 of the KickAssembler manual. See [KickAssembler Manual](http://www.theweb.dk/KickAssembler).
-
-KickC expands the following strings in the linker script before passing it on to KickAssembler:
-- %E: Expands to the name of the entry point in the KickC program (i.e., the label of the code that starts the program, typically main or __start)
-- %P: Expands to the start address, where the generated code should be located in memory. See #pragma start_address()
-- %O: Expands to the name of the output file that the resulting binary should be saved to. The output filename is the same as the primary input file with the extension of a binary program. The binary file extension depends on the target platform or can be specified using #pragma extension.
-- %_O: Expands to a lowercase version of the output file name from %O.
-- %^O: Expands to an uppercase version of the output file name from %O.
-
-KickC includes linker specifications for all supported target platforms. These are the files with the extension ld in the target folder. These can be used as a starting point for your own linker specification files.
-
-Some of the included example programs demonstrate how to use custom linker files. For instance, the example program kernalload.c uses a custom linker file for generating a binary D64 disk image.
+KickC expands the following macro variables in linker scripts:
+- `%E`: Entry point symbol (e.g. `main` or `__start`).
+- `%P`: Program start address in memory (see `#pragma start_address`).
+- `%O`: Target binary output filename.
+- `%_O`: Lowercase output filename.
+- `%^O`: Uppercase output filename.
 
 ### 2.10.3 Code and Data Segments
 
-By default, your code is compiled into the segment named "Code," and your data is compiled into the segment named "Data."
-
-If you create your own linker specification file, you can also declare new named segments that the linker file then outputs into the binary file.
-
-In your program, you can specify which named segment the code should be compiled into using #pragma code_seg(name). Similarly, you can specify which named segment the data should be compiled into using #pragma data_seg(name). These two #pragmas can be used multiple times in your source code. They take effect when encountered and are used for all following code and data until you instruct the compiler to use another named segment using the #pragma once more.
-
-### 2.10.4 Target CPU
-
-You can specify which CPU the compiler should create assembler code for by using #pragma cpu(name) or the command line option -cpu name.
-
-The following CPUs are supported:
-- rom6502: Vanilla MOS 6502 CPU running in ROM (no illegal opcodes, no self-modifying code).
-- rom6502x: MOS 6502 CPU running in ROM (allows illegal instructions, no self-modifying code).
-- mos6502: Vanilla MOS 6502 CPU (no illegal opcodes, allows self-modifying code).
-- mos6502x: MOS 6502 CPU (allows illegal instructions, allows self-modifying code).
-- wdc65c02: WDC 65C02 CPU (More addressing modes and instructions, no self-modifying code).
-- csg65ce02: CSG 65CE02 CPU (Even more addressing modes and instructions, no self-modifying code).
-- mega45gs02: MEGA65 45GS02 CPU (Even more addressing modes and instructions, no self-modifying code).
-
-Support for the 65CE02 and 45GS02 CPUs is achieved by using a modified version of KickAssembler. The modified KickAssembler will be retired when the KickAssembler officially adds support for these CPUs. It is available [here](https://gitlab.com/jespergravgaard/kickassembler65ce02).
-
-### 2.10.5 Character Encoding
-
-You can specify which character encoding the compiler uses to find the numerical value of a character or string by using `#pragma encoding(name)`.
-
-The following built-in character encodings are supported:
-- petscii_mixed: Commodore PET Standard Code of Information Interchange mixed case.
-- petscii_upper: Commodore PET Standard Code of Information Interchange uppercase.
-- screencode_mixed: Commodore screen codes mixed case (Default for VIC20, C64, Plus4, MEGA65).
-- screencode_upper: Commodore screen codes uppercase.
-- atascii: ATARI Standard Code for Information Interchange (Default for Atari 2600).
-- screencode_atari: ATARI screen codes (Default for Atari XL).
-- ascii: American Standard Code for Information Interchange.
-
-#### Custom Encodings via #pragma charmap()
-
-You can define custom character encodings by overriding specific characters from an existing base encoding using `#pragma charmap(custom_name, base_encoding, "mapping_rules")`.
-
-Mapping rules map source characters to target byte values (specified in decimal, hexadecimal `0x..`, or as a character literal `'..'`). Rules can be separated by commas, semicolons, spaces, or newlines.
+By default, code is placed in segment `"Code"` and data in `"Data"`. The destination segment can be switched at any point in the source code:
 
 ```c
-// Define a custom encoding 'german' based on 'ascii' with German umlauts:
+#pragma code_seg(MusicEngine)
+void play_sound() { ... }
+
+#pragma data_seg(MusicData)
+const uint8_t song[] = { ... };
+
+// Restore default segments:
+#pragma code_seg(Code)
+#pragma data_seg(Data)
+```
+
+### 2.10.4 Segment Type Classification & ROM Safety (`#pragma segment_type`)
+
+On banked systems (such as cartridges or RAM expansions), executing write operations to ROM or making direct unbanked calls across different banks can cause severe runtime crashes. KickC provides compile-time segment safety verification via `#pragma segment_type`:
+
+```c
+#pragma segment_type(Code, RAM_RESIDENT)
+#pragma segment_type(Bank1, ROM_BANK, 1)
+#pragma segment_type(Bank2, ROM_BANK, 2)
+#pragma segment_type(SharedOverlay, RAM_OVERLAY)
+```
+
+Supported segment classifications:
+- `ROM`: Immutable read-only memory.
+- `ROM_BANK`: Banked read-only memory with optional integer bank index.
+- `RAM_RESIDENT` (or `RAM`): Resident writable memory.
+- `RAM_OVERLAY`: Dynamically loaded or shared RAM overlay area.
+
+Enforced compiler protections:
+1. **ROM-Write Protection:** The compiler rejects any runtime write access or non-const variable allocation within a `ROM` or `ROM_BANK` segment with a hard `CompileError`.
+2. **Cross-Bank Call Protection:** Direct function calls between different `ROM_BANK` segments without a banking trampoline are detected in Pass 1 and rejected at compile time.
+
+### 2.10.5 Predefined Scratchpad Segment: `StackRam` (`$0100-$01AF`)
+
+The MOS 6502 hardware stack resides in page 1 (`$0100-$01FF`). Most programs only consume the top 60–80 bytes of this page. KickC's linker scripts predefine the lower 176 bytes (`$0100-$01AF`) as the `StackRam` segment.
+
+Developers can place time-critical scratchpad buffers or decompression workspaces directly into `StackRam` to free resident Main RAM:
+
+```c
+#pragma data_seg(StackRam)
+uint8_t fast_decomp_buffer[128];
+#pragma data_seg(Data)
+```
+
+### 2.10.6 Banked Far Segments and Functions (`#pragma bank`, `#pragma nobank`, `#pragma far_seg`)
+
+For banked cartridges (such as Magic Desk, EasyFlash, or GMod2) and banked memory expansions, KickC provides explicit banking directives:
+
+#### Procedural Banking via `#pragma bank` and `#pragma nobank`
+
+```c
+// Assign subsequent functions to bank window "BankCartridge" at bank index 6:
+#pragma bank(BankCartridge, 6)
+#pragma code_seg(Bank6Code)
+
+void handle_bank6_event() {
+    // Compiled as a banked procedure belonging to bank 6
+}
+
+// Reset banking calculation to common resident memory:
+#pragma nobank()
+#pragma code_seg(Code)
+```
+
+#### Trampoline Far Segments via `#pragma far_seg` / `#pragma near_seg`
+
+```c
+// Define Bank 6 with bank index 6:
+#pragma far_seg(WorldMapSeg, 6)
+
+// Or specify custom banking entry/exit trampolines:
+#pragma far_seg(BankMusic, 5, bank_switch_prep, bank_switch_exec, bank_switch_restore)
+
+// Switch back to near execution:
+#pragma near_seg()
+```
+
+### 2.10.7 Zero-Waste Loop Alignment (`#pragma loop_align`)
+
+MOS 6502 branch instructions (`BNE`, `BEQ`, `BCC`, `BCS`, etc.) take 3 CPU cycles if the branch is taken within the same page, but suffer a 1-cycle penalty (4 cycles total) whenever the branch crosses a 256-byte page boundary. In tight inner loops, this page crossing adds significant execution jitter and latency.
+
+`#pragma loop_align` instructs Pass 5 to automatically insert conditional KickAssembler alignment (`.if ((* & $ff) > (256-L)) .align $100`) for loops smaller than the specified byte threshold:
+
+```c
+#pragma loop_align(32)   // Align inner loops up to 32 bytes to page boundaries
+#pragma loop_align(on)   // Enable with default threshold of 32 bytes
+#pragma loop_align(off)  // Disable loop alignment
+```
+
+Unlike fixed `.align $100` padding, KickC's conditional loop alignment only inserts padding bytes if the loop body would actually straddle a page boundary, eliminating wasted memory. Can also be enabled globally via the command-line option `-Oloop-align=<N>`.
+
+### 2.10.8 Target CPU
+
+Selects the instruction set and opcode model via `#pragma cpu(name)` or `-cpu name`:
+
+| CPU Name | Target Description |
+| :--- | :--- |
+| `rom6502` | Standard MOS 6502 running in ROM (strictly official opcodes, no self-modifying code). |
+| `rom6502x` | MOS 6502 running in ROM with stable undocumented/illegal opcodes (`LAX`, `SAX`, `ALR`, `DCP`, `ISC`). |
+| `mos6502` | Standard MOS 6502 running in RAM (official opcodes, allows pointer-to-SMC optimization). |
+| `mos6502x` | MOS 6502 running in RAM (Default: undocumented opcodes + RAM self-modifying code optimization). |
+| `wdc65c02` | WDC 65C02 (adds `BRA`, `STZ`, `PHX`, `PLX`, `PHY`, `PLY`, zero-page indirect addressing). |
+| `csg65ce02` | CSG 65CE02 (adds 16-bit branches, Z-register indexed indirect, stack relative). |
+| `mega45gs02` | MEGA65 45GS02 (adds 32-bit Q registers, 32-bit indirect Z addressing). |
+
+### 2.10.9 Character Encoding & Custom Charmaps
+
+Set the global string/character literal encoding via `#pragma encoding(name)`:
+- `petscii_mixed`, `petscii_upper`: Commodore PETSCII.
+- `screencode_mixed`, `screencode_upper`: Commodore screen codes (Default for C64/VIC-20).
+- `atascii`, `screencode_atari`: Atari character and screen codes.
+- `ascii`: Standard ASCII.
+
+#### Custom Encodings via `#pragma charmap()`
+Define custom character sets by mapping characters to specific byte values:
+
+```c
 #pragma charmap(german, ascii, "ä=27, ö=28, ü=29, Ä=91, Ö=92, Ü=93, ß=94")
-
-// Activate custom encoding globally for subsequent strings and characters:
 #pragma encoding(german)
-const char msg[] = "Schöne Grüße";
 ```
 
-#### String & Character Literal Encoding Suffixes
-
-In addition to `#pragma encoding()`, you can apply an encoding to individual string or character literals by suffixing the literal with the encoding name:
+Individual string or character literals can also specify an explicit encoding suffix:
 
 ```c
-// Explicit encoding suffixes per literal:
-const char s_petscii[] = "Hello"petscii_mixed;
-const char s_ascii[]   = "Hello"ascii;
-const char s_custom[]  = "Grüße"german;
-
-// Combine with 'z' suffix for non-zero terminated strings:
-const char s_unterminated[] = "World"german_z;
-
-// Character literal suffix:
-char c = 'ä'german;
+const char greeting[] = "Grüße"german;
+const char screen_str[] = "HELLO"screencode_upper;
+const char raw_str[] = "NON-ZERO"ascii_z; // Unterminated string without trailing '\0'
 ```
 
-### 2.10.6 Interrupt Type
+### 2.10.10 Binary Resource Embedding (`#embed` - C23)
 
-You can specify the interrupt type that is used for functions with the __interrupt directive by using #pragma interrupt(type). This instructs the compiler what interrupt type to use for a function with an __interrupt directive without a parenthesis. You can see the available interrupt types in the section "Interrupt" above.
-
-### 2.10.7 Program Start Address
-
-You can specify the program start address in memory by using #pragma start_address(number). The program start address is passed on to the linker script, which uses it to place the program in memory. The default start address for each target platform is specified in the tgt-file.
-
-### 2.10.8 Zeropage Address Reservations
-
-If you want the compiler to avoid using some parts of the zeropage because you plan to use them for other purposes, then you can specify this using #pragma zp_reserve(number, number, ...). If you want to avoid a whole range of zeropage addresses, you can specify that using the syntax number..number as one of the parameters. For example, the following instructs the compiler to not use zeropage addresses 2, 7, and 0x10-0x1f.
+Embeds raw binary files directly into array initializers at compile time:
 
 ```c
-#pragma zp_reserve(2, 7, 0x10..0x1f)
+const uint8_t sprite_data[] = {
+    #embed "assets/player.bin"
+};
+
+#if __has_embed("assets/tiles.bin")
+const uint8_t tiles[] = {
+    #embed "assets/tiles.bin" limit(1024)
+};
+#endif
 ```
 
-### 2.10.9 Emulator
+### 2.10.11 Interrupt Type
 
-You can specify which emulator to use for running the compiled binary program by using #pragma emulator("command"). When the program is compiled with the -e command line option, KickC will run the emulator command and pass it
+Configures default interrupt entry/exit behavior via `#pragma interrupt(type)`:
+`rom_min_c64`, `rom_sys_c64`, `hardware_all`, `hardware_clobber`, `hardware_none`.
 
- the generated binary program. The target platform tgt-files define the default emulator command for each platform, so you only need to use the pragma if you want to override the default.
+### 2.10.12 Program Start Address
 
-### 2.10.10 Binary Output File Extension
+Specifies execution start address via `#pragma start_address(address)` (e.g. `#pragma start_address(0x0801)`).
 
-You can override the filename extension used for binary output files by using #pragma extension("ext"). The default extension for the binary output files is specified in the target platform tgt-file.
+### 2.10.13 Zeropage Address Reservations
 
-### 2.10.11 Library Init Code
-
-If you are coding a library, you can specify that a function is init-code that needs to run before the main() program is started. If you specify the following, then the compiler will automatically add a call to the function init() before calling main() to any program that uses the functions proc1, proc2, or proc3.
+Reserves Zero-Page addresses to prevent compiler register allocation from colliding with Kernal, BASIC, or external assembly routines:
 
 ```c
-#pragma constructor_for(init, proc1, proc2, proc3)
+#pragma zp_reserve(0x02..0x03, 0x14..0x15, 0x90)
 ```
 
-If proc1, proc2, or proc3 are never used, then the init function is not called, and the KickC optimizer will delete it unless it is explicitly called elsewhere.
+### 2.10.14 Struct Memory Model (`#pragma struct_model`)
 
-## 2.12 Comparison with Standard C99
+Configures how structures are represented internally by the compiler:
 
-### 2.12.1 Not Supported/Implemented
-- Floating point types: `float`, `double`
-- Runtime multiplication: `a * b` (except constants)
-- Runtime division: `a / b` (except powers of 2)
-- Runtime modulo: `a % b` (except powers of 2 - 1)
-- Union: `union { char b; int w; } u;`
-- Array of arrays: `char baa[4][4];`
-- Function pointers with parameters: `void(char)*;`
-- Function pointers with return values: `char()*;`
-- Recursive functions: `char fib(byte n) { return fib(n-1) + fib(n-2); }`
-- Alignof operator: `char s = alignof(word);`
-- Variadic functions: `sum(int i1, ...)` (except `printf`)
+```c
+#pragma struct_model(unwind)   // Default: unwinds struct fields into individual SSA variables
+#pragma struct_model(classic)  // Classic: keeps structures contiguous in memory for pointer arithmetic
+```
 
-### 2.12.2 Limitations/Modifications
-- Multiplication, division, and modulo have limited support.
-  - Multiplication is supported for constant values.
-  - Division is supported for constant powers of 2.
-  - Modulo is supported for constant powers of 2 minus 1.
-  - Multiplication of a variable with an unsigned constant is supported and converted to shifts/additions.
-- There is no general runtime support for multiplication/division/modulo without using a library and a function call.
-- Arrays and strings are always statically allocated (as data bytes in the resulting assembler).
-- Alignment directive: `__align($100)`
-- Register directive: `register(X)`
-- Inline assembler: `asm { SEI CLD };`
-- Main function: `void main() { ... }`
+- `unwind` (Default): Unwinds structure members into separate independent scalar variables. Allows maximum register uplift and Zero-Page coalescing, drastically speeding up member accesses.
+- `classic`: Preserves standard C contiguous layout in memory, necessary when passing pointers to raw structs to external assembly code or reinterpreting buffers.
 
-### 2.12.3 Extensions
-- Forward referencing variables in the outer scope
-- Ranged for-loops: `for( char i: 0.. 10) { }`
-- Word operator: `unsigned int w = { hi, lo };`
-- Lo/hi-byte operator: `char lo = <w; <w = 12;`
+Can also be set globally via `-struct_model=<unwind|classic>`.
 
-## 2.12.4 Tips for Optimizing KickC Code
-- Use `char`/`byte` anywhere possible. They are faster than `int`/`word`.
-- Use unsigned types whenever possible; they are faster than signed types.
-- Use array indexing instead of incrementing pointers.
-- Use `do {} while()` instead of `while() {}` for loops that always execute at least once.
-- Booleans are not always very efficient; often, `char` is better.
-- Use inline functions.
-- Use (experimental) inline loops.
-- Use normal optimization techniques.
-- Put calculated results that are used multiple times into a variable instead of repeating the calculation.
-- Create arrays for lookup instead of repeating a calculation many times.
-- Unroll loops (manually).
+### 2.10.15 Default Calling Convention (`#pragma calling`)
+
+Sets the default calling convention for subsequent functions within the compilation unit:
+
+```c
+#pragma calling(__phicall)   // Fast static variable/register calling convention (default)
+#pragma calling(__stackcall)  // Reentrant stack-based calling convention
+#pragma calling(__varcall)    // Static variable calling convention
+```
+
+### 2.10.16 External Resource Files (`#pragma resource`)
+
+Declares external resource files (such as music, tilemaps, or sprite binaries) that must be tracked and automatically copied into the target output directory during build:
+
+```c
+#pragma resource("assets/sid/music.sid")
+#pragma resource("assets/tiles.chr")
+```
+
+### 2.10.17 Variable Model Configuration (`#pragma var_model`)
+
+Fine-tunes memory placement and optimization strategies for variable categories:
+
+```c
+#pragma var_model(ssa_zp)    // Default: SSA variables allocated to Zero-Page registers
+#pragma var_model(ssa_mem)   // Allocate SSA variables to main memory
+```
+
+Parameters follow the pattern `[scope]_[type]_[optimization]_[memoryarea]`.
+
+### 2.10.18 Emulator & Output Extension
+
+- `#pragma emulator("command")`: Overrides the default emulator command line used with `-e`.
+- `#pragma extension("ext")`: Overrides the output binary file extension (e.g. `"crt"`, `"prg"`, `"d64"`).
+
+### 2.10.19 Library Init Code (`#pragma constructor_for`)
+
+Registers initialization functions that must execute before `main()` if specific library procedures are used:
+
+```c
+#pragma constructor_for(init_screen, print, print_char)
+```
+
+## 2.11 Standard and Retro-Computing Library Suite
+
+KickC includes a comprehensive runtime library designed for 8-bit systems:
+
+### Standard ISO C Headers
+
+- **`<stdint.h>`:** Standard exact-width integer types (`uint8_t`, `int8_t`, `uint16_t`, `int16_t`, `uint24_t`, `int24_t`, `uint32_t`, `int32_t`, `uint4_t`).
+- **`<stdbool.h>`:** Boolean type `bool`, `true` (1), and `false` (0).
+- **`<limits.h>`:** Standard limits macros (`UCHAR_MAX`, `SCHAR_MIN`, `SCHAR_MAX`, `USHRT_MAX`, `SHRT_MIN`, `SHRT_MAX`, `UINT_MAX`, `INT_MIN`, `INT_MAX`, `ULONG_MAX`, `LONG_MIN`, `LONG_MAX`).
+- **`<ctype.h>`:** Fast character classification and conversion routines (`isalpha`, `isdigit`, `isspace`, `isupper`, `islower`, `toupper`, `tolower`).
+- **`<string.h>`:** String and memory routines (`memcpy`, `memcpy_fast`, `memset`, `memset_fast`, `strlen`, `strcpy`, `strcat`, `strcmp`, `strncmp`, `strchr`, `strrchr`).
+- **`<stdlib.h>`:** General utilities (`abs` polymorphic via `_Generic`, `rand`, `srand`, `exit`, `utoa`, `itoa`).
+- **`<stdio.h>`:** High-speed formatted output (`printf`, `sprintf`, `sputc`, `sprintf_init`) with specialized 8-bit and 16-bit fast paths.
+- **`<math.h>`:** Math routines (`sqrt16`, `sin`, `cos`, `div16u`, `M_PI`, `PI`).
+
+### Retro & High-Performance Headers
+
+- **`<6502.h>`:** Hardware intrinsics (`SEC`, `CLC`, `CLD`, `SED`, `NOP`, `__builtin_bit7`, `__builtin_bit6`, `delay_cycles(N)`).
+- **`<multiply.h>`:** Cycle-optimized multiplication routines:
+  - `fast_mul8u(a, b)`: Quarter-square table multiplication in ~24 cycles.
+  - `fast_mul16u(a, b)`: Fast 16-bit unsigned multiplication.
+  - `fast_mul16s(a, b)`: Fast 16-bit signed multiplication.
+- **`<fixedpoint.h>`:** Comprehensive fixed-point math suite (`fixed8_8`, `fixed16_8`, `fixed16_16`, math, trig, lerp, and vector operations).
+- **`<bcd.h>`:** Hardware Binary Coded Decimal math (`bcd8_t`, `bcd16_t`, `bcd8_add`, `bcd8_sub`, `bcd16_add`, `bcd16_sub`).
+- **`<rle.h>`:** Real-time PackBits RLE compression and decompression.
+- **`<zx02.h>`:** Universal high-ratio ZX02 decompression suite.
+- **`<fade.h>`:** Perceptual luminance color palette fading.
+- **`<diskio.h>`:** Fast 1541/1571/1581 disk I/O with drive probing and Kernal fallback.
+- **`<prng.h>`:** High-speed deterministic 8-bit and 32-bit PRNG generators (`rand8()`, `rand32()`).
+- **`<mouse1351.h>`:** Proportional Commodore 1351 mouse driver.
+- **`<reu.h>`:** Commodore 17xx RAM Expansion Unit DMA transfer routines.
+
+## 2.12 Comparison with Standard C
+
+KickC is designed for high-performance 8-bit code generation. The language embraces modern C syntactic features while deliberately omitting constructs that require dynamic runtime stack overhead.
+
+### 2.12.1 Supported Modern C Features
+
+- **From C11:**
+  - `static_assert` / `_Static_assert` compile-time assertions.
+  - `_Generic` compile-time type matching.
+  - Anonymous structures and unions (ISO C11 §6.7.2.1).
+- **From C23:**
+  - `#embed` and `__has_embed` binary asset embedding.
+  - `nullptr` type-safe null pointer keyword.
+  - Empty zero-initializers `{}` for structs and arrays.
+  - Digit separators in numeric literals (`1_000`, `0b1010_0101`).
+  - Typed 8-bit enumerations (`enum : uint8_t`).
+  - Single-argument `static_assert(cond)`.
+- **From C2Y / C29:**
+  - `countof()` compile-time array length operator (WG14 N3169).
+  - Named loops (`break label; continue label;` - WG14 N3355).
+  - Selection statements with initializers: `if (init; cond)` and `switch (init; expr)`.
+
+### 2.12.2 Features Omitted by Design
+
+- **Floating-point types (`float`, `double`):** Software emulation is prohibitive on 1 MHz 8-bit CPUs. Use `<fixedpoint.h>` instead.
+- **Dynamic re-entrant call stack:** KickC uses a static call graph with whole-program SSA register allocation. Recursive functions are not supported.
+- **Variable-length arrays (VLAs):** All array memory is statically allocated or allocated to fixed buffers.
+
+### 2.12.3 8-Bit Architecture Extensions
+
+- Low/high byte operators (`<w`, `>w`, `<ptr = val`).
+- Split Low/High word arrays (`__lohi`).
+- Struct-of-Arrays flattening (`__soa`).
+- Packed 4-bit nibbles (`uint4_t` / `__nibble`).
+- 16-bit register pair calling convention (`__ax`).
+- Auto Carry-flag boolean returns (`__carry`).
+- Countdown loop inversion (`__countdown`).
+- Compile-time table generator (`__builtin_lut`).
+- Cycle-exact timing delays (`delay_cycles(N)`).
+- Memory segment classification and ROM write protection (`#pragma segment_type`).
+- Inline 6502 assembly (`asm`) and KickAssembler integration (`kickasm`).
+
+### 2.12.4 Tips for Writing Ultra-Fast KickC Code
+
+1. **Prefer 8-bit `char` / `uint8_t`:** 8-bit operations take a single CPU cycle; 16-bit operations take at least double the cycles and registers.
+2. **Use unsigned types where possible:** Unsigned comparisons and shifts generate shorter assembly sequences than signed two's-complement arithmetic.
+3. **Use `__lohi` for large word tables:** Avoids index doubling (`ASL`) and 16-bit pointer math, accessing words in only 8 cycles.
+4. **Use `__soa` for struct arrays:** Eliminates multiplication with struct size, enabling direct 4-cycle indexed addressing (`LDA tab,X`).
+5. **Use `uint4_t` for nybble buffers:** Halves RAM consumption for Color-RAM buffers and tile attributes.
+6. **Use `__countdown` or count down toward zero:** Allows testing `BNE` or `BPL` directly on loop counters without `CPX`/`CPY`.
+7. **Use `__carry` for boolean functions:** Returns conditions in the Carry flag and branches directly with `BCS`/`BCC`.
+8. **Use `fixed8_8` / `fixed16_8` for physics:** Provides subpixel motion with standard integer speed.
+9. **Compile with `-Ouplift=20` or higher:** Allows the compiler to explore register combinations and uplift variables into CPU registers `A`, `X`, and `Y`.
 
 # 3 Working with KickC
 
 ## 3.1 Controlling Output Files
 
-Running the compiler will generate a number of output files. The directory and name of the output files all have sensible defaults and can be controlled through configuration or command-line options.
+Compiling with KickC produces several output artifacts:
+1. **ASM file (`.asm`):** Human-readable, highly optimized 6502 assembler code.
+2. **Binary program (`.prg`, `.crt`, `.bin`, `.d64`):** Produced when using `-a` (assemble) or `-e` (execute in emulator).
+3. **Resource files:** Binary graphics, fonts, or music referenced in `#embed` or `kickasm(resource "...")` are automatically copied to the output folder.
 
-The following output files generated are:
-1. An ASM-file containing the assembler code for all the C-files. This ASM-file collects assembler code for all C-files passed to the compiler and all used functions in all included libraries.
-2. A copy of all resource-files needed to compile the ASM-file. Resource-files are defined in inline kickass and typically contain images, music, data tables, etc. Resource-files are copied to the output directory if it is not the same as the input directory.
-3. A binary program file that is the result of assembling the ASM-file. The binary output file is generated when instructing the compiler to also do the assembly by command-line options -a or -e. The contents and specific format of the binary program file are controlled by the linker specification of the target platform (or any custom linker specification). The linker specification can potentially generate multiple binary output files. In the linker specification, %O is used to expand the binary output file name.
-
-The binary program output file name generated has the following file name components:
-- Output-path is the directory where the output files are generated. The following is a prioritized list specifying how the compiler finds this folder:
-  - If the -o command line option is passed, and the passed file name contains a directory part, then this directory is used.
-  - If the -odir command line option is passed, then this directory is used.
-  - If the first C-file passed to the compiler contains a directory part, then this directory is used.
-  - Otherwise, the current directory is used.
-- Output-basename is the file name of the output file without path and extension. The following is a prioritized list specifying how the compiler finds the output basename:
-  - If the -o command line option is passed, then the basename of the passed file name is used.
-  - The basename of the first C-file passed to the compiler is used.
-- Output-extension is the file extension of the output file. The following is a prioritized list specifying how the compiler finds the output extension:
-  - If the -o command line option is passed, and the compiler has been instructed to assemble the program (using -a, -e, or -d), then the extension of the passed file name is used.
-  - If the program contains #pragma extension(...), then the specified extension is used.
-  - If the -oext command line option is passed, then this extension is used.
-  - Otherwise, the extension specified in the platform target (.tgt) file for the chosen platform is used.
-
-The ASM output file has the following file name components:
-- Output-path / output-basename . asm-extension
-
-Asm-extension is the file extension of the ASM file. The following is a prioritized list specifying how the compiler finds the output extension:
-- If the -o command line option is passed, and the compiler has not been instructed to assemble the program (using -a, -e, or -d), then the extension of the passed file name is used.
-- Otherwise, the extension "asm" is used.
+Output naming rules:
+- `-o <file>` specifies the output binary or assembly file name.
+- `-odir <dir>` sets the output directory.
+- `-oext <ext>` overrides the binary extension.
 
 ## 3.2 KickC Command Line Reference
 
 ```
-kickc [-adeEhSvV] [-Ocoalesce] [-Oliverangecallpath] [-Oloophead] [-Onocache]
-        [-Onoloophead] [-Onouplift] [-Si] [-Sl] [-vasmoptimize] [-vasmout]
-        [-vcreate] [-vfragment] [-vliverange] [-vloop] [-vnonoptimize]
-        [-voptimize] [-vparse] [-vsequence] [-vsizeinfo] [-vunroll] [-vuplift]
-        [-Warraytype] [-Wfragment] [-calling=<calling>] [-cpu=<cpu>]
-        [-emu=<emulator>] [-F=<fragmentDir>] [-fragment=<fragment>]
+kickc [-adeEhSvV] [-Ocoalesce] [-Onocoalesce] [-Oliverangecallpath]
+        [-Oloopalign=<threshold>] [-Oloophead] [-Onoloophead] [-Onocache]
+        [-Onolongbranchfix] [-Onouplift] [-Ouplift=<N>] [-Si] [-Sl]
+        [-struct_model=<model>] [-var_model=<model>] [-vasmoptimize] [-vasmout]
+        [-vcreate] [-vfixlongbranch] [-vfragment] [-vliverange] [-vloop]
+        [-vnonoptimize] [-voptimize] [-vparse] [-vsequence] [-vsizeinfo]
+        [-vunroll] [-vuplift] [-Warraytype] [-Wfragment] [-calling=<calling>]
+        [-cpu=<cpu>] [-emu=<emulator>] [-F=<fragmentDir>] [-fragment=<fragment>]
         [-o=<outputFileName>] [-odir=<outputDir>] [-oext=<outputExtension>]
-        [-Ouplift=<optimizeUpliftCombinations>] [-p=<targetPlatform>]
-        [-T=<linkScript>] [-var_model=<varModel>] [-D=<String=String>]...
+        [-p=<targetPlatform>] [-T=<linkScript>] [-D=<String=String>]...
         [-I=<includeDir>]... [-L=<libDir>]... [-P=<targetPlatformDir>]...
         [-Xassembler=<assemblerOptions>]... [<cFiles>...]
 ```
 
-### 3.2.1 Description:
+### 3.2.1 Description
 
-Compiles C source files. KickC is a C-compiler creating optimized and readable
-6502 assembler code.
+Compiles C source files into optimized and readable 6502 assembler code and assembled binaries.
 
-See [KickC Repository](https://gitlab.com/camelot/kickc) for detailed information about KickC.
+### 3.2.2 Parameters
 
-### 3.2.2 Parameters:
+- `<cFiles>...`: One or more C source files to compile.
 
-- `<cFiles>...`: The C source files to compile.
+### 3.2.3 Options
 
-### 3.3.3 Options:
-
-- `-a`: Assemble the output file using KickAssembler. Produces a binary file.
-- `-calling=<calling>`: Configure calling convention. Default is __phicall. See #pragma calling.
-- `-cpu=<cpu>`: The target CPU. Default is 6502 with illegal opcodes. See #pragma cpu.
-- `-d`: Debug the assembled binary file using C64Debugger. Implicitly assembles the output.
-- `-D=<String=String>`: Define macro to value (1 if no value given).
-- `-e`: Execute the assembled binary file using an appropriate emulator. The emulator chosen depends on the target platform.
-- `-E`: Only run the preprocessor. Output is sent to standard out.
-- `-emu=<emulator>`: Execute the assembled program file by passing it to the named emulator. Implicitly assembles the output.
-- `-F, -fragmentdir=<fragmentDir>`: Path to the ASM fragment folder, where the compiler looks for ASM fragments.
-- `-fragment=<fragment>`: Print the ASM code for a named fragment. The fragment is loaded/synthesized, and the ASM variations are written to the output.
-- `-h`, `--help`: Show this help message and exit.
-- `-I, -includedir=<includeDir>`: Path to an include folder, where the compiler looks for included files. This option can be repeated to add multiple include folders.
-- `-L, -libdir=<libDir>`: Path to a library folder, where the compiler looks for library files. This option can be repeated to add multiple library folders.
-- `-o, -output=<outputFileName>`: Name of the output file. By default, it is the same as the first input file with the proper extension.
-- `-Ocoalesce`: Optimization Option. Enables zero-page coalesce pass which limits zero-page usage significantly, but takes a lot of compile time.
-- `-odir=<outputDir>`: Path to the output folder, where the compiler places all generated files. By default, the folder of the output file is used.
-- `-oext=<outputExtension>`: Override the output file extension. The default is specified in the target platform / linker configuration.
-- `-Oliverangecallpath`: Optimization Option. Enables live ranges per call path optimization, which limits memory usage and code, but takes a lot of compile time.
-- `-Oloophead`: Optimization Option. Enabled experimental loop-head constant pass which identifies loops where the condition is constant on the first iteration.
-- `-Onocache`: Optimization Option. Disables the fragment synthesis cache. The cache is enabled by default.
-- `-Onoloophead`: Optimization Option. Disabled experimental loop-head constant pass which identifies loops where the condition is constant on the first iteration.
-- `-Onouplift`: Optimization Option. Disable the register uplift allocation phase. This will be much faster but produce significantly slower ASM.
-- `-Ouplift=<optimizeUpliftCombinations>`: Optimization Option. Number of combinations to test when uplifting variables to registers in a scope. By default, 100 combinations are tested.
-- `-p, -t, -target, -platform=<targetPlatform>`: The target platform. Default is C64 with BASIC upstart. See #pragma target.
-- `-P, -targetdir, -platformdir=<targetPlatformDir>`: Path to a target platform folder, where the compiler looks for target platform files. This option can be repeated to add multiple target platform folders.
-- `-S, -Sc`: Interleave comments with C source code in the generated ASM.
-- `-Si`: Interleave comments with intermediate language code and ASM fragment names in the generated ASM.
-- `-Sl`: Interleave comments with C source file name and line number in the generated ASM.
-- `-T, -link=<linkScript>`: Link using a linker script in KickAss segment format. See #pragma link.
-- `-v`: Verbose output describing the compilation process.
-- `-V`, `--version`: Print version information and exit.
-- `-var_model=<varModel>`: Configure variable optimization/memory area. Default is ssa_zp. See #pragma var_model.
-- `-vasmoptimize`: Verbosity Option. Assembler optimization.
-- `-vasmout`: Verbosity Option. Show KickAssembler standard output during compilation.
-- `-vcreate`: Verbosity Option. Creation of the Single Static Assignment Control Flow Graph.
-- `-vfragment`: Verbosity Option. Synthesis of Assembler fragments.
-- `-vliverange`: Verbosity Option. Variable Live Range Analysis.
-- `-vloop`: Verbosity Option. Loop Analysis.
-- `-vnonoptimize`: Verbosity Option. Choices not to optimize.
-- `-voptimize`: Verbosity Option. Control Flow Graph Optimization.
-- `-vparse`: Verbosity Option. File Parsing.
-- `-vsequence`: Verbosity Option. Sequence Plan.
-- `-vsizeinfo`: Verbosity Option. Compiler Data Structure Size Information.
-- `-vunroll`: Verbosity Option. Loop Unrolling.
-- `-vuplift`: Verbosity Option. Variable Register Uplift Combination Optimization.
-- `-Warraytype`: Warning Option. Non-standard array syntax produces a warning instead of an error.
-- `-Wfragment`: Warning Option. Missing fragments produce a warning instead of an error.
-- `-Xassembler=<assemblerOptions>`: Passes the next option to the assembler. The option should generally be quoted. This option can be repeated to pass multiple options.
-
-
+- `-a`: Assemble the generated ASM file with KickAssembler to produce a binary.
+- `-calling=<calling>`: Default calling convention (`__phicall`, `__stackcall`, `__varcall`).
+- `-cpu=<cpu>`: Target CPU architecture (`mos6502x`, `mos6502`, `rom6502x`, `rom6502`, `wdc65c02`, `csg65ce02`, `mega45gs02`).
+- `-d`: Debug assembled binary using C64Debugger.
+- `-D=<key=val>`: Define preprocessor macro.
+- `-e`: Assemble and immediately execute the binary in the platform emulator (e.g. VICE, Atari800, Nestopia).
+- `-E`: Run only the preprocessor and output to stdout.
+- `-emu=<emulator>`: Explicitly specify emulator executable.
+- `-F, -fragmentdir=<dir>`: Path to ASM fragment directory.
+- `-fragment=<name>`: Print ASM implementation or synthesis tree for a specific fragment.
+- `-h`, `--help`: Display help and options.
+- `-I, -includedir=<dir>`: Add include directory for header files.
+- `-L, -libdir=<dir>`: Add library search directory.
+- `-o, -output=<file>`: Output filename.
+- `-odir=<dir>`: Output directory.
+- `-oext=<ext>`: Override binary output extension.
+- `-Ocoalesce`: Enable aggressive Zero-Page coalescing pass which limits Zero-Page usage significantly.
+- `-Onocoalesce`: Disable Zero-Page coalescing completely to reduce compilation time.
+- `-Oliverangecallpath`: Enable per-call-path variable live-range analysis.
+- `-Oloopalign=<N>, -Oloop-align=<N>`: Enables zero-waste page boundary loop alignment with max byte threshold (e.g. 32). Default is disabled (0).
+- `-Oloophead`: Enable experimental loop-head constant pass which identifies loops where the condition is constant on the first iteration.
+- `-Onoloophead`: Disable loop-head constant pass.
+- `-Onocache`: Disable the fragment synthesis cache (enabled by default).
+- `-Onolongbranchfix`: Disable the pass that fixes long branches (relevant when using assemblers with built-in relaxation).
+- `-Onouplift`: Disable register uplift allocation (faster compilation, but slower code).
+- `-Ouplift=<N>`: Number of register uplift combinations tested per scope (default 100; recommended $\ge 20$).
+- `-p, -t, -target, -platform=<platform>`: Target platform (default `c64`).
+- `-P, -platformdir, -targetdir=<dir>`: Path to platform definition files (`.tgt`).
+- `-S, -Sc`: Interleave C source code comments in generated ASM.
+- `-Si`: Interleave SSA intermediate language representation in generated ASM.
+- `-Sl`: Interleave source filename and line numbers in generated ASM.
+- `-struct_model=<unwind|classic>`: Configure struct model (`unwind` or `classic`). Default is `unwind`.
+- `-T, -link=<script>`: Use custom linker script.
+- `-v`: Verbose output describing compilation phases.
+- `-V`, `--version`: Print compiler version and exit.
+- `-var_model=<varModel>`: Configure variable optimization/memory area (default `ssa_zp`).
+- `-vasmoptimize`: Verbose ASM peephole optimization details.
+- `-vasmout`: Show KickAssembler standard output during compilation.
+- `-vfixlongbranch`: Verbose logging of fixed long ASM branches and relaxed return trampolines.
+- `-vfragment`: Verbose synthesis of Assembler fragments.
+- `-vliverange`: Verbose variable live range analysis.
+- `-vloop`: Verbose loop analysis.
+- `-vparse`: Verbose file parsing.
+- `-vsizeinfo`: Verbose compiler data structure size information.
+- `-vunroll`: Verbose loop unrolling.
+- `-vuplift`: Verbose variable register uplift combination optimization.
+- `-Warraytype`: Treat non-standard array syntax as a warning instead of an error.
+- `-Wfragment`: Treat missing fragments as warnings rather than fatal errors.
+- `-Xassembler=<options>`: Pass custom command-line options directly to KickAssembler.
 
 # 4 The Compiler Architecture
-The KickC compiler utilizes the following phases during compilation:
 
-## 4.1 Loading and Parsing
-Loads the main source file and recursively loads all imported source files. Parses the files creating a parse tree representation.
+The KickC compilation pipeline operates across six distinct passes:
 
-## 4.2 Creating Control Flow Graph and Symbol Table
-Converts the parse tree to a symbol table containing all variables and functions and a control flow graph in static single assignment form (SSA form). SSA form consists of a control flow graph which models all possible execution paths. Each control flow block contains a number of statements (mostly assignments). Expressions are broken into a number of simple assignments to intermediate variables ensuring that each SSA statement only handles a single operator. In SSA form variables are also broken into multiple versions to ensure that each variable is assigned a value exactly once in the entire program. Finally transitions between blocks are handled through so called Phi-functions that describe how variable versions are mapped when execution flows from one block to another. SSA form has huge advantages in making a lot of optimizations easier to program.
+## 4.1 Loading and Parsing (Pass 0)
+Loads source files and recursive `#include` dependencies. The Antlr4 lexer and parser construct the Abstract Syntax Tree (AST), expanding `#embed`, string literal encoding suffixes, and evaluating constant expressions.
 
-## 4.3 Optimizing the SSA Control Flow Graph
-Optimizes the control flow graph by repeatedly calling 20+ micro-passes. Each micro-pass examines the control flow graph and can perform a specific type of optimization by modifying the graph. The optimizer keeps cycling through the micro-passes until none of them can perform any more optimizations.
+## 4.2 SSA Control Flow Graph & Symbol Table Generation (Pass 1)
+Translates the AST into a Control Flow Graph (CFG) in Static Single Assignment (SSA) form. Every variable assignment creates a unique SSA version, complex expressions are broken into atomic single-operator statements, and branch convergence points are unified via $\phi$-functions. Verifies ROM segment types and cross-bank calls.
 
-## 4.4 Control Flow Graph Analysis
-Performs several analyses of the program in preparation of register allocation. This includes call graph analysis (which functions call each other), variable live range analysis (where is a variable defined, where is it used and where is it alive, meaning that it will be used at a later point) and loop analysis (which loops exist in the code, which loops nest each other, how deep is each loop).
+## 4.3 SSA Optimization Micro-Passes (Pass 2)
+Applies iterative optimization micro-passes until convergence:
+- Constant propagation and dead code elimination.
+- Shift-add multiplication factoring.
+- Reciprocal constant division and modulo rewriting.
+- Loop depth and induction variable analysis.
+- Boolean logic minimization.
 
-## 4.5 Register Allocation
-Allocates registers and memory locations to all variables. Initially in this phase the SSA variables are grouped together into groups that will benefit from having the same register allocation. The technique used for this is  called PhiLifting and PhiMemCoalesce. The allocation is then essentially done by trying out a lot of different register combinations and choosing the one that generates the best assembler code (uses fewest cycles). The number of different combinations tested can be controlled by the compiler option -Ouplift=nnnn
+## 4.4 Live-Range Analysis & Call Graph Resolution (Pass 3)
+Builds the whole-program static call graph. Analyzes the live ranges of all SSA variables to compute lifetime intervals and construct the interference graph.
 
-## 4.6 Assembler Code Generation using Assembler Fragments
-6502 Assembler code is generated by converting each SSA statement to assembler code using the chosen register allocation. Because SSA statements can only express pretty simple operations ASM generation is essentially done by having a large library of ASM fragment files containing the ASM code needed for a specific SSA statement with a specific register allocations. This library of ASM fragments is stored in the fragment folder in the compiler installation. The Fragment sub-system of the compiler loads fragments from this folder, but also uses a bunch of rules for synthesizing more advanced fragments from simpler ones. Even with the current 500+ fragment-files and 150+ synthesis-rules the compiler still occasionally runs into SSA statements it does not know how to create assembler for. If you encounter this problem you can fix it yourself by adding the right fragment-file in the fragments-folder. The fragment sub-system is described in more detail below to help you do this in case you need to.
+## 4.5 Register Allocation & Variable Uplift (Pass 4)
+Allocates hardware CPU registers (`A`, `X`, `Y`) and Zero-Page memory addresses to variables:
+- **PhiMemCoalesce:** Coalesces variables with non-overlapping lifetimes to share identical Zero-Page memory addresses across disjoint scopes.
+- **Register Uplift:** Evaluates variable combinations in CPU registers to minimize overall memory access cycles. Tested combinations are configurable via `-Ouplift=N`.
 
-## 4.7 Assembler Code Optimization
-Finally the compiler performs optimization of the generated assembler code. This is also done by repeatedly calling a bunch of micro-passes that each knows how to perform a simple Assembler Code Optimization. The optimizer keeps cycling through the micro-passes until none of them can perform any more optimizations. The assembler optimizations include eliminating redundant register loads (eg.LDA #0 when A is already zero), replacing double jumps with jumps straight to the destination, removing unused labels, eliminating etc.
+## 4.6 Assembler Code Generation (Pass 4)
+Maps each SSA statement to concrete 6502 assembly using the ASM Fragment Subsystem. Statements with specific register and memory bindings are matched against template fragments.
 
+## 4.7 Pass 5 Assembler Code Optimization
+Applies aggressive assembly peephole optimizations:
+- **NMOS-6510 Undocumented Opcodes:** Folds instructions into `LAX`, `SAX`, `ALR`, `DCP`, and `ISC` when targeting `mos6502x`/`rom6502x`.
+- **Tail Call Optimization (TCO):** Converts trailing `JSR <proc>; RTS` into direct `JMP <proc>`, and relaxes long-branch return trampolines.
+- **High-Speed Switch Jump Tables:** Synthesizes split 12-cycle RTS dispatch tables for dense `switch` statements.
+- **Pointer-to-SMC in RAM:** Converts Zero-Page pointer dereferences into direct self-modifying code operands in writable RAM.
+- **Multi-Entry Byte-Skipping:** Employs `.byte $2c` (`BIT $xxxx`) opcode skipping for shared procedure return paths.
+- **Dead Store Elimination with `CanonicalResolver`:** Resolves label aliases and offsets to eliminate redundant stores and unused loads in linear $O(1)$ time while preserving CPU flags.
+- **Page Boundary Loop Alignment:** Inserts conditional `.align $100` padding to prevent inner loops from crossing 256-byte page boundaries.
 
-# 5 Assembler Fragment Sub System
-## 5.1 Fragment File Name
+# 5 Assembler Fragment Subsystem
 
-The format for values in a fragment name is always 5 letters, which describe the type and the value and where it is stored. An example is vbuz1, which is an unsigned byte value stored in zero-page memory.
+## 5.1 Fragment Naming Conventions
 
-The first 3 letters describe the type, and the last 2 describe the storage.
+ASM fragments represent atomic operations with concrete storage allocations. Fragment filenames follow a standard descriptor format:
 
-Integer types are described by the following:
-1. v value / p pointer / q pointer to pointer
-2. b byte / w word / d dword
-3. u unsigned / s signed
+`[Kind][Width][Sign][Storage]`
 
-There are also a few special types with the following 3-letter names:
-- vss struct value
-- pss pointer to struct value
-- vbo boolean value
-- pbo pointer to boolean value
+- **Kind (first letters):**
+  - `v`: Value
+  - `p`: Pointer
+  - `q`: Pointer to pointer
+  - `vbo` / `pbo`: Boolean value / pointer to boolean
+  - `vss` / `pss`: Struct value / pointer to struct
+- **Width (integer types):**
+  - `b`: Byte (8-bit)
+  - `w`: Word (16-bit)
+  - `d`: Dword (32-bit)
+- **Sign:**
+  - `u`: Unsigned
+  - `s`: Signed
+- **Storage (last 2 characters):**
+  - `aa`: Accumulator `A`
+  - `xx`: Register `X`
+  - `yy`: Register `Y`
+  - `z1`, `z2`: Zero-Page addresses (`{z1}`, `{z2}`)
+  - `m1`, `m2`: Main memory addresses (`{m1}`, `{m2}`)
+  - `c1`, `c2`: Constants (`{c1}`, `{c2}`)
 
-The storage of the value is described by 2 letters:
-- aa A-register 
-- xx X-register 
-- yy Y-register 
-- z1 zeropage-memory {z1} 
-- m1 main-memory {m1} 
-- c1 constant {c1}
+Constant interpretation:
+- When `c1` is used for a **value** (e.g. `vbuc1`), `{c1}` is an immediate constant `#$xx`.
+- When `c1` is used for a **pointer** (e.g. `pbuc1`), `{c1}` represents an absolute address in memory.
 
-When {c1} is used for values, it is an immediate value, e.g., in vbuc1, {c1} is a constant unsigned byte value.
+Example: `vwuz1_gt_vbsc1_then_la1.asm` implements:
+*"If unsigned word at Zero-Page {z1} is greater than signed byte constant {c1}, jump to label {la1}"*.
 
-When c1 is used for pointers, it is an address in main memory, e.g., in pbsc1, {c1} is a constant pointer to a signed byte. This means that {c1} is effectively an address in main memory.
+## 5.2 Fragment Synthesis & Adding Missing Fragments
 
-vwuz1_gt_vbsc1_then_la1, for example, means [if] variable word unsigned zero-page value {z1} is greater than variable byte signed constant {c1}, then [goto] label {la1}.
+KickC includes over 900 hand-optimized fragment templates and an intelligent synthesis engine. When the compiler encounters an SSA statement without an exact matching fragment file, the synthesizer automatically derives it by chaining simpler primitive fragments.
 
-Fragments can use $ff as temporary storage (and $fe if 2 addresses are needed).
-
-If you are wondering how a specific fragment looks, you can ask the compiler using the -fragment flag. The following command will show all the different variations of assembler the compiler can use when needing to assign an unsigned byte in a zeropage variable {z1} to the value found in a table of unsigned bytes {c1} indexed by another unsigned byte variable on zeropage {z2}.
-
-```
-kickc.sh -vfragment -fragment vbuz1=pbuc1_derefidx_vbuz2 
-```
-
-## 5.2 Adding Missing Fragments
-
-The following is my recipe for adding a fragment. Say, for instance, that the fragment `vbuz1=pbuz2_derefidx_vbuc1_minus_vbuxx` is missing. I start by calling the following command to see what different ways I can choose to add the fragment:
-
-```
-kickc.sh -vfragment -fragment vbuz1=pbuz2_derefidx_vbuc1_minus_vbuxx
-```
-
-The output from the command is a list of all the different fragments that the compiler could use to synthesize the fragment that is missing. If I add any of these, then the compiler can use that fragment to create the missing fragment.
-
-- New fragment synthesis vbuz1=pbuz2_derefidx_vbuc1_minus_vbuxx
-- New fragment synthesis vbuz1=pbuz2_derefidx_vbuc1_minus_vbuxx - sub-option vbuz1=pbuz2_derefidx_vbuc1_minus_vbuaa
-- New fragment synthesis vbuz1=pbuz2_derefidx_vbuc1_minus_vbuxx - sub-option vbuz1=pbuz2_derefidx_vbuc1_minus_vbuaa
-- New fragment synthesis vbuz1=pbuz2_derefidx_vbuc1_minus_vbuxx - sub-option vbuz1=pbuz2_derefidx_vbuc1_minus_vbuyy
-- ...
-
-Fragment synthesis vbum1=pbuz2_derefidx_vbuc1_minus_vbuaa - No file or synthesis results!
-Fragment synthesis vbum1=pbuz2_derefidx_vbuc1_minus_vbuyy - No file or synthesis results!
-Fragment synthesis vbuz1=pbuz2_derefidx_vbuc1_minus_vbuyy - No file or synthesis results!
-Fragment synthesis vbuz1=pbuz2_derefidx_vbuc1_minus_vbuaa - No file or synthesis results!
-Fragment synthesis vbuz1=pbuz2_derefidx_vbuc1_minus_vbuxx - No file or synthesis results!
-
-I look through the list and try to choose the most general of the fragments that I can write optimal ASM for. By general, I mean the fragment that will allow the compiler to synthesize as many fragments as possible.
-
-My rules of thumb for choosing the most general are:
-
-- A fragment that works on registers (like vbuxx) is more general than fragments that work on zero-page/memory (like vbum1). The compiler is good at synthesizing memory-based fragments from register-based fragments, so adding the register-based fragment will add many more potential fragments than adding the memory-based fragment.
-- Fragments that use main-memory (like vbum1) are more general than fragments that use zero-page memory (like vbuz1). The compiler can convert main-memory access to zero-page access, so adding that will effectively also add the zero-page fragment. Only if the zero-page addressing is indirect, I choose to make a zero-page-based fragment (since 6502 does not allow indirect addressing in main-memory).
-- Fragments that are shorter are better than longer fragments. Sometimes the compiler can synthesize a whole sub-part of the fragment, and you only need to add a short fragment.
-
-For the example above, I would choose to add the fragment `vbuaa=pbuz1_derefidx_vbuyy_minus_vbuaa.asm` with the following body:
-
-```assembly
-eor #$ff
-sec
-adc ({z1}),y
-```
-
-After adding it, I check that it can be used to create the fragment that was missing in the first place, and that the ASM looks good by calling the command again:
-
-```
-kickc.sh -vfragment -fragment vbuz1=pbuz2_derefidx_vbuc1_minus_vbuxx
-```
-
-This results in the same list as before but now also has information about how the fragment was synthesized and the actual ASM.
-
-- ...
-- Fragment synthesis vbuz1=pbuz2_derefidx_vbuc1_minus_vbuaa - Successfully synthesized from vbuz1=pbuz2_derefidx_vbuxx_minus_vbuaa
-- synthesized vbuz1=pbuz2_derefidx_vbuc1_minus_vbuxx < vbum1=pbuz2_derefidx_vbuc1_minus_vbuxx < vbuaa=pbuz1_derefidx_vbuc1_minus_vbuxx < vbuaa=pbuz1_derefidx_vbuyy_minus_vbuxx < vbuaa=pbuz1_derefidx_vbuyy_minus_vbuaa - clobber:A Y  cycles:16.5
-  ldy #{c1}
-  txa
-  eor #$ff
-  sec
-  adc ({z2}),y
-  sta {z1}
-
-### 5.3 Handling Clobbered Registers
-
-You do not need to restore any register values in fragments. In fact, part of the optimizer's strength is that it keeps track of which registers are modified by which fragments.
-
-The compiler analyzes the ASM in each fragment and determines which registers are clobbered. When allocating variables to registers, it avoids any allocation where a fragment clobbers a register holding a variable value that is needed later in the code. So it will avoid holding a value in A that is needed after any fragment that clobbers A - and will instead look at different options (X, Y, or on zero page).
-
-This produces much better ASM than each fragment restoring register values since it allows the compiler flexibility in choosing the register/zeropage allocation that minimizes the number of cycles the code consumes.
-
-This is further improved by the compiler treating each assignment to a variable as a separate variable - meaning it often ends up choosing to hold much-used variables in different registers or on zero page for different parts of the code.
-
-
-**Overall KickC has the following compile process:**
-
-1. **Loading and Parsing**
-2. **Creating Control Flow Graph and Symbol Table**
-3. **Optimizing the SSA Control Flow Graph**
-4. **Control Flow Graph Analysis & Register Allocation**
-5. **Assembler Code Generation using Assembler Fragments**
-6. **Assembler Code Optimization**
-
-The Control Flow Graph uses Single Static Assignment (where each variable is only assigned once - and where statements are mostly assignments with 1 or 2 arguments and an operator.) See [Static Single Assignment Form](https://en.wikipedia.org/wiki/Static_single_assignment_form).
-
-The SSA of KickC has been specifically designed to inline pointer derefs or indexed pointer derefs - because this improves the ASM that it generates significantly.
-
-The SSA Optimization optimizes the control flow graph by repeatedly calling 20+ micro-passes. This is where constants are propagated, unused code is removed and so forth.
-
-Register Allocation decides which variables to put into registers (A/X/Y) and which to store on zeropage. This is done based on variable range live range analysis, using PHI-lifting and register clobber analysis - plus testing a lot of combinations to find the solution using the fewest CPU cycles. See [Register Allocation and Assignment](http://compilers.cs.ucla.edu/.../soc/reports/short_tech.pdf).
-
-The SSA-statements are then turned into ASM using the fragment system. Each SSA-statement combined with a specific register allocation becomes a fragment.
-
-An example is the fragment:
-
-```asm
-vbuz1 = vbuz1_plus_pbuc1_derefidx_vbuxx
-```
-
-which matches an SSA-statement like:
-
+For example, matching an SSA statement like:
 ```asm
 digit#1 = digit#3 + *(UTOA10_VAL#0 + i#2)
 ```
+can be satisfied by synthesizing `vbuz1 = vbuz1_plus_pbuc1_derefidx_vbuxx` from the primitive accumulator addition `vbuaa = vbuaa_plus_vbuz1`:
 
-where digit#1 and digit#3 are unsigned bytes allocated to the same zeropage address (which is possible because digit#3 is never used again after this assignment so digit#1 can overwrite it), UTOA10_VAL#0 is a table of unsigned byte values stored in memory at a constant address, and i#2 is an index into the table allocated to the X-register.
+```
+synthesized vbuz1 = vbuz1_plus_pbuc1_derefidx_vbuxx
+  < vbuz1 = pbuc1_derefidx_vbuxx_plus_vbuz1
+  < vbuaa = pbuc1_derefidx_vbuxx_plus_vbuz1
+  < vbuaa = vbuz1_plus_pbuc1_derefidx_vbuxx
+  < vbuaa = vbuz1_plus_vbuaa
+  < vbuaa = vbuaa_plus_vbuz1  (clobber: A, cycles: 12.5)
+```
 
-The fragment sub-system has two parts. First around 900 files with specific fragment ASM-code. Second, a fragment synthesizer that can make more complex fragments from simpler fragments.
-
-The fragment above is actually synthesized from `vbuaa = vbuaa_plus_vbuz1` (which is just adding a value on zeropage to the A-register) using different synthesis rules.
-
-**synthesized vbuz1 = vbuz1_plus_pbuc1_derefidx_vbuxx < vbuz1 = pbuc1_derefidx_vbuxx_plus_vbuz1 < vbuaa = pbuc1_derefidx_vbuxx_plus_vbuz1 < vbuaa = vbuz1_plus_pbuc1_derefidx_vbuxx < vbuaa = vbuz1_plus_vbuaa < vbuaa = vbuaa_plus_vbuz1 - clobber: A cycles: 12.5**
-
-```assembly
+Generated assembly:
+```asm
 lda {c1},x
 clc
 adc {z1}
 sta {z1}
 ```
 
-Finally, the resulting ASM is optimized using peephole optimization.
+### Inspecting and Diagnosing Fragments via CLI
+
+To inspect available variations or diagnose how KickC synthesizes a fragment, run the compiler with `-vfragment` and `-fragment`:
+
+```pwsh
+kickc.bat -vfragment -fragment "vbuz1=pbuc1_derefidx_vbuz2"
+```
+
+The output displays all candidate synthesis paths, cycle costs, and clobbered registers.
+
+### Developer Recipe & Heuristics for Adding Fragments
+
+When encountering an unimplemented or suboptimal fragment, follow these rules of thumb to choose the most general fragment signature:
+
+1. **Register fragments are more general than memory fragments:** A fragment operating on CPU registers (`vbuxx` or `vbuaa`) allows the compiler to synthesize numerous memory-based variants automatically.
+2. **Main-memory fragments are more general than Zero-Page fragments:** KickC can lower main-memory fragments (`vbum1`) to Zero-Page (`vbuz1`), but cannot do the reverse for indirect addressing modes.
+3. **Keep fragments compact:** Shorter, focused fragments allow the synthesizer to reuse them across varied expression trees.
+
+### Authoring Custom Fragments in `fragment/mos6502-common/`
+
+- **Scratchpad Zero-Page:** The Zero-Page addresses **`$fe` and `$ff`** are reserved for fragments requiring temporary indirect pointers.
+- **Clobber Tracking:** Never manually save or restore registers inside fragments (`pha`/`pla`). The compiler tracks clobbered registers (`clobber: A, X, Y`) and schedules surrounding variables accordingly to produce the most cycle-efficient code.
+- **Cache Invalidation:** The fragment cache (`fragment/cache/`) automatically invalidates when files in the fragment directory are updated.
