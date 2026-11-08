@@ -67,7 +67,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-41** | Library | Library: `c64-bitmap.c` ROM Safety Fix & 8-Bit Y Bresenham Routine | C64 Library | ✅ Completed |
 | **F-42** | Library | Library: `printf.c` / `sprintf.c` 8/16-Bit Fast-Path Dispatch | 6502 Library | ✅ Completed |
 | **F-43** | Library | Library Bugfix: `stdint.h` & `limits.h` (32-Bit Limits, Macro Conversion, `limits.h`) | ISO C Library | ✅ Completed |
-| **F-44** | Library | Library Bugfix: `sine.c` (`sin16s_gen2` Precedence) & `c64-tod.c` (AM/PM Masking) | 6502 Library | ⚪ Planned |
+| **F-44** | Library | Library Bugfix: `sine.c` (`sin16s_gen2` Precedence) & `c64-tod.c` (AM/PM Masking) | 6502 Library | ✅ Completed |
 | **F-45** | Math | Library Math: Fast 6502 Division & Zero-RAM Square Root (`sqrt16`, `div16u`) | 6502 Math | ⚪ Planned |
 | **F-46** | Math | Library Math: Trig & Multiplier Optimization (Sine Quadrant Symmetries, CORDIC) | 6502 Math | ⚪ Planned |
 | **F-47** | Library | Library: High-Performance Retro-Game Utilities (PRNG Suite, Multiplexer, Fast `strlen`) | 6502 Library | ⚪ Planned |
