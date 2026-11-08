@@ -248,69 +248,114 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
                   }
                }
 
-               // Safety: SMC optimization is only valid if there is exactly ONE dereference site in the scope.
-               // If there are multiple dereferences, rewriting initializations to SMC would starve the other sites!
-               if(!safeCandidate || derefLines.size() != 1 || initLoLines.isEmpty() || initHiLines.isEmpty()) {
+               // Full Multi-Target SMC Support:
+               // Support 1 to 4 dereference sites in the scope. If there are multiple dereference sites,
+               // each site receives its own SMC label, and all initializations and increments are broadcasted
+               // to every site synchronously, keeping all sites in lockstep.
+               if(!safeCandidate || derefLines.isEmpty() || derefLines.size() > 4 || initLoLines.isEmpty() || initHiLines.isEmpty()) {
                   continue;
                }
 
-               // Valid SMC candidate found!
-               String smcLabel = "smc_ptr_" + (++smcCounter);
-               CpuOpcode absOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(derefInst.getCpuOpcode().getMnemonic(), CpuAddressingMode.ABS, false);
+               // Verify that all dereference instructions have valid absolute addressing opcodes
+               boolean allOpcodesValid = true;
+               Map<LineRef, CpuOpcode> siteAbsOps = new LinkedHashMap<>();
+               for(LineRef dRef : derefLines) {
+                  AsmInstruction dInst = (AsmInstruction) dRef.line;
+                  CpuOpcode absOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(dInst.getCpuOpcode().getMnemonic(), CpuAddressingMode.ABS, false);
+                  if(absOp == null) {
+                     allOpcodesValid = false;
+                     break;
+                  }
+                  siteAbsOps.put(dRef, absOp);
+               }
                CpuOpcode staAbs = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("sta", CpuAddressingMode.ABS, false);
                CpuOpcode incAbs = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("inc", CpuAddressingMode.ABS, false);
+               if(!allOpcodesValid || staAbs == null || incAbs == null) continue;
 
-               if(absOp == null || staAbs == null || incAbs == null) continue;
+               // Step 1: Add label before each dereference site, convert to ABS $ffff, and remove redundant LDY #0
+               List<String> smcLabels = new ArrayList<>();
+               for(LineRef dRef : derefLines) {
+                  AsmInstruction dInst = (AsmInstruction) dRef.line;
+                  CpuOpcode absOp = siteAbsOps.get(dRef);
+                  String siteLabel = "smc_ptr_" + (++smcCounter);
+                  smcLabels.add(siteLabel);
 
-               // Step 1: Add label before dereference instruction and convert to ABS
-               int derefIdxInChunk = derefRef.chunk.getLines().indexOf(derefInst);
-               if(derefIdxInChunk < 0) continue;
-
-               AsmLabel smcLabelInst = new AsmLabel(smcLabel);
-               smcLabelInst.setNoOptimize(true);
-               derefRef.chunk.getLines().add(derefIdxInChunk, smcLabelInst);
-               derefInst.setCpuOpcode(absOp);
-               derefInst.setOperand1("$ffff");
-               derefInst.setNoOptimize(true);
-
-               // Remove redundant LDY #0 directly preceding dereference if present
-               if(derefIdxInChunk > 0) {
-                  AsmLine prevLine = derefRef.chunk.getLines().get(derefIdxInChunk - 1);
-                  if(prevLine instanceof AsmInstruction prevInst && prevInst.getCpuOpcode() != null) {
-                     if("ldy".equalsIgnoreCase(prevInst.getCpuOpcode().getMnemonic()) &&
-                        CpuAddressingMode.IMM.equals(prevInst.getCpuOpcode().getAddressingMode()) &&
-                        ("#0".equals(prevInst.getOperand1()) || "0".equals(prevInst.getOperand1()))) {
-                        derefRef.chunk.getLines().remove(prevInst);
+                  int curIdx = dRef.chunk.getLines().indexOf(dInst);
+                  if(curIdx > 0) {
+                     AsmLine prevLine = dRef.chunk.getLines().get(curIdx - 1);
+                     if(prevLine instanceof AsmInstruction prevInst && prevInst.getCpuOpcode() != null) {
+                        if("ldy".equalsIgnoreCase(prevInst.getCpuOpcode().getMnemonic()) &&
+                           CpuAddressingMode.IMM.equals(prevInst.getCpuOpcode().getAddressingMode()) &&
+                           ("#0".equals(prevInst.getOperand1()) || "0".equals(prevInst.getOperand1()))) {
+                           dRef.chunk.getLines().remove(prevInst);
+                        }
                      }
                   }
+
+                  curIdx = dRef.chunk.getLines().indexOf(dInst);
+                  if(curIdx < 0) continue;
+                  AsmLabel smcLabelInst = new AsmLabel(siteLabel);
+                  smcLabelInst.setNoOptimize(true);
+                  dRef.chunk.getLines().add(curIdx, smcLabelInst);
+                  dInst.setCpuOpcode(absOp);
+                  dInst.setOperand1("$ffff");
+                  dInst.setNoOptimize(true);
                }
 
-               // Step 2: Redirect STA ptr / STA ptr+1 to modify instruction operand
+               // Step 2: Redirect STA ptr / STA ptr+1 to modify instruction operands at ALL dereference sites
                for(LineRef r : initLoLines) {
                   AsmInstruction inst = (AsmInstruction) r.line;
                   inst.setCpuOpcode(staAbs);
-                  inst.setOperand1(smcLabel + "+1");
+                  inst.setOperand1(smcLabels.get(0) + "+1");
                   inst.setNoOptimize(true);
+
+                  int instIdx = r.chunk.getLines().indexOf(inst);
+                  for(int k = 1; k < smcLabels.size(); k++) {
+                     AsmInstruction extraSta = new AsmInstruction(staAbs, smcLabels.get(k) + "+1", null, null);
+                     extraSta.setNoOptimize(true);
+                     r.chunk.getLines().add(instIdx + k, extraSta);
+                  }
                }
                for(LineRef r : initHiLines) {
                   AsmInstruction inst = (AsmInstruction) r.line;
                   inst.setCpuOpcode(staAbs);
-                  inst.setOperand1(smcLabel + "+2");
+                  inst.setOperand1(smcLabels.get(0) + "+2");
                   inst.setNoOptimize(true);
+
+                  int instIdx = r.chunk.getLines().indexOf(inst);
+                  for(int k = 1; k < smcLabels.size(); k++) {
+                     AsmInstruction extraSta = new AsmInstruction(staAbs, smcLabels.get(k) + "+2", null, null);
+                     extraSta.setNoOptimize(true);
+                     r.chunk.getLines().add(instIdx + k, extraSta);
+                  }
                }
 
-               // Step 3: Redirect INC ptr / INC ptr+1 to increment instruction operand
+               // Step 3: Redirect INC ptr / INC ptr+1 to increment instruction operands at ALL dereference sites
                for(LineRef r : incLoLines) {
                   AsmInstruction inst = (AsmInstruction) r.line;
                   inst.setCpuOpcode(incAbs);
-                  inst.setOperand1(smcLabel + "+1");
+                  inst.setOperand1(smcLabels.get(0) + "+1");
                   inst.setNoOptimize(true);
+
+                  int instIdx = r.chunk.getLines().indexOf(inst);
+                  for(int k = 1; k < smcLabels.size(); k++) {
+                     AsmInstruction extraInc = new AsmInstruction(incAbs, smcLabels.get(k) + "+1", null, null);
+                     extraInc.setNoOptimize(true);
+                     r.chunk.getLines().add(instIdx + k, extraInc);
+                  }
                }
                for(LineRef r : incHiLines) {
                   AsmInstruction inst = (AsmInstruction) r.line;
                   inst.setCpuOpcode(incAbs);
-                  inst.setOperand1(smcLabel + "+2");
+                  inst.setOperand1(smcLabels.get(0) + "+2");
                   inst.setNoOptimize(true);
+
+                  int instIdx = r.chunk.getLines().indexOf(inst);
+                  for(int k = 1; k < smcLabels.size(); k++) {
+                     AsmInstruction extraInc = new AsmInstruction(incAbs, smcLabels.get(k) + "+2", null, null);
+                     extraInc.setNoOptimize(true);
+                     r.chunk.getLines().add(instIdx + k, extraInc);
+                  }
                }
 
                passModified = true;
