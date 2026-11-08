@@ -71,8 +71,9 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-45** | Math | Library Math: Fast 6502 Division & Zero-RAM Square Root (`sqrt16`, `div16u`) | 6502 Math | 🟢 Completed |
 | **F-46** | Math | Library Math: Trig & Multiplier Optimization (Sine Quadrant Symmetries, CORDIC) | 6502 Math | ⚪ 🟢 Completed |
 | **F-47** | Library | Library: High-Performance Retro-Game Utilities (PRNG Suite, Multiplexer, Fast `strlen`) | 6502 Library | ⚪ 🟢 Completed |
-| **F-48** | Hardware | Library C64: Hardware Drivers (Commodore 1351 Mouse, REU DMA & Raster Sync) | C64 Hardware | ⚪ Planned |
-| **F-49** | Graphics | Library C64: Asset & Graphics Pipeline (Universal ZX02 Decompressor, Fading) | C64 Graphics | ⚪ Planned |
+| **F-48** | Hardware | Library C64: Hardware Drivers (Commodore 1351 Mouse, REU DMA & Raster Sync) | C64 Hardware | 🟢 Completed |
+| **F-49** | Graphics | Library C64: Asset & Graphics Pipeline (Universal ZX02 Decompressor, Fading) | C64 Graphics | 🟢 Completed |
+| **F-50** | I/O | Library C64: High-Speed Disk I/O Suite (Hardware Probing, Turbo Read/Write, ELoad) | C64 I/O | 🟢 Completed |
 
 ---
 
