@@ -41,7 +41,7 @@ void sin16s_gen(signed int* sintab, unsigned int wavelength) {
 // wavelength - the number of sine points in a total sine wavelength (the size of the table)
 void sin16s_gen2(signed int* sintab, unsigned int wavelength, signed int min, signed int max) {
     signed int ampl = max-min;
-    signed int offs = min + ampl>>1; // ampl is always positive so shifting left does not alter the sign
+    signed int offs = min + (ampl>>1); // ampl is always positive so shifting left does not alter the sign
     // u[4.28] step = PI*2/wavelength
     unsigned long step = div32u16u(PI2_u4f28, wavelength); // u[4.28]
     // Iterate over the table

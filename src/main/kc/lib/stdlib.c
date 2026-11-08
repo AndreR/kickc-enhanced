@@ -38,6 +38,8 @@ void *calloc(size_t nitems, size_t size) {
 // - num - The number of items in the array
 // Returns pointer to an entry in the array that matches the search key
 unsigned int* bsearch16u(unsigned int key, unsigned int* items, char num) {
+    if(num == 0 || key < *items)
+        return 0;
 	while (num > 0) {
 		unsigned int* pivot = items + (num >> 1);
 		signed int result = (signed int)key-(signed int)*pivot;

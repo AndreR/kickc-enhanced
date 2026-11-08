@@ -34,7 +34,7 @@ char tod_buffer[] = "00:00:00:00";
 
 // Convert time of day to a human-readable string "hh:mm:ss:10"
 char* tod_str(struct TIME_OF_DAY tod) {
-    tod_buffer[0] = '0'+(tod.HOURS>>4);
+    tod_buffer[0] = '0'+((tod.HOURS&0x1f)>>4);
     tod_buffer[1] = '0'+(tod.HOURS&0x0f);
     tod_buffer[3] = '0'+(tod.MIN>>4);
     tod_buffer[4] = '0'+(tod.MIN&0x0f);
