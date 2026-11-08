@@ -182,11 +182,11 @@ stmt
     : declVariables ';' #stmtDeclVar
     | CURLY_BEGIN stmtSeq? CURLY_END #stmtBlock
     | commaExpr  ';' #stmtExpr
-    | IF PAR_BEGIN commaExpr PAR_END stmt ( ELSE stmt )? #stmtIfElse
+    | IF PAR_BEGIN ( ifInit ';' )? commaExpr PAR_END stmt ( ELSE stmt )? #stmtIfElse
     | directive* WHILE PAR_BEGIN commaExpr PAR_END stmt  #stmtWhile
     | directive* DO stmt WHILE PAR_BEGIN commaExpr PAR_END ';' #stmtDoWhile
     | directive* FOR PAR_BEGIN forLoop PAR_END stmt  #stmtFor
-    | SWITCH PAR_BEGIN commaExpr PAR_END CURLY_BEGIN switchCases CURLY_END #stmtSwitch
+    | SWITCH PAR_BEGIN ( ifInit ';' )? commaExpr PAR_END CURLY_BEGIN switchCases CURLY_END #stmtSwitch
     | RETURN commaExpr? ';' #stmtReturn
     | BREAK NAME? ';' #stmtBreak
     | CONTINUE NAME? ';' #stmtContinue
@@ -204,6 +204,11 @@ switchCases:
 
 switchCase:
     CASE expr COLON stmtSeq?
+    ;
+
+ifInit
+    : declVariables #ifInitDecl
+    | commaExpr     #ifInitExpr
     ;
 
 forLoop

@@ -1616,6 +1616,12 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public Void visitStmtIfElse(KickCParser.StmtIfElseContext ctx) {
+      boolean hasInit = ctx.ifInit() != null;
+      if(hasInit) {
+         BlockScope blockScope = getCurrentScope().addBlockScope();
+         scopeStack.push(blockScope);
+         this.visit(ctx.ifInit());
+      }
       KickCParser.StmtContext ifStmt = ctx.stmt(0);
       KickCParser.StmtContext elseStmt = ctx.stmt(1);
       RValue rValue = addCondition(ctx.commaExpr(), StatementSource.ifThen(ctx));
@@ -1643,6 +1649,10 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          StatementLabel endJumpTarget = new StatementLabel(endJumpLabel.getRef(), StatementSource.ifThen(ctx), Comment.NO_COMMENTS);
          addStatement(endJumpTarget);
       }
+      if(hasInit) {
+         scopeStack.pop();
+      }
+      pendingLoopLabel = null;
       return null;
    }
 
@@ -1797,6 +1807,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       // Create a block scope - to keep all statements of the loop inside it
       BlockScope blockScope = getCurrentScope().addBlockScope();
       scopeStack.push(blockScope);
+      if(ctx.ifInit() != null) {
+         this.visit(ctx.ifInit());
+      }
       Loop switchLoop = new Loop(blockScope, true, consumePendingLoopLabel());
       if(containingLoop != null) {
          switchLoop.setContinueLabel(containingLoop.getOrCreateContinueLabel());
@@ -2034,6 +2047,24 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          addDirectives((StatementConditionalJump) doJmpStmt, stmtForCtx.directive());
       addLoopBreakLabel(loopStack.pop(), ctx);
       scopeStack.pop();
+      return null;
+   }
+
+
+   @Override
+   public Object visitIfInitDecl(KickCParser.IfInitDeclContext ctx) {
+      if(ctx.declVariables() != null) {
+         this.visit(ctx.declVariables());
+      }
+      return null;
+   }
+
+   @Override
+   public Object visitIfInitExpr(KickCParser.IfInitExprContext ctx) {
+      if(ctx.commaExpr() != null) {
+         RValue rValue = (RValue) this.visit(ctx.commaExpr());
+         consumeExpr(rValue);
+      }
       return null;
    }
 
