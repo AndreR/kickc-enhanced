@@ -181,7 +181,7 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
                continue;
             }
 
-            boolean returns16 = proc.getReturnType() != null && proc.getReturnType().getSizeBytes() == 2;
+            boolean returns16 = proc.getReturnType() != null && proc.getReturnType().getSizeBytes() == 2 && !(proc.getReturnType() instanceof dk.camelot64.kickc.model.types.SymbolTypeStruct);
             if(proc.isAxConvention() || returns16) {
                axReturnProcs.add(name);
                Map<String, String> aliases = scopeAliases.get(name);
@@ -192,7 +192,7 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
 
             if(proc.getParameters().size() == 1) {
                Variable param0 = proc.getParameters().get(0);
-               if(param0.getType() != null && param0.getType().getSizeBytes() == 2) {
+               if(param0.getType() != null && param0.getType().getSizeBytes() == 2 && !(param0.getType() instanceof dk.camelot64.kickc.model.types.SymbolTypeStruct)) {
                      axParamProcs.add(name);
                      String pName = param0.getLocalName();
                      procParamVarName.put(name, pName);

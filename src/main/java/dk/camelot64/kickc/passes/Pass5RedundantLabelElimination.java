@@ -50,6 +50,9 @@ public class Pass5RedundantLabelElimination extends Pass5AsmOptimization {
 
             } else if(line instanceof AsmLabel) {
                AsmLabel label = (AsmLabel) line;
+               if(label.isNoOptimize()) {
+                  continue;
+               }
                String labelStr = label.getLabel();
                if(!labelStr.contains("!")) {
                   for(RedundantLabels redundantLabels : redundantLabelSet) {
@@ -104,6 +107,12 @@ public class Pass5RedundantLabelElimination extends Pass5AsmOptimization {
                currentScope = "";
             } else if(line instanceof AsmLabel) {
                AsmLabel label = (AsmLabel) line;
+               if(label.isNoOptimize()) {
+                  if(current != null && current.size() > 1) {
+                     redundantLabelSet.add(current);
+                  }
+                  current = null;
+               } else {
                String labelStr = label.getLabel();
                if(!labelStr.contains("!")) {
                   if(current == null) {
@@ -111,6 +120,7 @@ public class Pass5RedundantLabelElimination extends Pass5AsmOptimization {
                   } else {
                      current.add(labelStr);
                   }
+               }
                   handled = true;
                }
             }
