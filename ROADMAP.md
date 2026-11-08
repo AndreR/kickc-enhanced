@@ -19,7 +19,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-## 2. Feature Matrix (Strictly Sequenced F-00 to F-44)
+## 2. Feature Matrix (Strictly Sequenced F-00 to F-46)
 
 | ID | Category | Feature Description | Origin / Standard | Status |
 | :---: | :--- | :--- | :---: | :---: |
@@ -68,6 +68,8 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-42** | Library | Library: `printf.c` / `sprintf.c` 8/16-Bit Fast-Path Dispatch | 6502 Library | ⚪ Planned |
 | **F-43** | Library | Library Bugfix: `stdint.h` & `limits.h` (32-Bit Limits, Macro Conversion, `limits.h`) | ISO C Library | ⚪ Planned |
 | **F-44** | Library | Library Bugfix: `sine.c` (`sin16s_gen2` Precedence) & `c64-tod.c` (AM/PM Masking) | 6502 Library | ⚪ Planned |
+| **F-45** | Math | Library Math: Fast 6502 Division & Zero-RAM Square Root (`sqrt16`, `div16u`) | 6502 Math | ⚪ Planned |
+| **F-46** | Math | Library Math: Trig & Multiplier Optimization (Sine Quadrant Symmetries, CORDIC) | 6502 Math | ⚪ Planned |
 
 ---
 
@@ -432,5 +434,31 @@ This document outlines the compiler architecture, completed milestones, planned 
   * Fix operator precedence in `sine.c`: `signed int offs = min + (ampl >> 1);`.
   * Mask AM/PM bit in `c64-tod.c`: `tod_buffer[0] = '0' + ((tod.HOURS & 0x1f) >> 4);`.
   * Add underflow boundary check in `bsearch16u()` to safely return `items` or `NULL`.
+
+---
+
+### Feature 45: Library Math: Fast 6502 Division & Zero-RAM Square Root (`sqrt16`, `div16u`)
+* **Problem:**
+  1. `divr16u` in `division.c` implements 16-bit division via naive C bit shifts and branch masks, costing ~1,280 cycles per division.
+  2. `sqr.c` allocates 510 bytes of dynamic RAM via `malloc` (colliding with BASIC under `$A000`), and `sqrt()` performs a slow 8-iteration binary search (`bsearch16u`) across 255 words.
+  3. `<math.h>` lacks essential 6502 inline math utilities (`min`, `max`, `clamp`, `popcount8`, `clz8`).
+* **Solution & Optimization:**
+  * Accelerate `divr16u` using native 6502 Carry-chain shifting (`ASL; ROL; ROL; ROL`), cutting division time to ~300 cycles (4x speedup).
+  * Implement standard 6502 digit-by-digit binary square root (`sqrt16`) in ~150 cycles with 0 bytes RAM table allocation, eliminating the 510-byte heap table.
+  * Populate `<math.h>` with high-performance inline macros/intrinsics for `min`, `max`, `clamp`, and fast bitwise popcount.
+
+---
+
+### Feature 46: Library Math: Trig & Multiplier Optimization (Sine Quadrants, CORDIC)
+* **Problem:**
+  1. `sine.c` generates sine tables by evaluating each point from $0$ to $2\pi$ with heavy 32-bit Taylor series multiplications.
+  2. `atan2.c` (`atan2_16`) uses a software loop shifting 16-bit integers 2 bits at a time, resulting in massive cycle waste in later CORDIC iterations.
+  3. `fastmultiply.c` allocates 2,048 bytes of RAM for multiplication tables, duplicating the compact ROM Quarter-Square tables already established in `F-08`.
+* **Solution & Optimization:**
+  * Exploit quadrant mirror symmetries ($\sin(\pi-x) = \sin(x)$) to compute only $1/4$ of the wave, speeding up table generation by 4x.
+  * Provide `F-32` (`__builtin_lut`) constexpr macros to precalculate sine tables directly into ROM at compile time.
+  * Optimize CORDIC shifts with byte-swapping when shift $\ge 8$.
+  * Redirect `fastmultiply.c` to use the unified `F-08` ROM tables, freeing 2,048 bytes of RAM on the C64.
+
 
 
