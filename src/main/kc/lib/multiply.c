@@ -157,3 +157,31 @@ unsigned int fast_mul8u(char a, char b) {
     BYTE1(res) = hi;
     return res;
 }
+
+// Fast quarter-square multiplication of two unsigned 16-bit ints into a 32-bit unsigned long
+// 0 bytes RAM allocation, zero self-modifying code, 100% ROM-/Cartridge-safe.
+unsigned long fast_mul16u(unsigned int a, unsigned int b) {
+    unsigned int p0 = fast_mul8u(BYTE0(a), BYTE0(b));
+    unsigned int p1 = fast_mul8u(BYTE1(a), BYTE0(b));
+    unsigned int p2 = fast_mul8u(BYTE0(a), BYTE1(b));
+    unsigned int p3 = fast_mul8u(BYTE1(a), BYTE1(b));
+
+    unsigned long res = p0;
+    res += ((unsigned long)p1) << 8;
+    res += ((unsigned long)p2) << 8;
+    res += ((unsigned long)p3) << 16;
+    return res;
+}
+
+// Fast quarter-square multiplication of two signed 16-bit ints into a signed 32-bit signed long
+// 0 bytes RAM allocation, zero self-modifying code, 100% ROM-/Cartridge-safe.
+signed long fast_mul16s(signed int a, signed int b) {
+    unsigned long m = fast_mul16u((unsigned int)a, (unsigned int)b);
+    if(a<0) {
+        WORD1(m) = WORD1(m)-(unsigned int)b;
+    }
+    if(b<0) {
+        WORD1(m) = WORD1(m)-(unsigned int)a;
+    }
+    return (signed long)m;
+}

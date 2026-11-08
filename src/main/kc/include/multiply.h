@@ -1,6 +1,9 @@
 /// @file
 /// Fast and binary multiplication implementations
 
+#ifndef _MULTIPLY_H
+#define _MULTIPLY_H
+
 /// Perform binary multiplication of two unsigned 8-bit chars into a 16-bit unsigned int
 unsigned int mul8u(char a, char b);
 
@@ -28,5 +31,15 @@ signed long mul16s(signed int a, signed int b);
 /// Perform fast quarter-square multiplication of two unsigned 8-bit chars into a 16-bit unsigned int
 unsigned int fast_mul8u(char a, char b);
 
+/// Perform fast quarter-square multiplication of two unsigned 16-bit ints into a 32-bit unsigned long
+/// 0 bytes RAM allocation, zero self-modifying code, 100% ROM-/Cartridge-safe.
+unsigned long fast_mul16u(unsigned int a, unsigned int b);
+
+/// Perform fast quarter-square multiplication of two signed 16-bit ints into a signed 32-bit signed long
+/// 0 bytes RAM allocation, zero self-modifying code, 100% ROM-/Cartridge-safe.
+signed long fast_mul16s(signed int a, signed int b);
+
 extern const char FAST_MULTIPLY_SQR_LO[512];
 extern const char FAST_MULTIPLY_SQR_HI[512];
+
+#endif
