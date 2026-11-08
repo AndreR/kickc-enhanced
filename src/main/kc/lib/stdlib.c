@@ -71,14 +71,22 @@ unsigned char RADIX_HEXADECIMAL_VALUES_CHAR[] = { 0x10 };
 // - buffer : receives the string representing the number and zero-termination.
 // - radix : The radix to convert the number to (from the enum RADIX)
 void uctoa(unsigned char value, char* buffer, enum RADIX radix) {
+    if(radix == HEXADECIMAL) {
+        uint8_t hi = value >> 4;
+        uint8_t lo = value & 0x0f;
+        if(hi != 0) {
+            *buffer++ = DIGITS[hi];
+        }
+        *buffer++ = DIGITS[lo];
+        *buffer = 0;
+        return;
+    }
+
     char max_digits;
     unsigned char* digit_values;
     if(radix==DECIMAL) {
         max_digits = 3;
         digit_values = RADIX_DECIMAL_VALUES_CHAR;
-    } else if(radix==HEXADECIMAL) {
-        max_digits = 2;
-        digit_values = RADIX_HEXADECIMAL_VALUES_CHAR;
     } else if(radix==OCTAL) {
         max_digits = 3;
         digit_values = RADIX_OCTAL_VALUES_CHAR;
@@ -106,20 +114,12 @@ void uctoa(unsigned char value, char* buffer, enum RADIX radix) {
 }
 
 // Used to convert a single digit of an unsigned number value to a string representation
-// Counts a single digit up from '0' as long as the value is larger than sub.
-// Each time the digit is increased sub is subtracted from value.
-// - buffer : pointer to the char that receives the digit
-// - value : The value where the digit will be derived from
-// - sub : the value of a '1' in the digit. Subtracted continually while the digit is increased.
-//        (For decimal the subs used are 10000, 1000, 100, 10, 1)
-// returns : the value reduced by sub * digit so that it is less than sub.
 unsigned char uctoa_append(char *buffer, unsigned char value, unsigned char sub){
     char digit = 0;
     while (value >= sub){ digit++; value -= sub; }
     *buffer = DIGITS[digit];
     return value;
 }
-
 
 // Values of binary digits
 unsigned int RADIX_BINARY_VALUES[] = { 0b1000000000000000, 0b0100000000000000, 0b0010000000000000, 0b0001000000000000, 0b0000100000000000, 0b0000010000000000, 0b0000001000000000, 0b0000000100000000, 0b0000000010000000, 0b0000000001000000, 0b0000000000100000, 0b0000000000010000, 0b0000000000001000, 0b0000000000000100, 0b0000000000000010 };
@@ -131,19 +131,26 @@ unsigned int RADIX_DECIMAL_VALUES[] = { 10000, 1000, 100, 10 };
 unsigned int RADIX_HEXADECIMAL_VALUES[] = { 0x1000, 0x100, 0x10 };
 
 // Converts unsigned number value to a string representing it in RADIX format.
-// If the leading digits are zero they are not included in the string.
-// - value : The number to be converted to RADIX
-// - buffer : receives the string representing the number and zero-termination.
-// - radix : The radix to convert the number to (from the enum RADIX)
 void utoa(unsigned int value, char* buffer, enum RADIX radix) {
+    if(radix == HEXADECIMAL) {
+        uint8_t d0 = (uint8_t)(value >> 12);
+        uint8_t d1 = (uint8_t)((value >> 8) & 0x0f);
+        uint8_t d2 = (uint8_t)((value >> 4) & 0x0f);
+        uint8_t d3 = (uint8_t)(value & 0x0f);
+        char started = 0;
+        if(d0) { *buffer++ = DIGITS[d0]; started = 1; }
+        if(started || d1) { *buffer++ = DIGITS[d1]; started = 1; }
+        if(started || d2) { *buffer++ = DIGITS[d2]; started = 1; }
+        *buffer++ = DIGITS[d3];
+        *buffer = 0;
+        return;
+    }
+
     char max_digits;
     unsigned int* digit_values;
     if(radix==DECIMAL) {
         max_digits = 5;
         digit_values = RADIX_DECIMAL_VALUES;
-    } else if(radix==HEXADECIMAL) {
-        max_digits = 4;
-        digit_values = RADIX_HEXADECIMAL_VALUES;
     } else if(radix==OCTAL) {
         max_digits = 6;
         digit_values = RADIX_OCTAL_VALUES;
@@ -171,13 +178,6 @@ void utoa(unsigned int value, char* buffer, enum RADIX radix) {
 }
 
 // Used to convert a single digit of an unsigned number value to a string representation
-// Counts a single digit up from '0' as long as the value is larger than sub.
-// Each time the digit is increased sub is subtracted from value.
-// - buffer : pointer to the char that receives the digit
-// - value : The value where the digit will be derived from
-// - sub : the value of a '1' in the digit. Subtracted continually while the digit is increased.
-//        (For decimal the subs used are 10000, 1000, 100, 10, 1)
-// returns : the value reduced by sub * digit so that it is less than sub.
 unsigned int utoa_append(char *buffer, unsigned int value, unsigned int sub){
     char digit = 0;
     while (value >= sub){ digit++; value -= sub; }
@@ -195,10 +195,6 @@ unsigned long RADIX_DECIMAL_VALUES_LONG[] = { 1000000000, 100000000, 10000000, 1
 unsigned long RADIX_HEXADECIMAL_VALUES_LONG[] = { 0x10000000, 0x1000000, 0x100000, 0x10000, 0x1000, 0x100, 0x10 };
 
 // Converts unsigned number value to a string representing it in RADIX format.
-// If the leading digits are zero they are not included in the string.
-// - value : The number to be converted to RADIX
-// - buffer : receives the string representing the number and zero-termination.
-// - radix : The radix to convert the number to (from the enum RADIX)
 void ultoa(unsigned long value, char* buffer, enum RADIX radix){
     char max_digits;
     unsigned long* digit_values;
@@ -235,13 +231,6 @@ void ultoa(unsigned long value, char* buffer, enum RADIX radix){
 }
 
 // Used to convert a single digit of an unsigned number value to a string representation
-// Counts a single digit up from '0' as long as the value is larger than sub.
-// Each time the digit is increased sub is subtracted from value.
-// - buffer : pointer to the char that receives the digit
-// - value : The value where the digit will be derived from
-// - sub : the value of a '1' in the digit. Subtracted continually while the digit is increased.
-//        (For decimal the subs used are 10000, 1000, 100, 10, 1)
-// returns : the value reduced by sub * digit so that it is less than sub.
 unsigned long ultoa_append(char *buffer, unsigned long value, unsigned long sub){
     char digit = 0;
     while (value >= sub){ digit++; value -= sub; }
@@ -269,17 +258,27 @@ int atoi(const char *str) {
         return res;
 }
 
-// Returns the absolute value of int x.
-inline int abs(int x) {
-    if(x<0)
+// Returns the absolute value of 8-bit signed char x.
+signed char abs8(signed char x) {
+    if(x < 0)
         return -x;
     else
         return x;
 }
 
+// Returns the absolute value of 16-bit signed int x.
+int abs16(int x) {
+    if(x < 0)
+        return -x;
+    else
+        return x;
+}
+
+// Returns the absolute value of int x (compatibility).
+
 // Returns the absolute value of long int x.
-inline long labs(long x) {
-    if(x<0)
+long labs(long x) {
+    if(x < 0)
         return -x;
     else
         return x;
@@ -289,9 +288,6 @@ inline long labs(long x) {
 volatile unsigned int rand_state = 1;
 
 // Returns a pseudo-random number in the range of 0 to RAND_MAX (65535)
-// Uses an xorshift pseudorandom number generator that hits all different values
-// Information https://en.wikipedia.org/wiki/Xorshift
-// Source http://www.retroprogramming.com/2017/07/xorshift-pseudorandom-numbers-in-z80.html
 unsigned int rand() {
     rand_state ^= rand_state << 7;
     rand_state ^= rand_state >> 9;

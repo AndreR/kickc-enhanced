@@ -2,8 +2,12 @@
 /// C standard library stdlib.h
 ///
 /// Implementation of functions found int C stdlib.h / stdlib.c
+#ifndef _STDLIB_H
+#define _STDLIB_H
+
 #include <stddef.h>
 #include <string.h>
+#include <stdint.h>
 
 /// Allocates a block of size chars of memory, returning a pointer to the beginning of the block.
 /// The content of the newly allocated block of memory is not initialized, remaining with indeterminate values.
@@ -28,6 +32,9 @@ unsigned int* bsearch16u(unsigned int key, unsigned int* items, char num);
 /// The different supported radix
 enum RADIX { BINARY=2, OCTAL=8, DECIMAL=10, HEXADECIMAL=16 };
 
+/// Converts unsigned 8-bit number value to a string representing it in RADIX format.
+void uctoa(unsigned char value, char* buffer, enum RADIX radix);
+
 /// Converts unsigned number value to a string representing it in RADIX format.
 /// If the leading digits are zero they are not included in the string.
 /// @param value The number to be converted to RADIX
@@ -45,17 +52,31 @@ void ultoa(unsigned long value, char* buffer, enum RADIX radix);
 /// Converts the string argument str to an integer.
 int atoi(const char *str);
 
-/// Returns the absolute value of int x.
-int abs(int x);
+/// Returns the absolute value of 8-bit signed char x.
+signed char abs8(signed char x);
+
+/// Returns the absolute value of 16-bit signed int x.
+int abs16(int x);
 
 /// Returns the absolute value of long int x.
 long labs(long x);
 
+
+/// C11 _Generic polymorphic absolute value macro
+#define abs(x) _Generic((x), \
+    signed char: abs8(x), \
+    char: abs8((signed char)(x)), \
+    long: labs(x), \
+    default: abs16(x) \
+)
+
 /// The maximal random value
-#define RAND_MAX 65335
+#define RAND_MAX 65535
 
 /// Returns a pseudo-random number in the range of 0 to RAND_MAX (65535)
 unsigned int rand();
 
 /// Seeds the random number generator used by the function rand.
 void srand(unsigned int seed);
+
+#endif
