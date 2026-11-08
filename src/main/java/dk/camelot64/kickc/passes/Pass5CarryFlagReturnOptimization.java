@@ -341,7 +341,7 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
          }
 
          if(SymbolType.BOOLEAN.equals(procedure.getReturnType()) && procedure.getInterruptType() == null) {
-            if(allCallSitesAreBranches(allLines, name)) {
+            if(calleeCanReturnCarry(allLines, name) && allCallSitesAreBranches(allLines, name)) {
                carryProcs.add(name);
             }
          }
@@ -359,6 +359,65 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
          }
       }
       return allLines;
+   }
+
+   private boolean calleeCanReturnCarry(List<LineRef> allLines, String procName) {
+      int rtsCount = 0;
+      for(int i = 0; i < allLines.size(); i++) {
+         LineRef ref = allLines.get(i);
+         if(procName.equals(ref.scope)) {
+            if(ref.line instanceof AsmInstruction inst && "rts".equalsIgnoreCase(inst.getCpuOpcode().getMnemonic())) {
+               rtsCount++;
+               int prevIdx = i - 1;
+               while(prevIdx >= 0 && !(allLines.get(prevIdx).line instanceof AsmInstruction)) {
+                  prevIdx--;
+               }
+               if(prevIdx < 0 || !(allLines.get(prevIdx).line instanceof AsmInstruction)) {
+                  return false;
+               }
+               AsmInstruction prevInst = (AsmInstruction) allLines.get(prevIdx).line;
+               String mn = prevInst.getCpuOpcode().getMnemonic().toLowerCase();
+
+               // Already returns in carry
+               if("sec".equals(mn) || "clc".equals(mn) || "cmp".equals(mn) || "cpx".equals(mn) || "cpy".equals(mn)) {
+                  continue;
+               }
+
+               // Transformable lda #0 or lda #1
+               if("lda".equals(mn) && prevInst.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.IMM)) {
+                  if(isImmVal(prevInst.getOperand1(), 0) || isImmVal(prevInst.getOperand1(), 1)) {
+                     continue;
+                  }
+               }
+
+               // Transformable cmp; lda #0; rol
+               if("rol".equals(mn)) {
+                  int prevLdaIdx = prevIdx - 1;
+                  while(prevLdaIdx >= 0 && !(allLines.get(prevLdaIdx).line instanceof AsmInstruction)) {
+                     prevLdaIdx--;
+                  }
+                  if(prevLdaIdx >= 0 && allLines.get(prevLdaIdx).line instanceof AsmInstruction ldaInst) {
+                     if("lda".equalsIgnoreCase(ldaInst.getCpuOpcode().getMnemonic()) && isImmVal(ldaInst.getOperand1(), 0)) {
+                        int prevCmpIdx = prevLdaIdx - 1;
+                        while(prevCmpIdx >= 0 && !(allLines.get(prevCmpIdx).line instanceof AsmInstruction)) {
+                           prevCmpIdx--;
+                        }
+                        if(prevCmpIdx >= 0 && allLines.get(prevCmpIdx).line instanceof AsmInstruction cmpInst) {
+                           String cmn = cmpInst.getCpuOpcode().getMnemonic().toLowerCase();
+                           if("cmp".equals(cmn) || "cpx".equals(cmn) || "cpy".equals(cmn)) {
+                              continue;
+                           }
+                        }
+                     }
+                  }
+               }
+
+               // Any other instruction (e.g. lda reu_available, ora, eor, etc.) cannot safely return carry
+               return false;
+            }
+         }
+      }
+      return rtsCount > 0;
    }
 
    private boolean allCallSitesAreBranches(List<LineRef> allLines, String procName) {

@@ -9,13 +9,23 @@ public class NumberParser {
 
    public static ConstantInteger parseIntegerLiteral(String literal) {
 
-      boolean isInt = !literal.contains(".");
-      if(!isInt) {
-         throw new NumberFormatException("Non-integer numbers are not supported. " + literal);
-      }
-
-      SymbolType type = SymbolType.NUMBER;
       literal = literal.toLowerCase().replace("_", "").replace("'", "");
+      if(literal.contains(".")) {
+         if(literal.endsWith("f")) {
+            literal = literal.substring(0, literal.length() - 1);
+         }
+         double d;
+         if(literal.startsWith("$")) {
+            d = Double.parseDouble("0x" + literal.substring(1) + "p0");
+         } else if(literal.startsWith("0x")) {
+            d = Double.parseDouble(literal + "p0");
+         } else {
+            d = Double.parseDouble(literal);
+         }
+         long fixedVal = Math.round(d * 256.0);
+         return new ConstantInteger(fixedVal, SymbolType.NUMBER);
+      }
+      SymbolType type = SymbolType.NUMBER;
       if(literal.endsWith("ub") || literal.endsWith("uc")) {
          type = SymbolType.BYTE;
          literal = literal.substring(0, literal.length()-2);
