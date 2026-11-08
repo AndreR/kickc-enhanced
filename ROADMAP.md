@@ -19,7 +19,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-## 2. Feature Matrix (Strictly Sequenced F-00 to F-36)
+## 2. Feature Matrix (Strictly Sequenced F-00 to F-42)
 
 | ID | Category | Feature Description | Origin / Standard | Status |
 | :---: | :--- | :--- | :---: | :---: |
@@ -60,6 +60,12 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-34** | Peephole | Pass-5 Bit-Test Optimization (`BIT`, `BMI`, `BPL` for Bit 7/6) | Pass 5 | ⚪ Planned |
 | **F-35** | Codegen | Multi-Entry Byte-Skipping via `BIT $xxxx` (`.byte $2c`) | 6502 Idiom | ✅ Completed |
 | **F-36** | Types | Packed 4-Bit Nibble Arrays (`uint4_t` / Color-RAM Packing) | C64 Architecture | ⚪ Planned |
+| **F-37** | Library | Library Bugfix & Acceleration: `string.h` (`memcpy_fast` fix, page-copy loop) | 6502 Library | ⚪ Planned |
+| **F-38** | Library | Library: `stdlib.h` (`RAND_MAX` bugfix, polymorphic `abs` via C11 `_Generic`) | C11 Library | ⚪ Planned |
+| **F-39** | Library | Library: `ctype.h` / `ctype.c` Standard Conformance (`tolower`, `isdigit`, etc.) | ISO C Library | ⚪ Planned |
+| **F-40** | Library | Library: `conio-cbm-shared.c` Performance & C23 `bool` Modernization | CBM Library | ⚪ Planned |
+| **F-41** | Library | Library: `c64-bitmap.c` ROM Safety Fix & 8-Bit Y Bresenham Routine | C64 Library | ⚪ Planned |
+| **F-42** | Library | Library: `printf.c` / `sprintf.c` 8/16-Bit Fast-Path Dispatch | 6502 Library | ⚪ Planned |
 
 ---
 
@@ -321,3 +327,81 @@ This document outlines the compiler architecture, completed milestones, planned 
     * If `i & 1 == 0`: read low nibble (`AND #$0F`).
     * If `i & 1 != 0`: read high nibble (`LSR` 4 times or `SWAP/AND`).
   * Direct 50% RAM reduction for graphics, tile, and Color-RAM storage.
+
+---
+
+### Feature 37: Library Bugfix & Acceleration: `string.h` (`memcpy_fast` fix, page-copy loop)
+* **Problem:** 
+  1. `string.c` contains an off-by-one out-of-bounds error in `memcpy_fast` and `memset_fast`: `do { *(destination+num) = *(source+num); num--; } while(num);` accesses `offset = num` down to `1`, writing one byte past the destination buffer and completely skipping index `0`.
+  2. Standard `memcpy`, `memset`, and `memmove` rely on sequential 16-bit pointer increments, which execute at roughly 28 cycles/byte.
+  3. Several standard string routines (`strchr`, `strrchr`, `strcmp`, `strcat`, `strncat`, `strstr`) are absent from `<string.h>`.
+* **Solution & Optimization:**
+  * Fix the loop indexing in `memcpy_fast` and `memset_fast` (`*(destination+--num) = *(source+--num)` or post-decrement loop).
+  * Implement unrolled page-copy transfer loops (`LDY #0; loop: LDA (src),Y; STA (dst),Y; INY; BNE loop; INC src+1; INC dst+1; ...`) for bulk transfers $\ge 256$ bytes, cutting copy time down to ~12 cycles/byte.
+  * Provide standard-compliant 6502 implementations for missing string utility functions.
+
+---
+
+### Feature 38: Library: `stdlib.h` (`RAND_MAX` bugfix, polymorphic `abs` via C11 `_Generic`)
+* **Problem:**
+  1. `stdlib.h` defines `#define RAND_MAX 65335` (typo for `65535`).
+  2. Calling `abs()` on an 8-bit `signed char` either promotes unnecessarily to 16-bit or lacks type safety.
+  3. Integer-to-string routines (`uctoa`, `utoa`, `ultoa`) execute full division loops even for common radix 10 and 16.
+* **Solution & Optimization:**
+  * Correct `RAND_MAX` to `65535`.
+  * Add `abs8(signed char x)` and define polymorphic `abs(x)` using C11 `_Generic` (`F-22`):
+    ```c
+    #define abs(x) _Generic((x), \
+        signed char: abs8(x), \
+        int: abs16(x), \
+        long: labs(x) \
+    )
+    ```
+  * Specialize `uctoa` and `utoa` for radix 10 and 16, utilizing the reciprocal division algorithms from `F-13`.
+
+---
+
+### Feature 39: Library: `ctype.h` / `ctype.c` Standard Conformance (`tolower`, `isdigit`, etc.)
+* **Problem:** The compiler library currently only defines `toupper(ch)` in `<ctype.h>`. Standard character classification and conversion functions are completely missing.
+* **Solution & Optimization:**
+  * Implement full ISO C character classification functions optimized for 6502 without unnecessary table overhead:
+    * `isdigit(c)`: `(unsigned char)(c - '0') < 10`
+    * `isxdigit(c)`: Range check `'0'..'9'`, `'a'..'f'`, `'A'..'F'`
+    * `isalpha(c)`, `isalnum(c)`, `isspace(c)`, `isupper(c)`, `islower(c)`, `isprint(c)`, `ispunct(c)`
+    * `tolower(c)`: Inverse of `toupper(c)`
+  * Leverage `__carry` Boolean return ABI (`F-25`) to return condition results directly in the Carry flag.
+
+---
+
+### Feature 40: Library: `conio-cbm-shared.c` Performance & C23 `bool` Modernization
+* **Problem:**
+  1. `clrscr()` clears the screen via 1,000 iterations of 16-bit pointer additions (`screen[i] = ' '`), which is visibly slow.
+  2. `cscroll()` performs line-by-line copies with 16-bit pointer calculations.
+  3. `kbhit()`, `cursor()`, and `scroll()` use `unsigned char` and integer flags rather than modern C23 `bool`.
+  4. `kbhit()` in `conio-c64.c` accesses CIA1 Port A without restoring original state.
+* **Solution & Optimization:**
+  * Unroll `clrscr()` into 4 fast 256-byte loop blocks (`STA screen,X; STA screen+$100,X; STA screen+$200,X; STA screen+$2E8,X; DEX; BNE ...`).
+  * Modernize `conio` API signatures to utilize C23 `bool`, `true`, and `false`, returning via `F-25` Carry flag.
+  * Ensure keyboard matrix probing cleanly restores CIA1 Port A state.
+
+---
+
+### Feature 41: Library: `c64-bitmap.c` ROM Safety Fix & 8-Bit Y Bresenham Routine
+* **Problem:**
+  1. `bitmap_plot_ylo`, `bitmap_plot_yhi`, and `bitmap_plot_bit` are declared `const` but mutated at runtime in `bitmap_init()`, violating ROM safety (`#pragma segment_type(..., ROM)`).
+  2. Bresenham line algorithm (`bitmap_line`) performs all calculations in 16-bit, even though the vertical coordinate `y` on C64 standard bitmap mode never exceeds 199 ($00..$C7, strictly 8-bit).
+* **Solution & Optimization:**
+  * Precalculate plot lookup tables at compile time via `F-32` (`__builtin_lut`) and place them cleanly in ROM, or declare them non-const in RAM.
+  * Provide an optimized `bitmap_line8(uint16_t x1, uint8_t y1, uint16_t x2, uint8_t y2)` utilizing 8-bit Zero-Page registers for vertical calculations, speeding up line drawing significantly.
+
+---
+
+### Feature 42: Library: `printf.c` / `sprintf.c` 8/16-Bit Fast-Path Dispatch
+* **Problem:** Standard `printf` casts every integer argument to a 32-bit `unsigned long` and invokes 32-bit `ultoa()`. On the 6502, 32-bit division and modulo operations are slow and consume significant Zero-Page scratchpad registers.
+* **Solution & Optimization:**
+  * Introduce fast-path dispatch in format parsing:
+    * 8-bit integer formats (`%hhu`, `%hhd`, `%hhx`) dispatch directly to 8-bit `uctoa()`.
+    * 16-bit integer formats (`%u`, `%d`, `%x`) dispatch directly to 16-bit `utoa()`.
+    * Only 32-bit formats (`%lu`, `%ld`, `%lx`) invoke full 32-bit `ultoa()`.
+  * Reduces cycle count by up to 70% when printing byte and word values.
+
