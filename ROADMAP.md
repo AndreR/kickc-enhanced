@@ -19,7 +19,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-## 2. Feature Matrix (Strictly Sequenced F-00 to F-34)
+## 2. Feature Matrix (Strictly Sequenced F-00 to F-36)
 
 | ID | Category | Feature Description | Origin / Standard | Status |
 | :---: | :--- | :--- | :---: | :---: |
@@ -58,6 +58,8 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-32** | Generator | Compile-Time Table Generator (`__builtin_lut` / Constexpr Arrays) | Tooling | ⚪ Planned |
 | **F-33** | Types | ISO-C Bitfields in Structs (`uint8_t a:1, b:1;` for Packed Bools) | ISO C | ⚪ Planned |
 | **F-34** | Peephole | Pass-5 Bit-Test Optimization (`BIT`, `BMI`, `BPL` for Bit 7/6) | Pass 5 | ⚪ Planned |
+| **F-35** | Codegen | Multi-Entry Byte-Skipping via `BIT $xxxx` (`.byte $2c`) | 6502 Idiom | ⚪ Planned |
+| **F-36** | Types | Packed 4-Bit Nibble Arrays (`uint4_t` / Color-RAM Packing) | C64 Architecture | ⚪ Planned |
 
 ---
 
@@ -270,3 +272,29 @@ This document outlines the compiler architecture, completed milestones, planned 
   * Pass 5 peephole optimizer recognizes bitmask checks against `0x80` (bit 7) and `0x40` (bit 6).
   * Synthesizes `BIT flags; BMI label` (if bit 7 is set) or `BIT flags; BPL label` (if bit 7 is clear).
   * Saves 2 cycles and preserves register `A`, allowing the subsequent code to continue using the accumulator.
+
+---
+
+### Feature 35: Multi-Entry Byte-Skipping via `BIT $xxxx` (`.byte $2c`)
+* **Problem:** Functions that share an identical body except for an immediate constant loaded at the start (e.g. `set_border_red()` vs `set_border_blue()`) duplicate machine code or require extra `JMP` instructions.
+* **6502 Idiom:** In 6502 assembly, functions share a single body by having the first entry point execute `LDA #val1`, followed by opcode `$2C` (`BIT $xxxx`). When entering at the first entry, `$2C` consumes the following 2-byte instruction `LDA #val2` as an operand to `BIT`, skipping it in 4 cycles without clobbering registers A, X, or Y.
+* **Compiler Integration:**
+  * Pass 5 function merger detects tail-identical functions differing only by a leading 2-byte immediate load into the same register.
+  * Emits shared function body with intermediate `.byte $2c` byte-skipper.
+  * Saves 4 bytes and eliminates jump overhead per merged entry.
+
+---
+
+### Feature 36: Packed 4-Bit Nibble Arrays (`uint4_t` / Color-RAM Packing)
+* **Problem:** Color-RAM (`$D800–$DBE7`, 1000 characters) on the C64 utilizes only 4 bits per byte (values 0..15). Allocating 8-bit byte arrays (`uint8_t buffer[1000]`) for screen fading or tile attribute maps wastes 500 bytes of scarce RAM.
+* **Syntax:**
+  ```c
+  uint4_t color_fade_buffer[1000]; // Occupies exactly 500 bytes in memory
+  ```
+* **Compiler Integration:**
+  * `uint4_t` represents a packed 4-bit unsigned nibble type.
+  * Array indexing `buffer[i]` automatically emits:
+    * Shift index `i >> 1` (`LSR`).
+    * If `i & 1 == 0`: read low nibble (`AND #$0F`).
+    * If `i & 1 != 0`: read high nibble (`LSR` 4 times or `SWAP/AND`).
+  * Direct 50% RAM reduction for graphics, tile, and Color-RAM storage.
