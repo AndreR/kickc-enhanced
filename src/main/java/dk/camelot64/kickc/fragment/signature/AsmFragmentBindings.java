@@ -74,7 +74,7 @@ public class AsmFragmentBindings {
      * @return The 2-letter base type name (eg. bu/ws/...).
      */
     static String getBaseTypePrefix(SymbolType baseType) {
-        if (SymbolType.BYTE.equals(baseType)) {
+        if (SymbolType.BYTE.equals(baseType) || SymbolType.NIBBLE.equals(baseType)) {
             return "bu";
         } else if (SymbolType.SBYTE.equals(baseType)) {
             return "bs";

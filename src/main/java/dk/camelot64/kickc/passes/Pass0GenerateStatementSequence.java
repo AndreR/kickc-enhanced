@@ -3146,6 +3146,166 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return rhsVal;
    }
 
+   public KickCParser.ExprArrayContext getNibbleArrayContext(KickCParser.ExprContext exprCtx) {
+      while(exprCtx instanceof KickCParser.ExprParContext) {
+         KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) exprCtx).commaExpr();
+         if(commaCtx instanceof KickCParser.CommaNoneContext) {
+            exprCtx = ((KickCParser.CommaNoneContext) commaCtx).expr();
+         } else if(commaCtx instanceof KickCParser.CommaSimpleContext) {
+            exprCtx = ((KickCParser.CommaSimpleContext) commaCtx).expr();
+         } else {
+            return null;
+         }
+      }
+      if(exprCtx instanceof KickCParser.ExprArrayContext arrayCtx) {
+         SymbolType arrayType = inferExprType(arrayCtx.expr());
+         if(arrayType instanceof SymbolTypePointer ptrType && SymbolType.NIBBLE.equals(ptrType.getElementType())) {
+            return arrayCtx;
+         }
+      }
+      return null;
+   }
+
+   public RValue desugarNibbleArrayRead(KickCParser.ExprArrayContext arrayCtx) {
+      RValue arrayRVal = (RValue) visit(arrayCtx.expr());
+      RValue indexRVal = (RValue) visit(arrayCtx.commaExpr());
+      SymbolTypePointer bytePtrType = new SymbolTypePointer(SymbolType.BYTE);
+      RValue bytePtr = (arrayRVal instanceof ConstantValue)
+            ? new ConstantCastValue(bytePtrType, (ConstantValue) arrayRVal)
+            : new CastValue(bytePtrType, arrayRVal);
+
+      Long constIdx = evaluateConstantInteger(indexRVal);
+      if(constIdx != null) {
+         long idx = constIdx;
+         long byteOffset = idx >> 1;
+         boolean isOdd = (idx & 1) != 0;
+         PointerDereferenceIndexed byteDeref = new PointerDereferenceIndexed(bytePtr, new ConstantInteger(byteOffset, SymbolType.WORD));
+         SymbolVariableRef rawByteVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) rawByteVar, byteDeref, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+         if(!isOdd) {
+            return addExprBinary(arrayCtx, rawByteVar, Operators.BOOL_AND, new ConstantInteger(0x0fL, SymbolType.BYTE));
+         } else {
+            return addExprBinary(arrayCtx, rawByteVar, Operators.SHIFT_RIGHT, new ConstantInteger(4L, SymbolType.BYTE));
+         }
+      } else {
+         SymbolVariableRef idxVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) idxVar, indexRVal, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+         RValue byteIdx = addExprBinary(arrayCtx, idxVar, Operators.SHIFT_RIGHT, new ConstantInteger(1L));
+         RValue isOdd = addExprBinary(arrayCtx, idxVar, Operators.BOOL_AND, new ConstantInteger(1L));
+
+         PointerDereferenceIndexed byteDeref = new PointerDereferenceIndexed(bytePtr, byteIdx);
+         SymbolVariableRef rawByteVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) rawByteVar, byteDeref, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+         Label oddLabel = getCurrentScope().addLabelIntermediate();
+         Label falseLabel = getCurrentScope().addLabelIntermediate();
+         Label endJumpLabel = getCurrentScope().addLabelIntermediate();
+
+         addStatement(new StatementConditionalJump(isOdd, oddLabel.getRef(), new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+         addStatement(new StatementLabel(falseLabel.getRef(), new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+         RValue evenVal = addExprBinary(arrayCtx, rawByteVar, Operators.BOOL_AND, new ConstantInteger(0x0fL, SymbolType.BYTE));
+         SymbolVariableRef evenVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) evenVar, evenVal, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+         LabelRef falseExitLabel = getCurrentProcedureCompilation().getStatementSequence().getCurrentBlockLabel();
+         addStatement(new StatementJump(endJumpLabel.getRef(), new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+         addStatement(new StatementLabel(oddLabel.getRef(), new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+         RValue oddVal = addExprBinary(arrayCtx, rawByteVar, Operators.SHIFT_RIGHT, new ConstantInteger(4L, SymbolType.BYTE));
+         SymbolVariableRef oddVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) oddVar, oddVal, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+         LabelRef trueExitLabel = getCurrentProcedureCompilation().getStatementSequence().getCurrentBlockLabel();
+
+         addStatement(new StatementLabel(endJumpLabel.getRef(), new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+         StatementPhiBlock phiBlock = new StatementPhiBlock(Comment.NO_COMMENTS);
+         phiBlock.setSource(new StatementSource(arrayCtx));
+         SymbolVariableRef finalVar = addIntermediateVar().getRef();
+         StatementPhiBlock.PhiVariable phiVariable = phiBlock.addPhiVariable((VariableRef) finalVar);
+         phiVariable.setrValue(trueExitLabel, oddVar);
+         phiVariable.setrValue(falseExitLabel, evenVar);
+         addStatement(phiBlock);
+         return finalVar;
+      }
+   }
+
+   public RValue writeNibbleArray(ParserRuleContext ctx, KickCParser.ExprArrayContext arrayCtx, RValue rhsVal) {
+      RValue arrayRVal = (RValue) visit(arrayCtx.expr());
+      RValue indexRVal = (RValue) visit(arrayCtx.commaExpr());
+      SymbolTypePointer bytePtrType = new SymbolTypePointer(SymbolType.BYTE);
+      RValue bytePtr = (arrayRVal instanceof ConstantValue)
+            ? new ConstantCastValue(bytePtrType, (ConstantValue) arrayRVal)
+            : new CastValue(bytePtrType, arrayRVal);
+
+      RValue maskedRhs = addExprBinary(ctx, rhsVal, Operators.BOOL_AND, new ConstantInteger(0x0fL, SymbolType.BYTE));
+
+      Long constIdx = evaluateConstantInteger(indexRVal);
+      if(constIdx != null) {
+         long idx = constIdx;
+         long byteOffset = idx >> 1;
+         boolean isOdd = (idx & 1) != 0;
+         PointerDereferenceIndexed readDeref = new PointerDereferenceIndexed(bytePtr, new ConstantInteger(byteOffset, SymbolType.WORD));
+         SymbolVariableRef rawByteVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) rawByteVar, readDeref, true, new StatementSource(ctx), Comment.NO_COMMENTS));
+
+         PointerDereferenceIndexed writeDeref = new PointerDereferenceIndexed(bytePtr, new ConstantInteger(byteOffset, SymbolType.WORD));
+         if(!isOdd) {
+            RValue maskedOld = addExprBinary(ctx, rawByteVar, Operators.BOOL_AND, new ConstantInteger(0xf0L, SymbolType.BYTE));
+            RValue newByte = addExprBinary(ctx, maskedOld, Operators.BOOL_OR, maskedRhs);
+            addStatement(new StatementAssignment(writeDeref, newByte, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         } else {
+            RValue shiftedRhs = addExprBinary(ctx, maskedRhs, Operators.SHIFT_LEFT, new ConstantInteger(4L, SymbolType.BYTE));
+            RValue maskedOld = addExprBinary(ctx, rawByteVar, Operators.BOOL_AND, new ConstantInteger(0x0fL, SymbolType.BYTE));
+            RValue newByte = addExprBinary(ctx, maskedOld, Operators.BOOL_OR, shiftedRhs);
+            addStatement(new StatementAssignment(writeDeref, newByte, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         }
+         return maskedRhs;
+      } else {
+         SymbolVariableRef idxVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) idxVar, indexRVal, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+         RValue byteIdx = addExprBinary(arrayCtx, idxVar, Operators.SHIFT_RIGHT, new ConstantInteger(1L));
+         RValue isOdd = addExprBinary(arrayCtx, idxVar, Operators.BOOL_AND, new ConstantInteger(1L));
+
+         PointerDereferenceIndexed readDeref = new PointerDereferenceIndexed(bytePtr, byteIdx);
+         SymbolVariableRef rawByteVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) rawByteVar, readDeref, true, new StatementSource(ctx), Comment.NO_COMMENTS));
+
+         Label oddLabel = getCurrentScope().addLabelIntermediate();
+         Label falseLabel = getCurrentScope().addLabelIntermediate();
+         Label endJumpLabel = getCurrentScope().addLabelIntermediate();
+
+         addStatement(new StatementConditionalJump(isOdd, oddLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+         addStatement(new StatementLabel(falseLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+         RValue evenMaskedOld = addExprBinary(ctx, rawByteVar, Operators.BOOL_AND, new ConstantInteger(0xf0L, SymbolType.BYTE));
+         RValue evenNewByte = addExprBinary(ctx, evenMaskedOld, Operators.BOOL_OR, maskedRhs);
+         SymbolVariableRef evenVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) evenVar, evenNewByte, true, new StatementSource(ctx), Comment.NO_COMMENTS));
+         LabelRef falseExitLabel = getCurrentProcedureCompilation().getStatementSequence().getCurrentBlockLabel();
+         addStatement(new StatementJump(endJumpLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+
+         addStatement(new StatementLabel(oddLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+         RValue shiftedRhs = addExprBinary(ctx, maskedRhs, Operators.SHIFT_LEFT, new ConstantInteger(4L, SymbolType.BYTE));
+         RValue oddMaskedOld = addExprBinary(ctx, rawByteVar, Operators.BOOL_AND, new ConstantInteger(0x0fL, SymbolType.BYTE));
+         RValue oddNewByte = addExprBinary(ctx, oddMaskedOld, Operators.BOOL_OR, shiftedRhs);
+         SymbolVariableRef oddVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) oddVar, oddNewByte, true, new StatementSource(ctx), Comment.NO_COMMENTS));
+         LabelRef trueExitLabel = getCurrentProcedureCompilation().getStatementSequence().getCurrentBlockLabel();
+
+         addStatement(new StatementLabel(endJumpLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+         StatementPhiBlock phiBlock = new StatementPhiBlock(Comment.NO_COMMENTS);
+         phiBlock.setSource(new StatementSource(ctx));
+         SymbolVariableRef finalNewByteVar = addIntermediateVar().getRef();
+         StatementPhiBlock.PhiVariable phiVariable = phiBlock.addPhiVariable((VariableRef) finalNewByteVar);
+         phiVariable.setrValue(trueExitLabel, oddVar);
+         phiVariable.setrValue(falseExitLabel, evenVar);
+         addStatement(phiBlock);
+
+         PointerDereferenceIndexed writeDeref = new PointerDereferenceIndexed(bytePtr, byteIdx);
+         addStatement(new StatementAssignment(writeDeref, finalNewByteVar, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         return maskedRhs;
+      }
+   }
+
    @Override
    public Object visitExprAssignment(KickCParser.ExprAssignmentContext ctx) {
       Variable bitfieldMember = getBitfieldMember(ctx.expr(0));
@@ -3153,6 +3313,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          LValue containerLVal = getBitfieldContainerLValue(ctx.expr(0), bitfieldMember);
          RValue rhsVal = (RValue) visit(ctx.expr(1));
          return writeBitfield(ctx, containerLVal, bitfieldMember, rhsVal);
+      }
+      KickCParser.ExprArrayContext nibbleArrayCtx = getNibbleArrayContext(ctx.expr(0));
+      if(nibbleArrayCtx != null) {
+         RValue rhsVal = (RValue) visit(ctx.expr(1));
+         return writeNibbleArray(ctx, nibbleArrayCtx, rhsVal);
       }
       Object val = visit(ctx.expr(0));
       if(val instanceof ConstantRef) {
@@ -3185,6 +3350,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          RValue currentVal = desugarBitfieldRead(ctx, containerRef, bitfieldMember);
          RValue updatedVal = addExprBinary(ctx, currentVal, operator, rhsVal);
          return writeBitfield(ctx, containerLVal, bitfieldMember, updatedVal);
+      }
+      KickCParser.ExprArrayContext nibbleArrayCtx = getNibbleArrayContext(ctx.expr(0));
+      if(nibbleArrayCtx != null) {
+         RValue rhsVal = (RValue) visit(ctx.expr(1));
+         String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
+         Operator operator = Operators.getBinaryCompound(op);
+         RValue currentVal = desugarNibbleArrayRead(nibbleArrayCtx);
+         RValue updatedVal = addExprBinary(ctx, currentVal, operator, rhsVal);
+         return writeNibbleArray(ctx, nibbleArrayCtx, updatedVal);
       }
       // Assignment (rValue/lValue)
       Object value = visit(ctx.expr(0));
@@ -3717,6 +3891,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public RValue visitExprArray(KickCParser.ExprArrayContext ctx) {
+      if(getNibbleArrayContext(ctx) != null) {
+         return desugarNibbleArrayRead(ctx);
+      }
       RValue array = (RValue) visit(ctx.expr());
       RValue index = (RValue) visit(ctx.commaExpr());
       PointerDereferenceIndexed pointerDereferenceIndexed = new PointerDereferenceIndexed(array, index);
@@ -3826,8 +4003,8 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    public RValue visitExprUnary(KickCParser.ExprUnaryContext ctx) {
       String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
       Operator operator = Operators.getUnary(op);
-      if(Operators.ADDRESS_OF.equals(operator) && getBitfieldMember(ctx.expr()) != null) {
-         throw new CompileError("Cannot take address of bitfield member", new StatementSource(ctx));
+      if(Operators.ADDRESS_OF.equals(operator) && (getBitfieldMember(ctx.expr()) != null || getNibbleArrayContext(ctx.expr()) != null)) {
+         throw new CompileError("Cannot take address of bitfield member or packed nibble element", new StatementSource(ctx));
       }
       RValue child = (RValue) this.visit(ctx.expr());
       return addExprUnary(ctx, operator, child);
@@ -4151,6 +4328,13 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
                parser.writeBitfield(mod.ctx, mod.containerLVal, mod.bitfieldMember, updatedVal);
                continue;
             }
+            if(mod.nibbleArrayCtx != null) {
+               RValue currentVal = parser.desugarNibbleArrayRead(mod.nibbleArrayCtx);
+               Operator op = mod.operator.equals(Operators.INCREMENT) ? Operators.PLUS : Operators.MINUS;
+               RValue updatedVal = parser.addExprBinary(mod.ctx, currentVal, op, new ConstantInteger(1L));
+               parser.writeNibbleArray(mod.ctx, mod.nibbleArrayCtx, updatedVal);
+               continue;
+            }
             if(mod.child instanceof ConstantValue) {
                throw new CompileError("Constants can not be modified " + mod.child.toString(), source);
             }
@@ -4183,6 +4367,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             this.visit(ctx.expr());
             return null;
          }
+         KickCParser.ExprArrayContext nibbleArrayCtx = mainParser.getNibbleArrayContext(ctx.expr());
+         if(nibbleArrayCtx != null) {
+            String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
+            Operator operator = Operators.getUnary(op);
+            PrePostModifier modifier = new PrePostModifier(ctx, operator, nibbleArrayCtx);
+            postMods.add(modifier);
+            this.visit(ctx.expr());
+            return null;
+         }
          // First handle the ++/-- modifier
          RValue child = (RValue) mainParser.visit(ctx.expr());
          String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
@@ -4206,6 +4399,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             this.visit(ctx.expr());
             return null;
          }
+         KickCParser.ExprArrayContext nibbleArrayCtx = mainParser.getNibbleArrayContext(ctx.expr());
+         if(nibbleArrayCtx != null) {
+            String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
+            Operator operator = Operators.getUnary(op);
+            PrePostModifier modifier = new PrePostModifier(ctx, operator, nibbleArrayCtx);
+            preMods.add(modifier);
+            this.visit(ctx.expr());
+            return null;
+         }
          // First handle the ++/-- modifier
          RValue child = (RValue) mainParser.visit(ctx.expr());
          String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
@@ -4223,6 +4425,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          ParserRuleContext ctx;
          Variable bitfieldMember;
          LValue containerLVal;
+         KickCParser.ExprArrayContext nibbleArrayCtx;
 
          PrePostModifier(RValue child, Operator operator) {
             this.child = child;
@@ -4234,6 +4437,12 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             this.operator = operator;
             this.bitfieldMember = bitfieldMember;
             this.containerLVal = containerLVal;
+         }
+
+         PrePostModifier(ParserRuleContext ctx, Operator operator, KickCParser.ExprArrayContext nibbleArrayCtx) {
+            this.ctx = ctx;
+            this.operator = operator;
+            this.nibbleArrayCtx = nibbleArrayCtx;
          }
       }
 

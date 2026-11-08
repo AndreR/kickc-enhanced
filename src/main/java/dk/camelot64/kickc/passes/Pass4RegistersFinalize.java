@@ -262,7 +262,7 @@ public class Pass4RegistersFinalize extends Pass2Base {
     */
    private Registers.Register allocateNewRegisterZp(Variable variable) {
       SymbolType varType = variable.getType();
-      if(SymbolType.BYTE.equals(varType)) {
+      if(SymbolType.BYTE.equals(varType) || SymbolType.NIBBLE.equals(varType)) {
          return new Registers.RegisterZpMem(allocateZp(1), 1);
       } else if(SymbolType.SBYTE.equals(varType)) {
          return new Registers.RegisterZpMem(allocateZp(1),1);

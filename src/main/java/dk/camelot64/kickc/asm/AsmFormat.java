@@ -233,7 +233,32 @@ public class AsmFormat {
          } else if(SymbolType.WORD.equals(operandType) || SymbolType.SWORD.equals(operandType) || operandType instanceof SymbolTypePointer) {
             return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger((long) 0xffff)), outerPrecedence, codeScope);
          } else if(SymbolType.DWORD.equals(operandType) || SymbolType.SDWORD.equals(operandType)) {
-            return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger((long) 0xffffffff)), outerPrecedence, codeScope);
+            return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger(0xffffffffL)), outerPrecedence, codeScope);
+         } else if(SymbolType.NUMBER.equals(operandType) || SymbolType.UNUMBER.equals(operandType) || SymbolType.NIBBLE.equals(operandType)) {
+            Long val = null;
+            if(operand instanceof ConstantInteger) {
+               val = ((ConstantInteger) operand).getValue();
+            } else {
+               try {
+                  ConstantLiteral constantLiteral = operand.calculateLiteral(program.getScope());
+                  if(constantLiteral instanceof ConstantInteger) {
+                     val = ((ConstantInteger) constantLiteral).getValue();
+                  }
+               } catch(ConstantNotLiteral e) {
+                  // ignore
+               }
+            }
+            if(val != null) {
+               if(val >= 0 && val <= 0xffL) {
+                  return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger((long) 0xff)), outerPrecedence, codeScope);
+               } else if(val <= 0xffffL) {
+                  return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger((long) 0xffff)), outerPrecedence, codeScope);
+               } else {
+                  return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger(0xffffffffL)), outerPrecedence, codeScope);
+               }
+            } else {
+               return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger((long) 0xff)), outerPrecedence, codeScope);
+            }
          } else {
             throw new CompileError("Operator _bnot_ cannot handle " + operand.toString(program));
          }

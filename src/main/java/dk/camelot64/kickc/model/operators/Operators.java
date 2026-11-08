@@ -257,7 +257,7 @@ public class Operators {
    }
 
    public static OperatorUnary getCastUnary(SymbolType castType) {
-      if(SymbolType.BYTE.equals(castType)) {
+      if(SymbolType.BYTE.equals(castType) || SymbolType.NIBBLE.equals(castType)) {
          return CAST_BYTE;
       } else if(SymbolType.SBYTE.equals(castType)) {
          return CAST_SBYTE;

@@ -18,6 +18,8 @@ public interface SymbolType {
     */
    SymbolType getQualified(boolean isVolatile, boolean isNomodify);
 
+   /** Unsigned nibble (4 bits). */
+   SymbolTypeIntegerFixed NIBBLE = new SymbolTypeIntegerFixed("nibble", "uint4_t", 0, 15, false, 4, false, false);
    /** Unsigned byte (8 bits)). */
    SymbolTypeIntegerFixed BYTE = new SymbolTypeIntegerFixed("byte", "char", 0, 255, false, 8, false, false);
    /** Signed byte (8 bits). */
@@ -57,6 +59,10 @@ public interface SymbolType {
     */
    static SymbolType get(String name) {
       switch(name) {
+         case "nibble":
+         case "__nibble":
+         case "uint4_t":
+            return NIBBLE;
          case "char":
          case "unsigned char":
          case "byte":
@@ -115,7 +121,7 @@ public interface SymbolType {
     * @return true if the type is integer
     */
    static boolean isInteger(SymbolType type) {
-      return SDWORD.equals(type) || DWORD.equals(type) || SWORD.equals(type) || WORD.equals(type) || SBYTE.equals(type) || BYTE.equals(type) || NUMBER.equals(type) || UNUMBER.equals(type) || SNUMBER.equals(type);
+      return SDWORD.equals(type) || DWORD.equals(type) || SWORD.equals(type) || WORD.equals(type) || SBYTE.equals(type) || BYTE.equals(type) || NIBBLE.equals(type) || NUMBER.equals(type) || UNUMBER.equals(type) || SNUMBER.equals(type);
    }
 
    default String toCDecl() {

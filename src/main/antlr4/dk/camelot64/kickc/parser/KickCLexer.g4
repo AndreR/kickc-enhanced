@@ -107,7 +107,7 @@ TYPEID : 'typeid' ;
 DEFINED : 'defined' ;
 KICKASM : 'kickasm' ;
 LOGIC_NOT : '!' ;
-SIMPLETYPE: 'signed' | 'unsigned' | 'byte' | 'word' | 'dword' | 'bool' | 'char' | 'short' | 'int' | 'long' | 'void' ;
+SIMPLETYPE: 'signed' | 'unsigned' | 'byte' | 'word' | 'dword' | 'bool' | 'char' | 'short' | 'int' | 'long' | 'void' | 'nibble' | '__nibble' | 'uint4_t' ;
 BOOLEAN : 'true' | 'false';
 KICKASM_BODY: '{{' .*? '}}';
 

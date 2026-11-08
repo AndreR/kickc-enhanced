@@ -6,6 +6,7 @@
 #ifndef _STDINT_H
 #define _STDINT_H
 
+/// Unsigned integer type with a width of exactly 4 bits (packed 2-per-byte in arrays)
 /// Unsigned integer type with a width of exactly 8 bits
 typedef unsigned char uint8_t;
 /// Signed integer type with a width of exactly 8 bits
@@ -33,6 +34,8 @@ typedef signed int intptr_t;
 #define INT8_MIN        (-128)
 /// Maximum value of exactly 8-bit wide signed type
 #define INT8_MAX        127
+/// Maximum value of exactly 4-bit wide unsigned type
+#define UINT4_MAX       15
 /// Maximum value of exactly 8-bit wide unsigned type
 #define UINT8_MAX       255
 

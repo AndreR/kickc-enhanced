@@ -44,6 +44,7 @@ public class SymbolTypeIntegerFixed implements SymbolTypeInteger {
     */
    public static Collection<SymbolTypeIntegerFixed> getIntegerFixedTypes() {
       ArrayList<SymbolTypeIntegerFixed> types = new ArrayList<>();
+      types.add(NIBBLE);
       types.add(BYTE);
       types.add(SBYTE);
       types.add(WORD);
@@ -125,7 +126,7 @@ public class SymbolTypeIntegerFixed implements SymbolTypeInteger {
 
    @Override
    public int getSizeBytes() {
-      return bits/8;
+      return (bits + 7)/8;
    }
 
    @Override

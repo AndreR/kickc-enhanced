@@ -87,7 +87,7 @@ public class OperatorTypeId extends OperatorUnary {
    public static int getTypeId(SymbolType type) {
       if(SymbolTypeNamed.VOID.equals(type)) {
          return 0;
-      } else if(SymbolTypeNamed.BYTE.equals(type)) {
+      } else if(SymbolTypeNamed.BYTE.equals(type) || SymbolType.NIBBLE.equals(type)) {
          return 1;
       } else if(SymbolTypeNamed.SBYTE.equals(type)) {
          return 2;

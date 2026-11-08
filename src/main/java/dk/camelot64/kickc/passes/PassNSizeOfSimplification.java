@@ -47,6 +47,22 @@ public class PassNSizeOfSimplification extends Pass2SsaOptimization {
                      assignment.setrValue2(sizeOfConstantVar);
                      assignment.setOperator(null);
                      modified.set(true);
+                  } else if(symbolType instanceof SymbolTypePointer arrayType && SymbolType.NIBBLE.equals(arrayType.getElementType())) {
+                     ConstantValue arraySize = symbolVar.getArraySize();
+                     if(arraySize != null) {
+                        getLog().append("Resolving packed nibble array sizeof() " + assignment.toString(getProgram(), false));
+                        ConstantBinary add1 = new ConstantBinary(arraySize, Operators.PLUS, new ConstantInteger(1L));
+                        assignment.setrValue2(new ConstantBinary(add1, Operators.SHIFT_RIGHT, new ConstantInteger(1L)));
+                        assignment.setOperator(null);
+                        modified.set(true);
+                     } else if(symbolVar.getInitValue() instanceof ConstantArrayList list) {
+                        getLog().append("Resolving packed nibble array sizeof() " + assignment.toString(getProgram(), false));
+                        int size = list.getElements().size();
+                        int packedSize = (size + 1) / 2;
+                        assignment.setrValue2(new ConstantInteger((long) packedSize, SymbolType.WORD));
+                        assignment.setOperator(null);
+                        modified.set(true);
+                     }
                   }
                }
             } else if(Operators.COUNTOF.equals(assignment.getOperator())) {
@@ -95,14 +111,24 @@ public class PassNSizeOfSimplification extends Pass2SsaOptimization {
             ConstantValue arraySize = constant.getArraySize();
             if(arraySize!=null) {
                getLog().append("Resolving array sizeof() " + unary.toString(getProgram()));
-               ConstantRef sizeOfConstantVar = SizeOfConstants.getSizeOfConstantVar(getProgramScope(), arrayType.getElementType());
-               programValue.set(new ConstantBinary(arraySize, Operators.MULTIPLY, sizeOfConstantVar));
+               if(SymbolType.NIBBLE.equals(arrayType.getElementType())) {
+                  ConstantBinary add1 = new ConstantBinary(arraySize, Operators.PLUS, new ConstantInteger(1L));
+                  programValue.set(new ConstantBinary(add1, Operators.SHIFT_RIGHT, new ConstantInteger(1L)));
+               } else {
+                  ConstantRef sizeOfConstantVar = SizeOfConstants.getSizeOfConstantVar(getProgramScope(), arrayType.getElementType());
+                  programValue.set(new ConstantBinary(arraySize, Operators.MULTIPLY, sizeOfConstantVar));
+               }
                modified.set(true);
-            } else if(constant.getInitValue() instanceof ConstantArrayList) {
+            } else if(constant.getInitValue() instanceof ConstantArrayList list) {
                getLog().append("Resolving array sizeof() " + unary.toString(getProgram()));
-               int size = ((ConstantArrayList) constant.getInitValue()).getElements().size();
-               ConstantRef sizeOfConstantVar = SizeOfConstants.getSizeOfConstantVar(getProgramScope(), arrayType.getElementType());
-               programValue.set(new ConstantBinary(new ConstantInteger((long) size), Operators.MULTIPLY, sizeOfConstantVar));
+               int size = list.getElements().size();
+               if(SymbolType.NIBBLE.equals(arrayType.getElementType())) {
+                  int packedSize = (size + 1) / 2;
+                  programValue.set(new ConstantInteger((long) packedSize));
+               } else {
+                  ConstantRef sizeOfConstantVar = SizeOfConstants.getSizeOfConstantVar(getProgramScope(), arrayType.getElementType());
+                  programValue.set(new ConstantBinary(new ConstantInteger((long) size), Operators.MULTIPLY, sizeOfConstantVar));
+               }
                modified.set(true);
             } else {
                // Try to calculate the literal to check if it is a string
