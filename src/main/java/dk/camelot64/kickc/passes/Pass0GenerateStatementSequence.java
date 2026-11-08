@@ -2784,6 +2784,20 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             throw new CompileError("Enum value not constant " + memberName, new StatementSource(ctx));
          }
          enumValue = (ConstantValue) exprVal;
+         if(currentEnumUnderlyingType != null && enumValue instanceof ConstantInteger ci) {
+            long val = ci.getInteger();
+            if(underlyingType.getSizeBytes() == 1) {
+               if(SymbolType.SBYTE.equals(underlyingType)) {
+                  if(val < -128 || val > 127) {
+                     throw new CompileError("Enum value out of range for signed 8-bit underlying type: " + memberName + " = " + val, new StatementSource(ctx));
+                  }
+               } else {
+                  if(val < 0 || val > 255) {
+                     throw new CompileError("Enum value out of range for unsigned 8-bit underlying type: " + memberName + " = " + val, new StatementSource(ctx));
+                  }
+               }
+            }
+         }
       } else {
          // No specific value - find previous value
          List<Variable> values = new ArrayList<>(currentEnum.getAllConstants(false));

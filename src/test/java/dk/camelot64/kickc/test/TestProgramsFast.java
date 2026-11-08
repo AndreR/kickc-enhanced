@@ -5291,4 +5291,41 @@ public class TestProgramsFast extends TestPrograms {
       compileAndCompare("issue-594-case.c");
    }
 
+   // QA-01: Modern C Standards Hardening (C11/C23/C2Y - Issue #52)
+   @Test
+   public void testQa01EnumOverflowErr() throws IOException {
+      assertError("qa01-enum-overflow-err.c", "Enum value out of range for unsigned 8-bit underlying type");
+   }
+
+   @Test
+   public void testQa01CountofPtrErr() throws IOException {
+      assertError("qa01-countof-ptr-err.c", "countof() argument must be an array with known static size");
+   }
+
+   @Test
+   public void testQa01StaticAssertErr() throws IOException {
+      assertError("qa01-static-assert-err.c", "static assertion failed");
+   }
+
+   @Test
+   public void testQa01NamedLoopErr() throws IOException {
+      assertError("qa01-named-loop-err.c", "Named break label");
+   }
+
+   @Test
+   public void testQa01IfInitScopeErr() throws IOException {
+      assertError("qa01-if-init-scope-err.c", "Unknown variable scoped_var");
+   }
+
+   // QA-03: Arithmetic & Memory Safety Hardening (Issue #54)
+   @Test
+   public void testQa03RomWriteErr() throws IOException {
+      assertError("qa03-rom-write-err.c", "Cannot allocate non-const variable 'rom_var' in read-only ROM segment");
+   }
+
+   @Test
+   public void testQa03CrossBankErr() throws IOException {
+      assertError("qa03-cross-bank-err.c", "Illegal direct cross-bank call", false);
+   }
+
 }
