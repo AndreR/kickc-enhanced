@@ -124,6 +124,11 @@ public class Directive {
       public Carry() { super("__carry"); }
    }
 
+   /** Function passing/returning 16-bit word/pointer in 6502 AX register pair. */
+   public static class Ax extends Directive {
+      public Ax() { super("__ax"); }
+   }
+
    /** Array declared __lohi (split low/high byte arrays). */
    public static class LoHi extends Directive {
       public LoHi() { super("__lohi"); }

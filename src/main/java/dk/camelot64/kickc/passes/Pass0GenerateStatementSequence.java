@@ -1538,6 +1538,8 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             procedure.setReservedZps(((Directive.ReserveZp) directive).reservedZp);
          } else if(directive instanceof Directive.Carry) {
             procedure.setCarryReturn(true);
+         } else if(directive instanceof Directive.Ax) {
+            procedure.setAxConvention(true);
          } else if(directive instanceof Directive.Intrinsic) {
             procedure.setDeclaredIntrinsic(true);
             //} else {
@@ -1580,6 +1582,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    @Override
    public Object visitDirectiveCarry(KickCParser.DirectiveCarryContext ctx) {
       return new Directive.Carry();
+   }
+
+   @Override
+   public Object visitDirectiveAx(KickCParser.DirectiveAxContext ctx) {
+      return new Directive.Ax();
    }
 
    @Override

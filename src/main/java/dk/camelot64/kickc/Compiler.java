@@ -854,6 +854,7 @@ public class Compiler {
       pass5Optimizations.add(new Pass5MultiEntryByteSkipping(program));
       pass5Optimizations.add(new Pass5PreIndexedAddressingOptimization(program));
       pass5Optimizations.add(new Pass5CarryFlagReturnOptimization(program));
+      pass5Optimizations.add(new Pass5AxRegisterCallingConventionOptimization(program));
       pass5Optimizations.add(new Pass5SmallMemcpyUnrollingOptimization(program));
       pass5Optimizations.add(new Pass5PointerReloadElimination(program));
       pass5Optimizations.add(new Pass5PageAlignedPointerAdditionElimination(program));
@@ -868,7 +869,8 @@ public class Compiler {
       pass5Optimizations.add(new Pass5HighSpeedJumpTableSwitch(program));
       boolean asmOptimized = true;
       int pass5Rounds = 0;
-      while(asmOptimized) {
+      final int MAX_PASS5_ROUNDS = 8;
+      while(asmOptimized && pass5Rounds < MAX_PASS5_ROUNDS) {
          pass5Rounds++;
          asmOptimized = false;
          for(Pass5AsmOptimization optimization : pass5Optimizations) {

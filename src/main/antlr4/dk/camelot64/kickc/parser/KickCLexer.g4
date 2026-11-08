@@ -69,6 +69,7 @@ ALIGN: '__align' ;
 INLINE: 'inline' ;
 COUNTDOWN: '__countdown' | 'countdown' ;
 CARRY: '__carry' ;
+AX: '__ax' ;
 LOHI: '__lohi' | 'lohi' ;
 SOA: '__soa' | 'soa' ;
 VOLATILE: 'volatile' ;

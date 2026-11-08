@@ -175,6 +175,7 @@ directive
     | INLINE #directiveInline
     | COUNTDOWN #directiveCountdown
     | CARRY #directiveCarry
+    | AX #directiveAx
     | LOHI #directiveLoHi
     | SOA #directiveSoa
     | BANK PAR_BEGIN NAME COMMA NUMBER PAR_END #directiveBank

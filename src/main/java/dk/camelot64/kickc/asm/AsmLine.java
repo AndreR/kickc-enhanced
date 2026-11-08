@@ -43,4 +43,12 @@ public abstract class AsmLine {
    public boolean isNoOptimize() {
       return getTags().has("nooptimize");
    }
+
+   public void setNoOptimize(boolean noOptimize) {
+      if(noOptimize) {
+         if(!getTags().has("nooptimize")) {
+            getTags().add("nooptimize");
+         }
+      }
+   }
 }
