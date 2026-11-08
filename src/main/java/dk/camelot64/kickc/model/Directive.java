@@ -124,6 +124,11 @@ public class Directive {
       public Carry() { super("__carry"); }
    }
 
+   /** Array declared __lohi (split low/high byte arrays). */
+   public static class LoHi extends Directive {
+      public LoHi() { super("__lohi"); }
+   }
+
    /** Function declared interrupt. */
    public static class Interrupt extends Directive {
       public String interruptType;

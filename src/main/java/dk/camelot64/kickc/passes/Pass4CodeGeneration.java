@@ -572,7 +572,7 @@ public class Pass4CodeGeneration {
                 ConstantValue constantValue = constantVar.getInitValue();
                 if (constantValue instanceof ConstantArray || constantValue instanceof ConstantString || constantValue instanceof ConstantStructValue) {
                     AsmDataChunk asmDataChunk = new AsmDataChunk();
-                    addChunkData(asmDataChunk, constantValue, constantVar.getType(), constantVar.getArraySpec(), scopeRef);
+                    addChunkData(asmDataChunk, constantValue, constantVar.getType(), constantVar.getArraySpec(), scopeRef, constantVar.isLoHi());
                     asmDataChunk.addToAsm(AsmFormat.asmFix(asmName), asm);
                 } else {
                     throw new InternalError("Constant Variable not handled " + constantVar.toString(program));
@@ -617,7 +617,7 @@ public class Pass4CodeGeneration {
                 ConstantValue constantValue = constantVar.getInitValue();
                 if (constantValue instanceof ConstantArray || constantValue instanceof ConstantString || constantValue instanceof ConstantStructValue) {
                     AsmDataChunk asmDataChunk = new AsmDataChunk();
-                    addChunkData(asmDataChunk, constantValue, constantVar.getType(), constantVar.getArraySpec(), scopeRef);
+                    addChunkData(asmDataChunk, constantValue, constantVar.getType(), constantVar.getArraySpec(), scopeRef, constantVar.isLoHi());
                     asmDataChunk.addToAsm(AsmFormat.asmFix(asmName), asm);
                 } else {
                     throw new InternalError("Constant Variable not handled " + constantVar.toString(program));
@@ -658,13 +658,13 @@ public class Pass4CodeGeneration {
                                 // Variable has a constant init Value
                                 ConstantValue constantValue = variable.getInitValue();
                                 AsmDataChunk asmDataChunk = new AsmDataChunk();
-                                addChunkData(asmDataChunk, constantValue, variable.getType(), variable.getArraySpec(), scopeRef);
+                                addChunkData(asmDataChunk, constantValue, variable.getType(), variable.getArraySpec(), scopeRef, variable.isLoHi());
                                 asmDataChunk.addToAsm(AsmFormat.asmFix(variable.getAsmName()), asm);
                             } else {
                                 // Zero-fill variable
                                 AsmDataChunk asmDataChunk = new AsmDataChunk();
                                 ConstantValue zeroValue = Initializers.createZeroValue(new Initializers.ValueTypeSpec(variable.getType()), null);
-                                addChunkData(asmDataChunk, zeroValue, variable.getType(), variable.getArraySpec(), scopeRef);
+                                addChunkData(asmDataChunk, zeroValue, variable.getType(), variable.getArraySpec(), scopeRef, variable.isLoHi());
                                 asmDataChunk.addToAsm(AsmFormat.asmFix(variable.getAsmName()), asm);
                             }
                         }
@@ -704,7 +704,7 @@ public class Pass4CodeGeneration {
      * @param valueArraySpec The array properties of the value
      * @param scopeRef       The scope containing the data chunk
      */
-    private void addChunkData(AsmDataChunk dataChunk, ConstantValue value, SymbolType valueType, ArraySpec valueArraySpec, ScopeRef scopeRef) {
+    private void addChunkData(AsmDataChunk dataChunk, ConstantValue value, SymbolType valueType, ArraySpec valueArraySpec, ScopeRef scopeRef, boolean isLoHi) {
         if (valueType instanceof SymbolTypeStruct) {
             if (value instanceof ConstantStructValue) {
                 // Add each struct member recursively
@@ -713,7 +713,7 @@ public class Pass4CodeGeneration {
                 for (SymbolVariableRef memberRef : structValue.getMembers()) {
                     ConstantValue memberValue = structValue.getValue(memberRef);
                     Variable memberVariable = getScope().getVar(memberRef);
-                    addChunkData(dataChunk, memberValue, memberVariable.getType(), memberVariable.getArraySpec(), scopeRef);
+                    addChunkData(dataChunk, memberValue, memberVariable.getType(), memberVariable.getArraySpec(), scopeRef, false);
                     size += SymbolTypeStruct.getMemberSizeBytes(memberVariable.getType(), memberVariable.getArraySize(), getScope());
                 }
                 // Add padding if this is a union and the first member does not use all bytes
@@ -804,13 +804,40 @@ public class Pass4CodeGeneration {
                             Operators.BOOL_OR,
                             new ConstantBinary(lowElem, Operators.BOOL_AND, new ConstantInteger(0x0FL, SymbolType.NUMBER))
                         );
-                        addChunkData(dataChunk, packedByte, SymbolType.BYTE, null, scopeRef);
+                        addChunkData(dataChunk, packedByte, SymbolType.BYTE, null, scopeRef, false);
                     }
                     dataNumElements = elements.size();
+                } else if (isLoHi) {
+                    List<ConstantValue> elements = constantArrayList.getElements();
+                    Integer declaredSize = getArrayDeclaredSize(valueArraySpec.getArraySize());
+                    int n = (declaredSize != null) ? declaredSize : elements.size();
+                    // 1. Output low bytes
+                    for (int i = 0; i < n; i++) {
+                        ConstantValue elem = (i < elements.size()) ? elements.get(i) : new ConstantInteger(0L, SymbolType.WORD);
+                        ConstantValue lowByte;
+                        if (elem instanceof ConstantInteger ci) {
+                            lowByte = new ConstantInteger(ci.getValue() & 0xffL, SymbolType.BYTE);
+                        } else {
+                            lowByte = new ConstantUnary(Operators.BYTE0, elem);
+                        }
+                        addChunkData(dataChunk, lowByte, SymbolType.BYTE, null, scopeRef, false);
+                    }
+                    // 2. Output high bytes
+                    for (int i = 0; i < n; i++) {
+                        ConstantValue elem = (i < elements.size()) ? elements.get(i) : new ConstantInteger(0L, SymbolType.WORD);
+                        ConstantValue highByte;
+                        if (elem instanceof ConstantInteger ci) {
+                            highByte = new ConstantInteger((ci.getValue() >> 8) & 0xffL, SymbolType.BYTE);
+                        } else {
+                            highByte = new ConstantUnary(Operators.BYTE1, elem);
+                        }
+                        addChunkData(dataChunk, highByte, SymbolType.BYTE, null, scopeRef, false);
+                    }
+                    dataNumElements = n;
                 } else {
                     // Output each element to the chunk
                     for (ConstantValue element : constantArrayList.getElements()) {
-                        addChunkData(dataChunk, element, elementType, null, scopeRef);
+                        addChunkData(dataChunk, element, elementType, null, scopeRef, false);
                     }
                     dataNumElements = constantArrayList.getElements().size();
                 }
@@ -837,7 +864,7 @@ public class Pass4CodeGeneration {
                         dataChunk.addDataZeroFilled(getNumericType(elementType), paddingBytesAsm, (int) paddingSize, AsmEncodingHelper.getEncoding(zeroValue));
                     } else {
                         for (int i = 0; i < paddingSize; i++) {
-                            addChunkData(dataChunk, zeroValue, elementType, null, scopeRef);
+                            addChunkData(dataChunk, zeroValue, elementType, null, scopeRef, false);
                         }
                     }
                 }

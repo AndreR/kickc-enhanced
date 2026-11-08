@@ -1583,6 +1583,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    }
 
    @Override
+   public Object visitDirectiveLoHi(KickCParser.DirectiveLoHiContext ctx) {
+      return new Directive.LoHi();
+   }
+
+   @Override
    public Object visitDirectiveCountdown(KickCParser.DirectiveCountdownContext ctx) {
       return new Directive.Countdown();
    }
@@ -3146,6 +3151,128 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return rhsVal;
    }
 
+   public Long getLoHiArrayElementCount(Variable var) {
+      if(var.getArraySpec() != null && var.getArraySpec().getArraySize() != null) {
+         return evaluateConstantInteger(var.getArraySpec().getArraySize());
+      }
+      if(var.getInitValue() instanceof ConstantArrayList list) {
+         return (long) list.getElements().size();
+      }
+      return null;
+   }
+
+   public Variable getLoHiArrayVariableFromArrayContext(KickCParser.ExprArrayContext arrayCtx) {
+      KickCParser.ExprContext baseExpr = arrayCtx.expr();
+      while(baseExpr instanceof KickCParser.ExprParContext) {
+         KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) baseExpr).commaExpr();
+         if(commaCtx instanceof KickCParser.CommaNoneContext) {
+            baseExpr = ((KickCParser.CommaNoneContext) commaCtx).expr();
+         } else if(commaCtx instanceof KickCParser.CommaSimpleContext) {
+            baseExpr = ((KickCParser.CommaSimpleContext) commaCtx).expr();
+         } else {
+            return null;
+         }
+      }
+      if(baseExpr instanceof KickCParser.ExprIdContext idCtx) {
+         String name = idCtx.NAME().getText();
+         Symbol sym = getCurrentScope().findSymbol(name);
+         if(sym == null) {
+            sym = program.getScope().findSymbol(name);
+         }
+         if(sym instanceof Variable var && var.isLoHi()) {
+            return var;
+         }
+      }
+      return null;
+   }
+
+   public KickCParser.ExprArrayContext getLoHiArrayContext(KickCParser.ExprContext exprCtx) {
+      while(exprCtx instanceof KickCParser.ExprParContext) {
+         KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) exprCtx).commaExpr();
+         if(commaCtx instanceof KickCParser.CommaNoneContext) {
+            exprCtx = ((KickCParser.CommaNoneContext) commaCtx).expr();
+         } else if(commaCtx instanceof KickCParser.CommaSimpleContext) {
+            exprCtx = ((KickCParser.CommaSimpleContext) commaCtx).expr();
+         } else {
+            return null;
+         }
+      }
+      if(exprCtx instanceof KickCParser.ExprArrayContext arrayCtx) {
+         Variable var = getLoHiArrayVariableFromArrayContext(arrayCtx);
+         if(var != null) {
+            return arrayCtx;
+         }
+      }
+      return null;
+   }
+
+   public RValue desugarLoHiArrayRead(KickCParser.ExprArrayContext arrayCtx) {
+      Variable var = getLoHiArrayVariableFromArrayContext(arrayCtx);
+      Long count = getLoHiArrayElementCount(var);
+      if(count == null) {
+         throw new CompileError("Cannot determine size of __lohi array '" + var.getLocalName() + "'", new StatementSource(arrayCtx));
+      }
+      if(count > 256) {
+         throw new CompileError("__lohi array cannot have more than 256 elements", new StatementSource(arrayCtx));
+      }
+      RValue indexRVal = (RValue) visit(arrayCtx.commaExpr());
+      if(!(indexRVal instanceof SymbolVariableRef || indexRVal instanceof ConstantValue)) {
+         SymbolVariableRef idxVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) idxVar, indexRVal, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+         indexRVal = idxVar;
+      }
+      SymbolTypePointer bytePtrType = new SymbolTypePointer(SymbolType.BYTE);
+      ConstantCastValue bytePtrLo = new ConstantCastValue(bytePtrType, (ConstantValue) var.getRef());
+      ConstantBinary addN = new ConstantBinary(bytePtrLo, Operators.PLUS, new ConstantInteger(count, SymbolType.WORD));
+      ConstantCastValue bytePtrHi = new ConstantCastValue(bytePtrType, addN);
+
+      PointerDereferenceIndexed derefLo = new PointerDereferenceIndexed(bytePtrLo, indexRVal);
+      SymbolVariableRef loVar = addIntermediateVar().getRef();
+      addStatement(new StatementAssignment((LValue) loVar, derefLo, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+      PointerDereferenceIndexed derefHi = new PointerDereferenceIndexed(bytePtrHi, indexRVal);
+      SymbolVariableRef hiVar = addIntermediateVar().getRef();
+      addStatement(new StatementAssignment((LValue) hiVar, derefHi, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+      return addExprBinary(arrayCtx, hiVar, Operators.WORD, loVar);
+   }
+
+   public RValue writeLoHiArray(ParserRuleContext ctx, KickCParser.ExprArrayContext arrayCtx, RValue rhsVal) {
+      Variable var = getLoHiArrayVariableFromArrayContext(arrayCtx);
+      Long count = getLoHiArrayElementCount(var);
+      if(count == null) {
+         throw new CompileError("Cannot determine size of __lohi array '" + var.getLocalName() + "'", new StatementSource(arrayCtx));
+      }
+      if(count > 256) {
+         throw new CompileError("__lohi array cannot have more than 256 elements", new StatementSource(arrayCtx));
+      }
+      RValue indexRVal = (RValue) visit(arrayCtx.commaExpr());
+      if(!(indexRVal instanceof SymbolVariableRef || indexRVal instanceof ConstantValue)) {
+         SymbolVariableRef idxVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) idxVar, indexRVal, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+         indexRVal = idxVar;
+      }
+      if(!(rhsVal instanceof SymbolVariableRef || rhsVal instanceof ConstantValue)) {
+         SymbolVariableRef rhsVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) rhsVar, rhsVal, true, new StatementSource(ctx), Comment.NO_COMMENTS));
+         rhsVal = rhsVar;
+      }
+      SymbolTypePointer bytePtrType = new SymbolTypePointer(SymbolType.BYTE);
+      ConstantCastValue bytePtrLo = new ConstantCastValue(bytePtrType, (ConstantValue) var.getRef());
+      ConstantBinary addN = new ConstantBinary(bytePtrLo, Operators.PLUS, new ConstantInteger(count, SymbolType.WORD));
+      ConstantCastValue bytePtrHi = new ConstantCastValue(bytePtrType, addN);
+
+      RValue loByte = addExprUnary(ctx, Operators.BYTE0, rhsVal);
+      PointerDereferenceIndexed derefLo = new PointerDereferenceIndexed(bytePtrLo, indexRVal);
+      addStatement(new StatementAssignment(derefLo, loByte, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+
+      RValue hiByte = addExprUnary(ctx, Operators.BYTE1, rhsVal);
+      PointerDereferenceIndexed derefHi = new PointerDereferenceIndexed(bytePtrHi, indexRVal);
+      addStatement(new StatementAssignment(derefHi, hiByte, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+
+      return rhsVal;
+   }
+
    public KickCParser.ExprArrayContext getNibbleArrayContext(KickCParser.ExprContext exprCtx) {
       while(exprCtx instanceof KickCParser.ExprParContext) {
          KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) exprCtx).commaExpr();
@@ -3319,6 +3446,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          RValue rhsVal = (RValue) visit(ctx.expr(1));
          return writeNibbleArray(ctx, nibbleArrayCtx, rhsVal);
       }
+      KickCParser.ExprArrayContext loHiArrayCtx = getLoHiArrayContext(ctx.expr(0));
+      if(loHiArrayCtx != null) {
+         RValue rhsVal = (RValue) visit(ctx.expr(1));
+         return writeLoHiArray(ctx, loHiArrayCtx, rhsVal);
+      }
       Object val = visit(ctx.expr(0));
       if(val instanceof ConstantRef) {
          throw new CompileError("const variable may not be modified " + val, new StatementSource(ctx));
@@ -3359,6 +3491,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          RValue currentVal = desugarNibbleArrayRead(nibbleArrayCtx);
          RValue updatedVal = addExprBinary(ctx, currentVal, operator, rhsVal);
          return writeNibbleArray(ctx, nibbleArrayCtx, updatedVal);
+      }
+      KickCParser.ExprArrayContext loHiArrayCtx = getLoHiArrayContext(ctx.expr(0));
+      if(loHiArrayCtx != null) {
+         RValue rhsVal = (RValue) visit(ctx.expr(1));
+         String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
+         Operator operator = Operators.getBinaryCompound(op);
+         RValue currentVal = desugarLoHiArrayRead(loHiArrayCtx);
+         RValue updatedVal = addExprBinary(ctx, currentVal, operator, rhsVal);
+         return writeLoHiArray(ctx, loHiArrayCtx, updatedVal);
       }
       // Assignment (rValue/lValue)
       Object value = visit(ctx.expr(0));
@@ -3894,6 +4035,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       if(getNibbleArrayContext(ctx) != null) {
          return desugarNibbleArrayRead(ctx);
       }
+      if(getLoHiArrayVariableFromArrayContext(ctx) != null) {
+         return desugarLoHiArrayRead(ctx);
+      }
       RValue array = (RValue) visit(ctx.expr());
       RValue index = (RValue) visit(ctx.commaExpr());
       PointerDereferenceIndexed pointerDereferenceIndexed = new PointerDereferenceIndexed(array, index);
@@ -4003,7 +4147,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    public RValue visitExprUnary(KickCParser.ExprUnaryContext ctx) {
       String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
       Operator operator = Operators.getUnary(op);
-      if(Operators.ADDRESS_OF.equals(operator) && (getBitfieldMember(ctx.expr()) != null || getNibbleArrayContext(ctx.expr()) != null)) {
+      if(Operators.ADDRESS_OF.equals(operator) && (getBitfieldMember(ctx.expr()) != null || getNibbleArrayContext(ctx.expr()) != null || getLoHiArrayContext(ctx.expr()) != null)) {
          throw new CompileError("Cannot take address of bitfield member or packed nibble element", new StatementSource(ctx));
       }
       RValue child = (RValue) this.visit(ctx.expr());
@@ -4133,6 +4277,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       Symbol symbol = getCurrentScope().findSymbol(ctx.NAME().getText());
       if(symbol instanceof Variable) {
          Variable variable = (Variable) symbol;
+         if(variable.isLoHi()) {
+            ParserRuleContext parent = ctx.getParent();
+            while(parent instanceof KickCParser.ExprParContext || parent instanceof KickCParser.CommaExprContext) {
+               parent = parent.getParent();
+            }
+            if(!(parent instanceof KickCParser.ExprSizeOfContext || parent instanceof KickCParser.ExprCountOfContext)) {
+               throw new CompileError("Split __lohi array '" + variable.getLocalName() + "' cannot be used as a raw pointer", new StatementSource(ctx));
+            }
+         }
          return variable.getRef();
       } else if(symbol instanceof Procedure) {
          Procedure procedure = (Procedure) symbol;
@@ -4335,6 +4488,13 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
                parser.writeNibbleArray(mod.ctx, mod.nibbleArrayCtx, updatedVal);
                continue;
             }
+            if(mod.loHiArrayCtx != null) {
+               RValue currentVal = parser.desugarLoHiArrayRead(mod.loHiArrayCtx);
+               Operator op = mod.operator.equals(Operators.INCREMENT) ? Operators.PLUS : Operators.MINUS;
+               RValue updatedVal = parser.addExprBinary(mod.ctx, currentVal, op, new ConstantInteger(1L));
+               parser.writeLoHiArray(mod.ctx, mod.loHiArrayCtx, updatedVal);
+               continue;
+            }
             if(mod.child instanceof ConstantValue) {
                throw new CompileError("Constants can not be modified " + mod.child.toString(), source);
             }
@@ -4376,6 +4536,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             this.visit(ctx.expr());
             return null;
          }
+         KickCParser.ExprArrayContext loHiArrayCtx = mainParser.getLoHiArrayContext(ctx.expr());
+         if(loHiArrayCtx != null) {
+            String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
+            Operator operator = Operators.getUnary(op);
+            PrePostModifier modifier = new PrePostModifier(ctx, operator, loHiArrayCtx, true);
+            postMods.add(modifier);
+            this.visit(ctx.expr());
+            return null;
+         }
          // First handle the ++/-- modifier
          RValue child = (RValue) mainParser.visit(ctx.expr());
          String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
@@ -4408,6 +4577,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             this.visit(ctx.expr());
             return null;
          }
+         KickCParser.ExprArrayContext loHiArrayCtx = mainParser.getLoHiArrayContext(ctx.expr());
+         if(loHiArrayCtx != null) {
+            String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
+            Operator operator = Operators.getUnary(op);
+            PrePostModifier modifier = new PrePostModifier(ctx, operator, loHiArrayCtx, true);
+            preMods.add(modifier);
+            this.visit(ctx.expr());
+            return null;
+         }
          // First handle the ++/-- modifier
          RValue child = (RValue) mainParser.visit(ctx.expr());
          String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
@@ -4426,6 +4604,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          Variable bitfieldMember;
          LValue containerLVal;
          KickCParser.ExprArrayContext nibbleArrayCtx;
+         KickCParser.ExprArrayContext loHiArrayCtx;
 
          PrePostModifier(RValue child, Operator operator) {
             this.child = child;
@@ -4443,6 +4622,12 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             this.ctx = ctx;
             this.operator = operator;
             this.nibbleArrayCtx = nibbleArrayCtx;
+         }
+
+         PrePostModifier(ParserRuleContext ctx, Operator operator, KickCParser.ExprArrayContext loHiArrayCtx, boolean isLoHi) {
+            this.ctx = ctx;
+            this.operator = operator;
+            this.loHiArrayCtx = loHiArrayCtx;
          }
       }
 

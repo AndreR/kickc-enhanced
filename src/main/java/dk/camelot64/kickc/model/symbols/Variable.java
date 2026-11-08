@@ -63,6 +63,8 @@ public class Variable implements Symbol {
 
    /** Specifies that the variable must always be added to the output ASM even if it is never used anywhere. (export keyword) */
    private boolean export;
+   /** Specifies that a word array is split into parallel low/high byte arrays (__lohi). */
+   private boolean loHi;
 
    /** Specifies that the should be optimized (register keyword). */
    private boolean optimize;
@@ -158,6 +160,7 @@ public class Variable implements Symbol {
       version.setRegister(phiMaster.getRegister());
       version.setPermanent(phiMaster.isPermanent());
       version.setExport(phiMaster.isExport());
+      version.setLoHi(phiMaster.isLoHi());
       version.setComments(phiMaster.getComments());
       version.setStructUnwind(phiMaster.isStructUnwind());
       return version;
@@ -201,6 +204,7 @@ public class Variable implements Symbol {
       constVar.setRegister(variable.getRegister());
       constVar.setPermanent(variable.isPermanent());
       constVar.setExport(variable.isExport());
+      constVar.setLoHi(variable.isLoHi());
       constVar.setComments(variable.getComments());
       constVar.setStructUnwind(variable.isStructUnwind());
       return constVar;
@@ -220,6 +224,7 @@ public class Variable implements Symbol {
       copy.setOptimize(original.isOptimize());
       copy.setPermanent(original.isPermanent());
       copy.setExport(original.isExport());
+      copy.setLoHi(original.isLoHi());
       copy.setRegister(original.getRegister());
       copy.setComments(original.getComments());
       copy.setStructUnwind(original.isStructUnwind());
@@ -478,6 +483,14 @@ public class Variable implements Symbol {
 
    public void setPermanent(boolean permanent) {
       this.permanent = permanent;
+   }
+
+   public boolean isLoHi() {
+      return loHi;
+   }
+
+   public void setLoHi(boolean loHi) {
+      this.loHi = loHi;
    }
 
    public boolean isExport() {

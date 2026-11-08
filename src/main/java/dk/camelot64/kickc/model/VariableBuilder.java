@@ -86,6 +86,22 @@ public class VariableBuilder {
       variable.setMemoryAddress(this.getAddress());
       variable.setDeclarationOnly(this.isDeclarationOnly());
       variable.setStructUnwind(this.getStructUnwind());
+      variable.setLoHi(this.isLoHi());
+      if(this.isLoHi()) {
+         if(!isArray()) {
+            throw new CompileError("__lohi directive is only valid on arrays");
+         }
+         SymbolType elemType = ((SymbolTypePointer) type).getElementType();
+         if(elemType.getSizeBytes() != 2) {
+            throw new CompileError("__lohi directive is only supported on 16-bit word arrays");
+         }
+         dk.camelot64.kickc.model.symbols.ArraySpec as = ((SymbolTypePointer) type).getArraySpec();
+         if(as != null && as.getArraySize() instanceof dk.camelot64.kickc.model.values.ConstantInteger ci) {
+            if(ci.getValue() > 256) {
+               throw new CompileError("Array declared __lohi cannot have more than 256 elements, found " + ci.getValue());
+            }
+         }
+      }
 
       // Check if the symbol has already been declared
       Symbol declaredSymbol = this.scope.getLocalSymbol(this.varName);
@@ -305,6 +321,10 @@ public class VariableBuilder {
     *
     * @return true if declared as export
     */
+   public boolean isLoHi() {
+      return hasDirective(Directive.LoHi.class);
+   }
+
    public boolean isExport() {
       return hasDirective(Directive.Export.class);
    }
