@@ -91,6 +91,16 @@ public class Pass5UnusedLabelElimination extends Pass5AsmOptimization {
                   usedLabels.add(labelStr);
 
                }
+               for(String op : new String[]{instruction.getOperand1(), instruction.getOperand2()}) {
+                  if(op != null) {
+                     for(String token : op.split("[^a-zA-Z0-9_]")) {
+                        if(!token.isEmpty() && !Character.isDigit(token.charAt(0))) {
+                           usedLabels.add(currentScope + "::" + token);
+                           usedLabels.add("::" + token);
+                        }
+                     }
+                  }
+               }
 
             } else if(line instanceof AsmDataKickAsm) {
 

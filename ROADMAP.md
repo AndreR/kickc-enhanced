@@ -27,7 +27,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-01** | Codegen | Split Jump-Tables for dense `switch` via 12-cycle RTS dispatch | 6502 Idiom | ✅ Completed |
 | **F-02** | Types | C11 Anonymous Unions & 2–4 Byte Assignment Loop-Unrolling | C11 | ✅ Completed |
 | **F-03** | Intrinsics | Atomic Status Intrinsics (`__builtin_bit7/6`, `SEC`, `CLC`, etc.) | KickC Ext | ✅ Completed |
-| **F-04** | Codegen | Zero-Syntax Auto Pointer-to-SMC & Dynamic Call Dispatch (RAM) | 6502 Idiom | ⚪ Planned |
+| **F-04** | Codegen | Zero-Syntax Auto Pointer-to-SMC & Dynamic Call Dispatch (RAM) | 6502 Idiom | ✅ Completed (v0.10.0) |
 | **F-05** | Assembler | Zero-Waste Conditional Page-Boundary Alignment (`.align $100`) | KickAss Ext | ✅ Completed |
 | **F-06** | Allocator | Inter-Segment Zero-Page Coalescing across disjoint data segments | KickC Core | ✅ Completed |
 | **F-07** | Controlflow | Count-Down Loop-Inversion (`BPL`) & `__countdown` directive | 6502 Idiom | ✅ Completed |
@@ -84,9 +84,14 @@ This document outlines the compiler architecture, completed milestones, planned 
 * **Goal:** Direct 16/32-bit field aliasing without intermediate named structs, and unrolling small `struct` assignments into direct `LDA`/`STA` pairs rather than emitting overhead-heavy memory copy loops.
 
 ### Feature 04: Zero-Syntax Pointer-to-SMC Uplift & Dynamic Call Dispatch (RAM)
-* **Goal:** 
-  1. For code marked in `RAM_RESIDENT`, detect hot sequential pointer loops and transform indirect indexed addressing (`LDA ($zp),Y`) into direct self-modifying immediate operands (`LDA $xxxx`). Saves 2 cycles per byte and frees Zero-Page registers.
-  2. For dynamic function pointer calls, replace heavy Zero-Page indirect trampolines (`JMP ($zp)`) with direct self-modifying `JSR $0000` operand patching in RAM, executing dynamic dispatches in a native 6 cycles.
+* **Status:** ✅ **Implemented & Verified (Issue #5)**.
+* **Summary:** Implemented Pass5PointerToSmcOptimization for zero-syntax automatic self-modifying code generation in writable RAM segments:
+  * Detects sequential pointer dereferences (e.g. *ptr++ = val) using (),y with y=0 in writable RAM segments (never ROM).
+  * Replaces indirect indexed addressing with direct absolute addressing (sta ) and patches operand addresses via self-modification (sta smc_ptr_N+1 / sta smc_ptr_N+2).
+  * Transforms pointer increments into direct operand increments (inc smc_ptr_N+1 / bne !+ / inc smc_ptr_N+2 / !:).
+  * Eliminates redundant ldy #0 setup and frees Zero-Page pointer variables.
+  * Preserves label operands across peephole optimizations with operand scanning in Pass5UnusedLabelElimination.
+  * Verified bit-exact in headless VICE on port 6541 (PASS!).
 
 ### Feature 09: 8-Bit Indexing for $\le 128$ Word-Arrays & `__lohi` Split Arrays
 * **Goal:** When indexing 16-bit word arrays with $\le 128$ elements, avoid 16-bit pointer arithmetic. Generate `ASL; TAX; LDA tab,X; LDA tab+1,X` (12 cycles) or split low/high arrays `LDA tab_lo,X; LDY tab_hi,X` (8 cycles).

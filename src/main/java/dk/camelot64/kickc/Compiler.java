@@ -855,6 +855,7 @@ public class Compiler {
       pass5Optimizations.add(new Pass5PreIndexedAddressingOptimization(program));
       pass5Optimizations.add(new Pass5CarryFlagReturnOptimization(program));
       pass5Optimizations.add(new Pass5AxRegisterCallingConventionOptimization(program));
+      pass5Optimizations.add(new Pass5PointerToSmcOptimization(program));
       pass5Optimizations.add(new Pass5SmallMemcpyUnrollingOptimization(program));
       pass5Optimizations.add(new Pass5PointerReloadElimination(program));
       pass5Optimizations.add(new Pass5PageAlignedPointerAdditionElimination(program));
