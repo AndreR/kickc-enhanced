@@ -19,7 +19,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
-## 2. Feature Matrix (Strictly Sequenced F-00 to F-47)
+## 2. Feature Matrix (Strictly Sequenced F-00 to F-49)
 
 | ID | Category | Feature Description | Origin / Standard | Status |
 | :---: | :--- | :--- | :---: | :---: |
@@ -71,6 +71,8 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-45** | Math | Library Math: Fast 6502 Division & Zero-RAM Square Root (`sqrt16`, `div16u`) | 6502 Math | ⚪ Planned |
 | **F-46** | Math | Library Math: Trig & Multiplier Optimization (Sine Quadrant Symmetries, CORDIC) | 6502 Math | ⚪ Planned |
 | **F-47** | Library | Library: High-Performance Retro-Game Utilities (PRNG Suite, Multiplexer, Fast `strlen`) | 6502 Library | ⚪ Planned |
+| **F-48** | Hardware | Library C64: Hardware Drivers (Commodore 1351 Mouse, REU DMA & Raster Sync) | C64 Hardware | ⚪ Planned |
+| **F-49** | Graphics | Library C64: Asset & Graphics Pipeline (Universal ZX02 Decompressor, Fading) | C64 Graphics | ⚪ Planned |
 
 ---
 
@@ -201,8 +203,10 @@ This document outlines the compiler architecture, completed milestones, planned 
 * **Problem:** Even small leaf functions allocate dedicated Zero-Page parameter memory, leading to memory store instructions prior to every `JSR`.
 * **6502 Idiom:** Small leaf routines take up to three byte arguments directly in CPU registers `A`, `X`, and `Y`.
 * **Compiler Integration:**
-  * Whole-program analysis in `Pass1LeafFunctionRegisterCallingConvention` identifies leaf functions (no outgoing calls, not interrupts, not stackcall).
-  * Up to 3 8-bit byte arguments are mapped directly to physical registers: `arg0 -> A`, `arg1 -> X`, `arg2 -> Y`.
+  * Whole-program analysis in `Pass4RegisterUpliftPotentialInitialize` identifies leaf functions (no outgoing calls, not interrupts, not stackcall).
+  * Up to 3 8-bit byte arguments prioritize hardware registers: `arg0 -> A`, `arg1 -> X`, `arg2 -> Y`, retaining `defaultRegister` (Zero Page) as clean fallback.
+  * `PassNCalcVariableRegisterWeight` boosts leaf procedure parameter weights to prioritize them over multi-caller live range sizes.
+  * `Pass4AssertNoCpuClobber` safely rejects register candidates and falls back to Zero-Page if internal expressions or asm clobber registers.
   * Eliminates Zero-Page allocation and eliminates `STA param_zp` at call sites.
   * Verified bit-exact in VICE on port 6541 (`PASS!`). (Issue #27).
 
@@ -478,6 +482,40 @@ This document outlines the compiler architecture, completed milestones, planned 
   * **Configurable Multiplexer:** Allow user override of `PLEX_COUNT` via `#ifndef PLEX_COUNT` and add runtime `plex_count` limiter to skip inactive virtual sprites during sorting.
   * **Fast `strlen()`:** Emit Y-indexed 6502 loop (`LDY #$FF; !: INY; LDA (str),Y; BNE !-; TYA`) for strings $\le 255$ characters.
   * **Fast 8-bit Decimal Print:** Direct `print_uchar_decimal()` dispatch using `div10u` (`F-13`).
+
+---
+
+### Feature 48: Library C64: Hardware Drivers (Commodore 1351 Mouse, REU DMA & Raster Sync)
+* **Problem:**
+  1. KickC provides `cx16-mouse.h` for Commander X16, but completely lacks a mouse driver for Commodore 64 (SID proportional PotX/PotY sampling, CIA1 4066 analog mux, coordinate clamping, and automatic Joystick-fallback).
+  2. KickC lacks Commodore RAM Expansion Unit (REU 1700/1750/1764) hardware definitions and DMA transfer routines.
+  3. `c64.h` only exposes raw VIC-II registers (`$D011`/`$D012`) without safe, high-level raster wait routines (handling 9-bit raster counter bit 7).
+* **Solution & Optimization:**
+  * **`<c64-mouse.h>` & `c64-mouse.c`:**
+    * Full 1351 proportional mouse driver via SID PotX/PotY (`$D419`/`$D41A`) and CIA1 analog mux.
+    * Automatic detection and seamless fallback to Joystick 1/2 mouse emulation when no 1351 is plugged in.
+    * Clamped pixel coordinates ($320\times 200$), tile coordinates ($40\times 25$), click/drag detection, and 64-byte 1351 pointer sprite.
+  * **`<reu.h>`:**
+    * Hardware register definitions for Commodore 17xx REU (`$DF00..$DF0A`).
+    * Hardware presence detection (`reu_is_present()`).
+    * High-speed 1 MB/s DMA primitives: `REU_DMA_STASH`, `REU_DMA_FETCH`, `REU_DMA_SWAP`.
+  * **`<c64-raster.h>`:**
+    * Clean macros/inline functions for tearing-free vertical blank waiting (`wait_vblank()`) and 9-bit raster-line waiting (`wait_raster(line)`).
+
+---
+
+### Feature 49: Library C64: Asset & Graphics Pipeline (Universal ZX02 Decompressor, Fading)
+* **Problem:**
+  1. KickC provides no built-in compression or decompression libraries for embedded binary assets.
+  2. Screen transitions in `conio-c64.c` are limited to instant clears (`clrscr()`), lacking smooth perceptual luminance fades.
+* **Solution & Optimization:**
+  * **`<zx02.h>` & `zx02.c`:**
+    * Universal, ultra-compact (~110 bytes 6502 machine code) streaming decompressor for Einar Saukas' ZX02 format.
+    * Decompresses from Cartridge-ROM or RAM directly into any destination address ($0400..$FFFF, including transparent matching under Kernal).
+  * **`<c64-fade.h>` & `c64-fade.c`:**
+    * Perceptual C64 palette luminance stepping tables.
+    * Smooth full-screen Color-RAM and Screen-RAM fading (`screen_fade_out()`, `screen_fade_in()`).
+
 
 
 
