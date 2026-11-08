@@ -52,7 +52,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-26** | ABI / Opt | Leaf-Function Automatic Register Parameter Passing (A, X, Y) | Calling Conv | ⚪ Planned |
 | **F-27** | Types | 8.8 Fixed-Point Data Type (`fixed8_8`) & 0-Cycle Shift Fusing | ISO TR 18037 | ⚪ Planned |
 | **F-28** | Numerics | BCD Decimal Accumulator Arithmetic (`__bcd` / `SED` Support) | 6502 Hardware | ⚪ Planned |
-| **F-29** | Memory | Hardware Stack-RAM Segment (`$0100–$01AF` Scratchpad Buffer) | C64 Architecture | ⚪ Planned |
+| **F-29** | Memory | Hardware Stack-RAM Segment (`$0100–$01AF` Scratchpad Buffer) | C64 Architecture | ✅ Completed |
 | **F-30** | Timing | Cycle-Exact Delay Synthesizer (`delay_cycles(N)` in `<6502.h>`) | Hardware Timing | ✅ Completed |
 | **F-31** | Codegen | Pre-Indexed Zero-Page Addressing Optimization (`LDA ($zp,X)`) | 6502 Hardware | ⚪ Planned |
 | **F-32** | Generator | Compile-Time Table Generator (`__builtin_lut` / Constexpr Arrays) | Tooling | ⚪ Planned |
