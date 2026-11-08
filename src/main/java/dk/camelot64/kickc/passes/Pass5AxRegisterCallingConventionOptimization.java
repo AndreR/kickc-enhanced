@@ -135,6 +135,68 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
       }
    }
 
+   private static boolean readsRegisterX(AsmInstruction inst) {
+      if(inst.getCpuOpcode() == null) return false;
+      CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+      if(mode != null && mode.name().contains("X")) {
+         return true;
+      }
+      String mnem = inst.getCpuOpcode().getMnemonic().toLowerCase();
+      return mnem.equals("txa") || mnem.equals("txs") || mnem.equals("stx") ||
+             mnem.equals("cpx") || mnem.equals("inx") || mnem.equals("dex") ||
+             mnem.equals("axs") || mnem.equals("sax") || mnem.equals("phx");
+   }
+
+   private static boolean overwritesRegisterX(AsmInstruction inst) {
+      if(inst.getCpuOpcode() == null) return false;
+      String mnem = inst.getCpuOpcode().getMnemonic().toLowerCase();
+      return mnem.equals("ldx") || mnem.equals("tax") || mnem.equals("tsx") ||
+             mnem.equals("lax") || mnem.equals("plx");
+   }
+
+   private static boolean isBranchOrJump(AsmInstruction inst) {
+      if(inst.getCpuOpcode() == null) return false;
+      CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+      if(CpuAddressingMode.REL.equals(mode)) return true;
+      String mnem = inst.getCpuOpcode().getMnemonic().toLowerCase();
+      return mnem.equals("jmp") || mnem.equals("jsr") || mnem.equals("rts") || mnem.equals("rti");
+   }
+
+   private static boolean isXLiveAcrossCall(List<LineRef> allLines, int callIdx, String callerScope, boolean callerReadsX) {
+      if(!callerReadsX) {
+         return false;
+      }
+      for(int i = callIdx + 1; i < allLines.size(); i++) {
+         LineRef ref = allLines.get(i);
+         if(ref.scope == null || !callerScope.equals(ref.scope)) {
+            break;
+         }
+         if(ref.line instanceof AsmComment || ref.line instanceof AsmConstant || ref.line instanceof AsmLabelDecl) {
+            continue;
+         }
+         if(ref.line instanceof AsmLabel || ref.line instanceof AsmScopeBegin || ref.line instanceof AsmScopeEnd || ref.line instanceof AsmInlineKickAsm) {
+            return true;
+         }
+         if(ref.line instanceof AsmInstruction inst) {
+            if(inst.getCpuOpcode() == null) return true;
+            String mnem = inst.getCpuOpcode().getMnemonic().toLowerCase();
+            if("rts".equals(mnem) || "rti".equals(mnem)) {
+               return false;
+            }
+            if(readsRegisterX(inst)) {
+               return true;
+            }
+            if(overwritesRegisterX(inst)) {
+               return false;
+            }
+            if(isBranchOrJump(inst)) {
+               return true;
+            }
+         }
+      }
+      return false;
+   }
+
    @Override
    public boolean optimize() {
       if(performed) {
@@ -205,6 +267,38 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
                }
             }
          }
+
+         // -------------------------------------------------------------
+         // Call-Site Liveness Validation for AX Return Candidates
+         // -------------------------------------------------------------
+         // If register X is live across ANY call-site (jsr <target>), the target procedure
+         // cannot use AX return because clobbering X on return would corrupt the caller's live variable!
+         Set<String> scopesReadingX = new HashSet<>();
+         for(LineRef ref : allLines) {
+            if(ref.scope != null && ref.line instanceof AsmInstruction inst) {
+               if(readsRegisterX(inst)) {
+                  scopesReadingX.add(ref.scope);
+               }
+            }
+         }
+
+         Set<String> unsafeAxReturnProcs = new HashSet<>();
+         for(int i = 0; i < allLines.size(); i++) {
+            LineRef ref = allLines.get(i);
+            if(ref.line instanceof AsmInstruction inst && "jsr".equalsIgnoreCase(inst.getCpuOpcode().getMnemonic())) {
+               String target = inst.getOperand1();
+               if(target != null) {
+                  String targetProc = target.trim();
+                  if(axReturnProcs.contains(targetProc) && ref.scope != null) {
+                     boolean callerReadsX = scopesReadingX.contains(ref.scope);
+                     if(isXLiveAcrossCall(allLines, i, ref.scope, callerReadsX)) {
+                        unsafeAxReturnProcs.add(targetProc);
+                     }
+                  }
+               }
+            }
+         }
+         axReturnProcs.removeAll(unsafeAxReturnProcs);
 
          // -------------------------------------------------------------
          // Step 1: Callee AX Return Optimization
