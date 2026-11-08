@@ -48,7 +48,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-22** | Metaprog | `_Generic` Type-Dispatch for Polymorphic 8/16-Bit Macros | C11 | ✅ Completed |
 | **F-23** | Lexer | Digit Separators (`0b1100_0011`, `1_000`) & C23 Keywords (`nullptr`, `{}`) | C23 | ✅ Completed |
 | **F-24** | Controlflow | `if`- & `switch`-Statements with Initializers | C2Y (C29) | ✅ Completed |
-| **F-25** | ABI / Opt | Auto Carry-Flag Boolean Returns (`__carry` / Auto-Carry ABI) | 6502 Idiom | ⚪ Planned |
+| **F-25** | ABI / Opt | Auto Carry-Flag Boolean Returns (`__carry` / Auto-Carry ABI) | 6502 Idiom | ✅ Completed |
 | **F-26** | ABI / Opt | Leaf-Function Automatic Register Parameter Passing (A, X, Y) | Calling Conv | ⚪ Planned |
 | **F-27** | Types | 8.8 Fixed-Point Data Type (`fixed8_8`) & 0-Cycle Shift Fusing | ISO TR 18037 | ⚪ Planned |
 | **F-28** | Numerics | BCD Decimal Accumulator Arithmetic (`__bcd` / `SED` Support) | 6502 Hardware | ⚪ Planned |
@@ -157,6 +157,8 @@ This document outlines the compiler architecture, completed milestones, planned 
 ## 5. Detailed Specification: 6502 Hardware & Idiom Optimizations
 
 ### Feature 25: Auto Carry-Flag Boolean Returns (`__carry` / Auto-Carry ABI)
+* **Status:** ✅ **Implemented & Verified (Commit 7397456c6)**.
+* **Summary:** Implemented `__carry` directive and whole-program auto-carry return optimization in `Pass5CarryFlagReturnOptimization`. Redundant boolean register staging (`lda #0; rol`) is collapsed, callee returns comparison results directly in Carry flag (`cmp/cpy/cpx; rts` or `sec/clc; rts`), and caller branches directly via `bcs`/`bcc`, eliminating `cmp #0` and zero-page staging. Tested bit-exact in VICE on port 6541.
 * **Problem:** Standard C functions returning boolean values store `0` or `1` into a Zero-Page register via `LDA #0/#1; STA return_val`. The caller then re-loads it and executes `CMP #0; BNE/BEQ`. This costs ~12 cycles and burns a Zero-Page register.
 * **6502 Idiom:** In 6502 assembly, condition checks return results in the **Carry flag** (`SEC` for true, `CLC` for false), and callers branch immediately via `BCS` or `BCC`.
 * **Compiler Integration:**
