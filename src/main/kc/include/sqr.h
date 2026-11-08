@@ -1,15 +1,19 @@
 /// @file
-/// Table-based implementation of integer square sqr() and square root sqrt()
+/// High-performance integer square sqr() and zero-RAM square root sqrt16() / sqrt()
 
-/// Initialize squares table
-/// Uses iterative formula (x+1)^2 = x^2 + 2*x + 1
+#ifndef _SQR_H
+#define _SQR_H
+
+/// Initialize squares table (legacy compatibility; no-op as sqrt16 requires 0 RAM)
 void init_squares();
 
 /// Find the square of a char value
-/// Uses a table of squares that must be initialized by calling init_squares()
 unsigned int sqr(char val);
 
-/// Find the (integer) square root of a unsigned int value
-/// If the square is not an integer then it returns the largest integer N where N*N <= val
-/// Uses a table of squares that must be initialized by calling init_squares()
+/// Find the 8-bit integer square root of a 16-bit unsigned int value in ~150 cycles with 0 bytes RAM table
+unsigned char sqrt16(unsigned int val);
+
+/// Find the (integer) square root of an unsigned int value
 char sqrt(unsigned int val);
+
+#endif

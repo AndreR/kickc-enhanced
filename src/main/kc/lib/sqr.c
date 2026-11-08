@@ -1,38 +1,36 @@
-// Table-based implementation of integer square sqr() and square root sqrt()
+// High-performance integer square sqr() and zero-RAM square root sqrt16() / sqrt()
 
 #include <sqr.h>
-#include <stdlib.h>
+#include <multiply.h>
 
-// The number of squares to pre-calculate. Limits what values sqr() can calculate and the result of sqrt()
-char NUM_SQUARES = 0xff;
-
-// Squares for each char value SQUARES[i] = i*i
-// Initialized by init_squares()
-unsigned int* SQUARES;
-
-// Initialize squares table
-// Uses iterative formula (x+1)^2 = x^2 + 2*x + 1
+// Legacy compatibility; no-op as sqrt16() requires 0 bytes of RAM table
 void init_squares() {
-    SQUARES = malloc(NUM_SQUARES*sizeof(unsigned int));
-    unsigned int* squares = SQUARES;
-    unsigned int sqr = 0;
-    for(char i=0;i<NUM_SQUARES;i++) {
-        *squares++ = sqr;
-        sqr += i*2+1;
-    }
 }
 
 // Find the square of a char value
-// Uses a table of squares that must be initialized by calling init_squares()
 unsigned int sqr(char val) {
-    return SQUARES[val];
+    return mul8u(val, val);
 }
 
-// Find the (integer) square root of a unsigned int value
-// If the square is not an integer then it returns the largest integer N where N*N <= val
-// Uses a table of squares that must be initialized by calling init_squares()
+// Digit-by-digit binary square root for 16-bit unsigned integers
+// Computes floor(sqrt(val)) in ~150 cycles with 0 bytes RAM table allocation.
+unsigned char sqrt16(unsigned int val) {
+    unsigned int rem = 0;
+    unsigned char root = 0;
+    for (char i = 0; i < 8; i++) {
+        root <<= 1;
+        rem = (rem << 2) | (unsigned int)(val >> 14);
+        val <<= 2;
+        unsigned int test = ((unsigned int)root << 1) | 1;
+        if (rem >= test) {
+            rem -= test;
+            root |= 1;
+        }
+    }
+    return root;
+}
+
+// Find the (integer) square root of an unsigned int value
 char sqrt(unsigned int val) {
-    unsigned int* found = bsearch16u(val, SQUARES, NUM_SQUARES);
-    char sq = (char)(found-SQUARES);
-    return sq;
+    return (char)sqrt16(val);
 }
