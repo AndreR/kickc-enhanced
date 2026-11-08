@@ -91,6 +91,8 @@ This document outlines the compiler architecture, completed milestones, planned 
 ## 4. Detailed Specification: Modern C Standards Track (C11 / C23 / C2Y)
 
 ### Feature 17: `#embed` Direct Binary Asset Embedding (C23)
+* **Status:** ✅ Completed in `v0.10.0-dev`.
+* **Summary:** Implemented standard C23 `#embed` directive in `CPreprocessor` and `KickCLexer`, expanding directly to integer constant token sequences. Full support for C23 parameters `limit(N)`, `prefix(...)`, `suffix(...)`, and `if_empty(...)`, as well as `__has_embed(...)` and `__has_include(...)` preprocessor conditional operators with standard `__STDC_EMBED_*__` macros.
 * **Problem:** 8-Bit software relies heavily on raw binary assets (character sets, sprite data, tilemaps, chiptune music). Developers previously had to convert binaries into C arrays using external preprocessing scripts or inline assembler directives.
 * **Syntax:**
   ```c
