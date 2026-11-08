@@ -1940,10 +1940,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    @Override
    public Object visitStmtLabel(KickCParser.StmtLabelContext ctx) {
       String labelName = ctx.NAME().getText();
-      if(getCurrentScope().getLocalLabel(labelName) != null)
-         throw new CompileError("label already defined '" + labelName + "'.", new StatementSource(ctx));
       Scope procedureScope = getCurrentProcedure();
-      Label label = procedureScope.addLabel(labelName);
+      Scope targetScope = procedureScope != null ? procedureScope : getCurrentScope();
+      if(targetScope.getLocalLabel(labelName) != null)
+         throw new CompileError("label already defined '" + labelName + "'.", new StatementSource(ctx));
+      Label label = targetScope.addLabel(labelName);
       addStatement(new StatementLabel(label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
       return null;
    }
@@ -1951,7 +1952,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    @Override
    public Object visitStmtGoto(KickCParser.StmtGotoContext ctx) {
       String labelName = ctx.NAME().getText();
-      Label label = new Label(labelName, getCurrentScope(), false);
+      Scope procedureScope = getCurrentProcedure();
+      Scope targetScope = procedureScope != null ? procedureScope : getCurrentScope();
+      Label label = new Label(labelName, targetScope, false);
       addStatement(new StatementJump(label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
       return null;
    }
