@@ -19,6 +19,17 @@ typedef signed int int16_t;
 typedef unsigned long uint32_t;
 /// Signed integer type with a width of exactly 32 bits
 typedef signed long int32_t;
+/// Unsigned integer type with a width of exactly 24 bits (3 bytes, range 0..16,777,215)
+typedef struct {
+    uint16_t lo;
+    uint8_t  hi;
+} uint24_t;
+
+/// Signed integer type with a width of exactly 24 bits (3 bytes, range -8,388,608..+8,388,607)
+typedef struct {
+    uint16_t lo;
+    int8_t   hi;
+} int24_t;
 /// Unsigned integer type with the maximum width supported.
 typedef unsigned long uintmax_t;
 /// Signed integer type with the maximum width supported.
@@ -45,6 +56,14 @@ typedef signed int intptr_t;
 #define INT16_MAX       32767
 /// Maximum value of exactly 16-bit wide unsigned type
 #define UINT16_MAX      65535U
+
+/// Minimum value of exactly 24-bit wide signed type
+#define INT24_MIN       (-8388608L)
+/// Maximum value of exactly 24-bit wide signed type
+#define INT24_MAX       8388607L
+/// Maximum value of exactly 24-bit wide unsigned type
+#define UINT24_MAX      16777215UL
+#define UINT24_MIN      0UL
 
 /// Minimum value of exactly 32-bit wide signed type (-2^31)
 #define INT32_MIN       (-2147483648L)
