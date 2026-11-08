@@ -137,6 +137,88 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
          if(lValueType.getSizeBytes() > varType.getSizeBytes() || constValue > 255) {
             resultType = lValueType.getSizeBytes() > varType.getSizeBytes() ? lValueType : SymbolType.WORD;
          }
+
+         // Feature 16: Check if varValue was promoted from an 8-bit variable via a cast/assignment
+         RValue actualVarValue = varValue;
+         SymbolType actualVarType = varType;
+         if(varType.getSizeBytes() > 1 && varValue instanceof VariableRef) {
+            if(stmtIt.hasPrevious()) {
+               Statement prevStmt = stmtIt.previous();
+               if(prevStmt instanceof StatementAssignment prevAssign) {
+                  if(varValue.equals(prevAssign.getlValue()) && prevAssign.getOperator() == null) {
+                     RValue prevRVal = prevAssign.getrValue2();
+                     if(prevRVal instanceof CastValue castVal) {
+                        SymbolType castFromType = SymbolTypeInference.inferType(getProgramScope(), castVal.getValue());
+                        if(castFromType.getSizeBytes() == 1) {
+                           actualVarValue = castVal.getValue();
+                           actualVarType = castFromType;
+                        }
+                     } else {
+                        SymbolType rType = SymbolTypeInference.inferType(getProgramScope(), prevRVal);
+                        if(rType.getSizeBytes() == 1) {
+                           actualVarValue = prevRVal;
+                           actualVarType = rType;
+                        }
+                     }
+                  }
+               }
+               stmtIt.next(); // Restore iterator to current assignment position
+            }
+         }
+
+         // Check if we can factor out trailing zeros for compact shift-add multiplication
+         int trailingZeros = Long.numberOfTrailingZeros(constValue);
+         long oddMultiplier = constValue >> trailingZeros;
+         boolean canUseFactoredShift = resultType.getSizeBytes() == 2 &&
+               trailingZeros > 0 &&
+               oddMultiplier > 1 &&
+               oddMultiplier <= 15;
+
+         if(canUseFactoredShift) {
+            // Step 1: Promote actualVarValue to 16-bit resultType
+            Variable varPromote = VariableBuilder.createIntermediate(scope, resultType, getProgram());
+            stmtIt.add(new StatementAssignment((LValue) varPromote.getRef(), new CastValue(resultType, actualVarValue), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+            // Step 2: Accumulate (varPromote * oddMultiplier) in 16-bit
+            RValue building16 = varPromote.getRef();
+            double oddPower2 = Math.log(oddMultiplier) / Math.log(2);
+            long pow2 = (long) oddPower2;
+            long remains = oddMultiplier - (1L << pow2);
+            long shiftCount = 0;
+            while(pow2 >= 0) {
+               long powVal = 1L << pow2;
+               if(remains >= powVal) {
+                  Variable varShift = VariableBuilder.createIntermediate(scope, resultType, getProgram());
+                  stmtIt.add(new StatementAssignment((LValue) varShift.getRef(), building16, Operators.SHIFT_LEFT, new ConstantInteger(shiftCount, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+                  shiftCount = 0;
+                  Variable varAdd = VariableBuilder.createIntermediate(scope, resultType, getProgram());
+                  stmtIt.add(new StatementAssignment((LValue) varAdd.getRef(), varShift.getRef(), Operators.PLUS, varPromote.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+                  building16 = varAdd.getRef();
+                  remains -= powVal;
+               }
+               if(pow2 > 0) {
+                  shiftCount++;
+               }
+               pow2--;
+            }
+            if(shiftCount > 0) {
+               Variable varShift = VariableBuilder.createIntermediate(scope, resultType, getProgram());
+               stmtIt.add(new StatementAssignment((LValue) varShift.getRef(), building16, Operators.SHIFT_LEFT, new ConstantInteger(shiftCount, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+               building16 = varShift.getRef();
+            }
+
+            // Step 3: Shift the accumulated result by the trailing zeros
+            Variable varFinalShift = VariableBuilder.createIntermediate(scope, resultType, getProgram());
+            stmtIt.add(new StatementAssignment((LValue) varFinalShift.getRef(), building16, Operators.SHIFT_LEFT, new ConstantInteger((long) trailingZeros, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+            stmtIt.next();
+            assignment.setOperator(null);
+            assignment.setrValue1(null);
+            assignment.setrValue2(varFinalShift.getRef());
+            optimized = true;
+            return optimized;
+         }
+
          RValue building = varValue;
          if(resultType.getSizeBytes() > varType.getSizeBytes()) {
             Variable varPromote = VariableBuilder.createIntermediate(scope, resultType, getProgram());

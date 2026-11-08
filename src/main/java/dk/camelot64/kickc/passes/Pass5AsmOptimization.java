@@ -153,11 +153,35 @@ public abstract class Pass5AsmOptimization {
 
       // 2. If we hit a label at the block entry, check all incoming predecessors to this label
       if(labelHit != null && currentScope != null && !currentScope.isEmpty()) {
-         String targetLabel = labelHit.getLabel();
+         Set<String> targetLabels = new HashSet<>();
+         targetLabels.add(labelHit.getLabel());
+
+         // Collect all contiguous labels immediately before or after labelHit
+         int firstLabelIdx = labelIdx;
+         for(int p = labelIdx - 1; p >= 0; p--) {
+            AsmLine line = allLines.get(p).line;
+            if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
+            if(line instanceof AsmLabel) {
+               targetLabels.add(((AsmLabel) line).getLabel());
+               firstLabelIdx = p;
+               continue;
+            }
+            break;
+         }
+         for(int p = labelIdx + 1; p < allLines.size(); p++) {
+            AsmLine line = allLines.get(p).line;
+            if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
+            if(line instanceof AsmLabel) {
+               targetLabels.add(((AsmLabel) line).getLabel());
+               continue;
+            }
+            break;
+         }
+
          List<Integer> predIndices = new ArrayList<>();
 
-         // Check fallthrough immediately before labelHit
-         for(int p = labelIdx - 1; p >= 0; p--) {
+         // Check fallthrough immediately before firstLabelIdx
+         for(int p = firstLabelIdx - 1; p >= 0; p--) {
             AsmLine line = allLines.get(p).line;
             if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
             if(line instanceof AsmInstruction) {
@@ -172,7 +196,7 @@ public abstract class Pass5AsmOptimization {
             break;
          }
 
-         // Check jumps/branches to targetLabel strictly within currentScope
+         // Check jumps/branches to targetLabels strictly within currentScope
          String scanScope = null;
          for(int k = 0; k < allLines.size(); k++) {
             LineRef ref = allLines.get(k);
@@ -190,8 +214,13 @@ public abstract class Pass5AsmOptimization {
                AsmInstruction inst = (AsmInstruction) ref.line;
                if(inst.getCpuOpcode() != null && inst.getCpuOpcode().isJump()) {
                   String dest = inst.getOperandJumpTarget();
-                  if(dest != null && (dest.equals(targetLabel) || dest.equals("!" + targetLabel + "+") || dest.equals(targetLabel + "+"))) {
-                     predIndices.add(k);
+                  if(dest != null) {
+                     for(String tLab : targetLabels) {
+                        if(dest.equals(tLab) || dest.equals("!" + tLab + "+") || dest.equals(tLab + "+")) {
+                           predIndices.add(k);
+                           break;
+                        }
+                     }
                   }
                }
             }
