@@ -1,5 +1,7 @@
 /// @file 
-/// Simple functions wrapping 6502 instructions
+/// Simple functions and intrinsics wrapping 6502 instructions
+#ifndef _6502_H
+#define _6502_H
 
 /// Set the processor interrupt flag - disabling IRQ's.
 /// Uses the SEI instruction
@@ -9,7 +11,39 @@ inline void SEI();
 /// Uses the CLI instruction
 inline void CLI();
 
+/// Set processor Carry flag (SEC).
+inline void SEC();
+
+/// Clear processor Carry flag (CLC).
+inline void CLC();
+
+/// Clear processor Decimal mode flag (CLD).
+inline void CLD();
+
+/// Set processor Decimal mode flag (SED).
+inline void SED();
+
+/// No operation (NOP).
+inline void NOP();
+
+/// Compiler builtin aliases (lower-case / GNU-style)
+inline void __builtin_sei();
+inline void __builtin_cli();
+inline void __builtin_sec();
+inline void __builtin_clc();
+inline void __builtin_cld();
+inline void __builtin_sed();
+inline void __builtin_nop();
+
+/// Test bit 7 of a memory location (MSB / sign bit).
+#define __builtin_bit7(addr) (*((signed char*)(addr)) < 0)
+
+/// Test bit 6 of a memory location.
+#define __builtin_bit6(addr) ((*((char*)(addr)) & 0x40) != 0)
+
 /// Add a KickAssembler breakpoint.
-/// The breakpoint is compiled be KickAssembler to the output files.
+/// The breakpoint is compiled by KickAssembler to the output files.
 /// If you use VICE or C64Debugger they can automatically load the breakpoints when starting.
 inline void BREAK();
+
+#endif
