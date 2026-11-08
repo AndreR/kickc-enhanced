@@ -39,6 +39,7 @@ typedef uint16_t ufixed8_8;
 /// 16.8 Signed Fixed-Point type (16-bit integer part, 8-bit fraction, range -32768.0 to +32767.996)
 /// Ideal for 2D world coordinates, camera tracking, and physics on large scrolling maps
 typedef union {
+    int24_t val;
     struct {
         uint8_t frac;     ///< Fractional subpixel part (0..255 representing 0..255/256)
         int16_t integer;  ///< 16-bit signed integer part (-32768..+32767)
@@ -48,6 +49,7 @@ typedef union {
 
 /// 16.8 Unsigned Fixed-Point type (16-bit integer part, 8-bit fraction, range 0.0 to 65535.996)
 typedef union {
+    uint24_t val;
     struct {
         uint8_t  frac;    ///< Fractional subpixel part (0..255 representing 0..255/256)
         uint16_t integer; ///< 16-bit unsigned integer part (0..65535)
@@ -58,6 +60,7 @@ typedef union {
 /// 8.16 Signed Fixed-Point type (8-bit integer part, 16-bit fraction, range -128.0 to +127.99998)
 /// High-precision trigonometry, normalized unit vectors, and sine/cosine direction calculations
 typedef union {
+    int24_t val;
     struct {
         uint16_t frac;    ///< 16-bit fractional part (0..65535 representing 0..65535/65536)
         int8_t   integer; ///< 8-bit signed integer part (-128..+127)
@@ -67,6 +70,7 @@ typedef union {
 
 /// 8.16 Unsigned Fixed-Point type (8-bit integer part, 16-bit fraction, range 0.0 to 255.99998)
 typedef union {
+    uint24_t val;
     struct {
         uint16_t frac;    ///< 16-bit fractional part (0..65535 representing 0..65535/65536)
         uint8_t  integer; ///< 8-bit unsigned integer part (0..255)
@@ -83,12 +87,13 @@ typedef union {
 #define UFIXED8_16(i, f) ((ufixed8_16){ .frac = (uint16_t)(f), .integer = (uint8_t)(i) })
 
 // =============================================================================
-// 32-Bit Fixed-Point Types: 16.16 and 24.8
+// 32-Bit Fixed-Point Types: 16.16, 24.8 and 8.24
 // =============================================================================
 
 /// 16.16 Signed Fixed-Point type (16-bit integer part, 16-bit fraction, range -32768.0 to +32767.99998)
 /// Universal standard for 3D transformation matrices, raycasting, Z-buffers, and high-precision simulation
 typedef union {
+    int32_t val;
     struct {
         uint16_t frac;    ///< 16-bit fractional part (0..65535 representing 0..65535/65536)
         int16_t  integer; ///< 16-bit signed integer part (-32768..+32767)
@@ -98,6 +103,7 @@ typedef union {
 
 /// 16.16 Unsigned Fixed-Point type (16-bit integer part, 16-bit fraction, range 0.0 to 65535.99998)
 typedef union {
+    uint32_t val;
     struct {
         uint16_t frac;    ///< 16-bit fractional part (0..65535 representing 0..65535/65536)
         uint16_t integer; ///< 16-bit unsigned integer part (0..65535)
@@ -108,6 +114,7 @@ typedef union {
 /// 24.8 Signed Fixed-Point type (24-bit integer part, 8-bit fraction, range -8388608.0 to +8388607.996)
 /// For procedural open-world maps (> 65k px), global celestial coordinates, or high-precision currency balances
 typedef union {
+    int32_t val;
     struct {
         uint8_t  frac;    ///< 8-bit fractional part (0..255 representing 0..255/256)
         uint16_t int_lo;  ///< Lower 16 bits of integer part
@@ -118,6 +125,7 @@ typedef union {
 
 /// 24.8 Unsigned Fixed-Point type (24-bit integer part, 8-bit fraction, range 0.0 to 16777215.996)
 typedef union {
+    uint32_t val;
     struct {
         uint8_t  frac;    ///< 8-bit fractional part (0..255 representing 0..255/256)
         uint16_t int_lo;  ///< Lower 16 bits of integer part
@@ -126,8 +134,61 @@ typedef union {
     uint8_t bytes[4];
 } ufixed24_8;
 
+/// 8.24 Signed Fixed-Point type (8-bit integer part, 24-bit fraction, range -128.0 to +127.99999994)
+/// High-precision micro-scale math, deep Mandelbrot/fractal zoomers, audio IIR filter coefficients, and orbital gravity
+typedef union {
+    int32_t val;
+    struct {
+        uint24_t frac;    ///< 24-bit fractional part (0..16,777,215 representing 0..16.7M / 16.777.216)
+        int8_t   integer; ///< 8-bit signed integer part (-128..+127)
+    };
+    uint8_t bytes[4];
+} fixed8_24;
+
+/// 8.24 Unsigned Fixed-Point type (8-bit integer part, 24-bit fraction, range 0.0 to 255.99999994)
+typedef union {
+    uint32_t val;
+    struct {
+        uint24_t frac;    ///< 24-bit fractional part (0..16,777,215 representing 0..16.7M / 16.777.216)
+        uint8_t  integer; ///< 8-bit unsigned integer part (0..255)
+    };
+    uint8_t bytes[4];
+} ufixed8_24;
+
 /// Construct a fixed16_16 from 16-bit integer and 16-bit fraction
 #define FIXED16_16(i, f) ((fixed16_16){ .frac = (uint16_t)(f), .integer = (int16_t)(i) })
 #define UFIXED16_16(i, f) ((ufixed16_16){ .frac = (uint16_t)(f), .integer = (uint16_t)(i) })
+
+/// Construct a fixed24_8 from 24-bit integer and 8-bit fraction
+#define FIXED24_8(i_lo, i_hi, f) ((fixed24_8){ .frac = (uint8_t)(f), .int_lo = (uint16_t)(i_lo), .int_hi = (int8_t)(i_hi) })
+#define UFIXED24_8(i_lo, i_hi, f) ((ufixed24_8){ .frac = (uint8_t)(f), .int_lo = (uint16_t)(i_lo), .int_hi = (uint8_t)(i_hi) })
+
+/// Construct a fixed8_24 from 8-bit integer and 24-bit fraction
+#define FIXED8_24(i, f_lo, f_hi) ((fixed8_24){ .frac = ((uint24_t){(uint16_t)(f_lo), (uint8_t)(f_hi)}), .integer = (int8_t)(i) })
+#define UFIXED8_24(i, f_lo, f_hi) ((ufixed8_24){ .frac = ((uint24_t){(uint16_t)(f_lo), (uint8_t)(f_hi)}), .integer = (uint8_t)(i) })
+
+// =============================================================================
+// Compile-Time Literal Folding Macros
+// Allows defining fixed-point variables cleanly from float literals with zero runtime cost:
+// e.g. fixed16_16 pos = F16_16(123.456);
+// =============================================================================
+
+#define F8_8(lit)    ((fixed8_8)(lit))
+#define UF8_8(lit)   ((ufixed8_8)(lit))
+
+#define F16_8(lit)   ((fixed16_8){ .val = (int24_t)(lit) })
+#define UF16_8(lit)  ((ufixed16_8){ .val = (uint24_t)(lit) })
+
+#define F8_16(lit)   ((fixed8_16){ .val = (int24_t)((int32_t)(lit) * 256) })
+#define UF8_16(lit)  ((ufixed8_16){ .val = (uint24_t)((uint32_t)(lit) * 256) })
+
+#define F16_16(lit)  ((fixed16_16){ .val = (int32_t)(lit) * 256 })
+#define UF16_16(lit) ((ufixed16_16){ .val = (uint32_t)(lit) * 256 })
+
+#define F24_8(lit)   ((fixed24_8){ .val = (int32_t)(lit) })
+#define UF24_8(lit)  ((ufixed24_8){ .val = (uint32_t)(lit) })
+
+#define F8_24(lit)   ((fixed8_24){ .val = (int32_t)(lit) * 65536 })
+#define UF8_24(lit)  ((ufixed8_24){ .val = (uint32_t)(lit) * 65536 })
 
 #endif
