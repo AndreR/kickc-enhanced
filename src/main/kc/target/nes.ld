@@ -10,6 +10,7 @@
 .segmentdef Tiles   [ start=$0000,       min=$0000, max=$1fff, fill ]
 .segmentdef Code    [ start=$c000,       min=$c000, max=$fff9 ]
 .segmentdef Data    [ startAfter="Code", min=$c000, max=$fff9 ]
+.segmentdef StackRam [start=$0100, min=$0100, max=$01af]
 .segmentdef Vectors [ start=$fffa,       min=$fffa, max=$ffff ]
 .segmentdef GameRam [start=$200,max=$7ff, virtual]
 .segmentdef ProgramRom [ segments="Code, Data, Vectors" ]
