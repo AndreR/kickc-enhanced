@@ -75,3 +75,12 @@ int divr16s(int dividend, int divisor, int rem);
 /// Follows the C99 standard by truncating toward zero on negative results.
 /// See http://www.open-std.org/jtc1/sc22/wg14/www/docs/n1124.pdf section 6.5.5
 int div16s(int dividend, int divisor);
+
+
+/// High-speed division by 10 for unsigned 8-bit integers.
+/// Uses reciprocal constant multiplication in ~22 CPU cycles.
+char div10u(char val);
+
+/// High-speed modulo by 10 for unsigned 8-bit integers.
+/// Uses reciprocal multiplication in ~26 CPU cycles.
+char mod10u(char val);

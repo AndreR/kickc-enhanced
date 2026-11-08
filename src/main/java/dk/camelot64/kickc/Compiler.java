@@ -179,6 +179,7 @@ public class Compiler {
    }
 
    public void compile(List<Path> cFiles, Map<String, String> defines) {
+      Pass2MultiplyToShiftRewriting.inlinedDivCounts.clear();
       if(cFiles.size() == 0)
          throw new CompileError("Error! You must supply at least one file to compile!");
 
@@ -544,6 +545,14 @@ public class Compiler {
       constantOptimizations.add(new Pass2ConstantSimplification(program));
       constantOptimizations.addAll(getPass2Optimizations());
       pass2Execute(constantOptimizations);
+      for(Map.Entry<Long, Integer> entry : Pass2MultiplyToShiftRewriting.inlinedDivCounts.entrySet()) {
+         if(entry.getValue() >= 6) {
+            long constVal = entry.getKey();
+            int count = entry.getValue();
+            int estimatedBytes = count * 20;
+            System.out.println(String.format("   [PERF HINT] Division by constant '%d' was inlined %d times (~%d bytes generated). Consider using 'div%du(x)' or defining a shared helper function to save code space.", constVal, count, estimatedBytes, constVal));
+         }
+      }
 
    }
 
