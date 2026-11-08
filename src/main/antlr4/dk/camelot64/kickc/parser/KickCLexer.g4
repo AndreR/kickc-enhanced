@@ -68,6 +68,7 @@ EXPORT: '__export' ;
 ALIGN: '__align' ;
 INLINE: 'inline' ;
 COUNTDOWN: '__countdown' | 'countdown' ;
+CARRY: '__carry' ;
 VOLATILE: 'volatile' ;
 STATIC: 'static' ;
 INTERRUPT: '__interrupt' ;

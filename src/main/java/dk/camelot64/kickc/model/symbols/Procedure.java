@@ -29,6 +29,7 @@ public class Procedure extends Scope {
    private boolean declaredIntrinsic;
    /** The type of interrupt that the procedure serves. Null for all procedures not serving an interrupt. */
    private String interruptType;
+   private boolean carryReturn;
    /** Comments preceding the procedure in the source code. */
    private List<Comment> comments;
    /** Reserved zeropage addresses. */
@@ -223,6 +224,14 @@ public class Procedure extends Scope {
 
    public void setDeclaredInline(boolean declaredInline) {
       this.declaredInline = declaredInline;
+   }
+
+   public boolean isCarryReturn() {
+      return carryReturn;
+   }
+
+   public void setCarryReturn(boolean carryReturn) {
+      this.carryReturn = carryReturn;
    }
 
    public String getInterruptType() {

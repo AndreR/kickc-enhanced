@@ -119,6 +119,11 @@ public class Directive {
 
    }
 
+   /** Function returning boolean in 6502 Carry flag. */
+   public static class Carry extends Directive {
+      public Carry() { super("__carry"); }
+   }
+
    /** Function declared interrupt. */
    public static class Interrupt extends Directive {
       public String interruptType;
