@@ -2,12 +2,18 @@
 /// C standard library string.h
 ///
 /// Functions to manipulate C strings and arrays.
+#ifndef _STRING_H
+#define _STRING_H
+
 #include <stddef.h>
 #include <errno.h>
 
 /// Copy block of memory (forwards)
 /// Copies the values of num chars from the location pointed to by source directly to the memory block pointed to by destination.
 void* memcpy( void* destination, void* source, size_t num );
+
+/// Fast copy of up to 256 bytes using 8-bit index loop.
+/// num = 0 copies 256 bytes!
 char* memcpy_fast(char* destination, char* source, unsigned char num );
 
 /// Move block of memory
@@ -16,6 +22,9 @@ void* memmove( void* destination, void* source, size_t num );
 
 /// Copies the character c (an unsigned char) to the first num characters of the object pointed to by the argument str.
 void *memset(void *str, char c, size_t num);
+
+/// Fast fill of up to 256 bytes using 8-bit index loop.
+/// num = 0 sets 256 bytes!
 char* memset_fast(char* str, char c, unsigned char num);
 
 /// Compares the first n bytes of memory area str1 and memory area str2.
@@ -51,6 +60,12 @@ size_t strlen(char *str);
 /// @return A pointer to the matching byte or NULL if the character does not occur in the given memory area.
 void *memchr(const void *str, char c, size_t n);
 
+/// Locates the first occurrence of c in the string pointed to by str.
+char *strchr(const char *str, char c);
+
+/// Locates the last occurrence of c in the string pointed to by str.
+char *strrchr(const char *str, char c);
+
 /// compares the string pointed to, by str1 to the string pointed to by str2.
 /// @param str1 This is the first string to be compared.
 /// @param str2 This is the second string to be compared.
@@ -68,7 +83,6 @@ int strcmp(const char *str1, const char *str2);
 ///         if Return value = 0 then it indicates str1 is equal to str2.
 int strncmp(const char *str1, const char *str2, size_t n);
 
-
 /**
  * @brief The string-error function, strerror,
  * is a C/C++ function which translates an error code,
@@ -81,3 +95,5 @@ int strncmp(const char *str1, const char *str2, size_t n);
  *
  */
 char* strerror(int errnum);
+
+#endif
