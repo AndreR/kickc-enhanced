@@ -43,6 +43,11 @@ public class Directive {
       public Inline() { super("inline"); }
    }
 
+   /** Loop declared countdown. */
+   static public class Countdown extends Directive {
+      public Countdown() { super("__countdown"); }
+   }
+
    /**
     * Bank to place code into. Used for determining call distance.
     */

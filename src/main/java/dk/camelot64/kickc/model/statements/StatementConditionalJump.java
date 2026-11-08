@@ -25,6 +25,8 @@ public class StatementConditionalJump extends StatementBase {
    private boolean declaredUnroll;
    /** This conditional has been unrolled. Constant propagation must ensure the conditional is deleted - or the compilation will fail. */
    private boolean wasUnrolled;
+   /** This conditional is in a loop declared to be countdown. */
+   private boolean declaredCountdown;
 
    public StatementConditionalJump(RValue condition, LabelRef destination,StatementSource source, List<Comment> comments) {
       super(source, comments);
@@ -94,6 +96,14 @@ public class StatementConditionalJump extends StatementBase {
 
    public void setWasUnrolled(boolean wasUnrolled) {
       this.wasUnrolled = wasUnrolled;
+   }
+
+   public boolean isDeclaredCountdown() {
+      return declaredCountdown;
+   }
+
+   public void setDeclaredCountdown(boolean declaredCountdown) {
+      this.declaredCountdown = declaredCountdown;
    }
 
    @Override

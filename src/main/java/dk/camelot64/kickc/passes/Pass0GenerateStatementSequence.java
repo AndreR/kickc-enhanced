@@ -1430,6 +1430,8 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          StatementSource source = new StatementSource(directivesCtx.get(0));
          if(directive instanceof Directive.Inline) {
             conditional.setDeclaredUnroll(true);
+         } else if(directive instanceof Directive.Countdown) {
+            conditional.setDeclaredCountdown(true);
          } else {
             throw new CompileError("Unsupported loop directive " + directive.getName(), source);
          }
@@ -1444,6 +1446,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    @Override
    public Object visitDirectiveInline(KickCParser.DirectiveInlineContext ctx) {
       return new Directive.Inline();
+   }
+
+   @Override
+   public Object visitDirectiveCountdown(KickCParser.DirectiveCountdownContext ctx) {
+      return new Directive.Countdown();
    }
 
    @Override
@@ -1842,23 +1849,145 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       BlockScope blockScope = getCurrentScope().addBlockScope();
       scopeStack.push(blockScope);
       loopStack.push(new Loop(blockScope, false));
-      // Add initialization
-      this.visit(ctx.forClassicInit());
       KickCParser.StmtForContext stmtForCtx = (KickCParser.StmtForContext) ctx.getParent();
-      // Add label
+      List<Directive> directives = getDirectives(stmtForCtx.directive());
+      boolean isCountdown = directives.stream().anyMatch(d -> d instanceof Directive.Countdown);
+
+      KickCParser.ForClassicConditionContext conditionCtx = ctx.forClassicCondition();
+      KickCParser.CommaExprContext incrementCtx = ctx.commaExpr();
+
+      // Check if forward loop can be inverted to countdown:
+      boolean isForwardInvertable = false;
+      String loopVarName = null;
+      long countN = -1;
+      if(isCountdown && conditionCtx != null && incrementCtx != null && incrementCtx.getText().contains("++")) {
+         KickCParser.ExprContext condExpr = null;
+         if(conditionCtx.commaExpr() instanceof KickCParser.CommaNoneContext cnone) {
+            condExpr = cnone.expr();
+         }
+         if(condExpr instanceof KickCParser.ExprBinaryContext bin) {
+            String op = bin.getChild(1).getText();
+            if(("<".equals(op) || "<=".equals(op)) && bin.expr(0) instanceof KickCParser.ExprIdContext id) {
+               loopVarName = id.NAME().getText();
+               try {
+                  if(bin.expr(1) instanceof KickCParser.ExprNumberContext num) {
+                     countN = NumberParser.parseIntegerLiteral(num.getText()).getValue();
+                  } else {
+                     RValue rval = (RValue) this.visit(bin.expr(1));
+                     if(rval instanceof ConstantInteger) {
+                        countN = ((ConstantInteger) rval).getInteger();
+                     }
+                  }
+                  if("<=".equals(op)) countN++;
+                  if(countN > 0 && countN <= 128) {
+                     isForwardInvertable = true;
+                  }
+               } catch(Exception ignored) {}
+            }
+         }
+      }
+
+      if(isForwardInvertable) {
+         // Invert forward loop to 0-based countdown with bpl (N-1 down to 0)
+         this.visit(ctx.forClassicInit());
+         // Overwrite initial assignment from 0 to N-1
+         Variable var = getCurrentScope().findVariable(loopVarName);
+         if(var != null) {
+            var.setType(SymbolType.SBYTE);
+         }
+         ProcedureCompilation procComp = getCurrentProcedureCompilation();
+         if(var != null && procComp != null) {
+            List<Statement> stmts = procComp.getStatementSequence().getStatements();
+            for(int idx = stmts.size() - 1; idx >= 0; idx--) {
+               Statement s = stmts.get(idx);
+               if(s instanceof StatementAssignment assign && assign.getlValue() instanceof VariableRef vref && vref.getFullName().equals(var.getFullName())) {
+                  assign.setrValue2(new ConstantInteger(countN - 1, var.getType()));
+                  break;
+               }
+            }
+         }
+
+         Label doJumpLabel = getCurrentScope().addLabelIntermediate();
+         Label endJumpLabel = getCurrentScope().addLabelIntermediate();
+         List<Comment> comments = getCommentsSymbol(stmtForCtx);
+         StatementLabel doJumpTarget = new StatementLabel(doJumpLabel.getRef(), StatementSource.forClassic(ctx), comments);
+         addStatement(doJumpTarget);
+
+         // Add body
+         addLoopBody(stmtForCtx.stmt());
+
+         // Add continue label
+         addLoopContinueLabel(loopStack.peek(), ctx);
+
+         // Decrement: var--
+         Statement stmtDec = new StatementAssignment((LValue) var.getRef(), var.getRef(), Operators.MINUS, new ConstantInteger(1L, var.getType()), false, StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+         addStatement(stmtDec);
+
+         // Condition at bottom: var >= 0 -> bpl
+         Variable tmpVar = addIntermediateVar();
+         Statement stmtCmp = new StatementAssignment((LValue) tmpVar.getRef(), var.getRef(), Operators.GE, new ConstantInteger(0L, var.getType()), true, StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+         addStatement(stmtCmp);
+         StatementConditionalJump doJmpStmt = new StatementConditionalJump(tmpVar.getRef(), doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+         addStatement(doJmpStmt);
+         doJmpStmt.setDeclaredCountdown(true);
+
+         StatementLabel endJumpTarget = new StatementLabel(endJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+         addStatement(endJumpTarget);
+         addLoopBreakLabel(loopStack.pop(), ctx);
+         scopeStack.pop();
+         return null;
+      }
+
+      boolean isAlreadyCountdown = (incrementCtx != null && incrementCtx.getText().contains("--"));
+      if(isCountdown || isAlreadyCountdown) {
+         // Bottom-tested countdown loop
+         this.visit(ctx.forClassicInit());
+         Label doJumpLabel = getCurrentScope().addLabelIntermediate();
+         Label endJumpLabel = getCurrentScope().addLabelIntermediate();
+         List<Comment> comments = getCommentsSymbol(stmtForCtx);
+         StatementLabel doJumpTarget = new StatementLabel(doJumpLabel.getRef(), StatementSource.forClassic(ctx), comments);
+         addStatement(doJumpTarget);
+
+         addLoopBody(stmtForCtx.stmt());
+         addLoopContinueLabel(loopStack.peek(), ctx);
+
+         if(incrementCtx != null) {
+            PrePostModifierHandler.addPreModifiers(this, incrementCtx, StatementSource.forClassic(ctx));
+            this.visit(incrementCtx);
+            PrePostModifierHandler.addPostModifiers(this, incrementCtx, StatementSource.forClassic(ctx));
+         }
+
+         if(conditionCtx != null) {
+            RValue conditionRvalue = addCondition(conditionCtx.commaExpr(), StatementSource.forClassic(ctx));
+            StatementConditionalJump doJmpStmt = new StatementConditionalJump(conditionRvalue, doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+            addStatement(doJmpStmt);
+            doJmpStmt.setDeclaredCountdown(true);
+            if(stmtForCtx.directive() != null)
+               addDirectives(doJmpStmt, stmtForCtx.directive());
+         } else {
+            StatementJump doJmpStmt = new StatementJump(doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+            addStatement(doJmpStmt);
+         }
+
+         StatementLabel endJumpTarget = new StatementLabel(endJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+         addStatement(endJumpTarget);
+         addLoopBreakLabel(loopStack.pop(), ctx);
+         scopeStack.pop();
+         return null;
+      }
+
+      // Default classic while-shape loop
+      this.visit(ctx.forClassicInit());
       Label beginJumpLabel = getCurrentScope().addLabelIntermediate();
       Label doJumpLabel = getCurrentScope().addLabelIntermediate();
       Label endJumpLabel = getCurrentScope().addLabelIntermediate();
       List<Comment> comments = getCommentsSymbol(stmtForCtx);
       StatementLabel repeatTarget = new StatementLabel(beginJumpLabel.getRef(), StatementSource.forClassic(ctx), comments);
       addStatement(repeatTarget);
-      // Add condition
-      KickCParser.ForClassicConditionContext conditionCtx = ctx.forClassicCondition();
       RValue conditionRvalue = null;
       if(conditionCtx != null) {
          conditionRvalue = addCondition(conditionCtx.commaExpr(), StatementSource.forClassic(ctx));
       }
-      // Add jump if condition was met
       Statement doJmpStmt;
       if(conditionRvalue != null) {
          doJmpStmt = new StatementConditionalJump(conditionRvalue, doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
@@ -1866,23 +1995,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          Statement endJmpStmt = new StatementJump(endJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
          addStatement(endJmpStmt);
       } else {
-         // No condition - loop forever
          doJmpStmt = new StatementJump(doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
          addStatement(doJmpStmt);
       }
       StatementLabel doJumpTarget = new StatementLabel(doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
       addStatement(doJumpTarget);
-      // Add body
       addLoopBody(stmtForCtx.stmt());
-      // Add increment
       addLoopContinueLabel(loopStack.peek(), ctx);
-      KickCParser.CommaExprContext incrementCtx = ctx.commaExpr();
       if(incrementCtx != null) {
          PrePostModifierHandler.addPreModifiers(this, incrementCtx, StatementSource.forClassic(ctx));
          this.visit(incrementCtx);
          PrePostModifierHandler.addPostModifiers(this, incrementCtx, StatementSource.forClassic(ctx));
       }
-      // Jump back to beginning
       Statement beginJmpStmt = new StatementJump(beginJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
       addStatement(beginJmpStmt);
       StatementLabel endJumpTarget = new StatementLabel(endJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
