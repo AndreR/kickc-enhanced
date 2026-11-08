@@ -10,10 +10,24 @@ public class NumberParser {
    public static ConstantInteger parseIntegerLiteral(String literal) {
 
       literal = literal.toLowerCase().replace("_", "").replace("'", "");
-      if(literal.contains(".")) {
-         if(literal.endsWith("f")) {
-            literal = literal.substring(0, literal.length() - 1);
-         }
+      double scale = -1.0;
+      if(literal.endsWith("f24")) {
+         scale = 16777216.0;
+         literal = literal.substring(0, literal.length() - 3);
+      } else if(literal.endsWith("f16")) {
+         scale = 65536.0;
+         literal = literal.substring(0, literal.length() - 3);
+      } else if(literal.endsWith("f8")) {
+         scale = 256.0;
+         literal = literal.substring(0, literal.length() - 2);
+      } else if(literal.endsWith("f") && literal.contains(".")) {
+         scale = 256.0;
+         literal = literal.substring(0, literal.length() - 1);
+      } else if(literal.contains(".")) {
+         scale = 256.0;
+      }
+
+      if(scale > 0.0) {
          double d;
          if(literal.startsWith("$")) {
             d = Double.parseDouble("0x" + literal.substring(1) + "p0");
@@ -22,7 +36,7 @@ public class NumberParser {
          } else {
             d = Double.parseDouble(literal);
          }
-         long fixedVal = Math.round(d * 256.0);
+         long fixedVal = Math.round(d * scale);
          return new ConstantInteger(fixedVal, SymbolType.NUMBER);
       }
       SymbolType type = SymbolType.NUMBER;

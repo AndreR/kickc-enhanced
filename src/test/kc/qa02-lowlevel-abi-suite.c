@@ -23,18 +23,20 @@ void main() {
     // 2. Leaf-function register calls
     char r = test_calc(20, 10, 5);
 
-    // 3. Fixed-point 8.8
-    fixed8_8 pos = FIXED(10, 128); // 10.5
-    fixed8_8 vel = FIXED(2, 64);   // 2.25
+    // 3. Fixed-point 8.8 & Literal Suffixes
+    fixed8_8 pos = 10.5f8;
+    fixed8_8 vel = 2.25f8;
     pos = fixed_add(pos, vel);
-    char int_part = (char)fixed_int(pos); // 12 or 13
+    char int_part = (char)fixed_int(pos); // 12
+    fixed16_16 lit_16 = { .val = 1.5f16 };
+    bool lit_ok = (lit_16.val == 98304L);
 
     // 4. Built-in delay cycles
     __builtin_delay_cycles(8);
 
     // 5. Screen verification
     char* screen = (char*)0x0400;
-    if(c1 && !c2 && c3 && r == 25 && int_part == 12) {
+    if(c1 && !c2 && c3 && r == 25 && int_part == 12 && lit_ok) {
         screen[0] = 16; // P
         screen[1] = 1;  // A
         screen[2] = 19; // S

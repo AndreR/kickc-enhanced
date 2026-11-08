@@ -27,7 +27,7 @@ import java.util.*;
  */
 public class Pass5BitTestOptimization extends Pass5AsmOptimization {
 
-   private static class LineRef {
+   public static class LineRef {
       final int index;
       final AsmChunk chunk;
       final AsmLine line;

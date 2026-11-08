@@ -33,7 +33,7 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
       super(program);
    }
 
-   private static class LineRef {
+   public static class LineRef {
       final AsmChunk chunk;
       final int indexInChunk;
       final AsmLine line;
