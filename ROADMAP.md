@@ -32,9 +32,9 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-06** | Allocator | Inter-Segment Zero-Page Coalescing across disjoint data segments | KickC Core | ✅ Completed |
 | **F-07** | Controlflow | Count-Down Loop-Inversion (`BPL`) & `__countdown` directive | 6502 Idiom | ✅ Completed |
 | **F-08** | Numerics | Bit-exact Quarter-Square Table Multiplication (`<multiply.h>`) | 6502 ROM | ✅ Completed |
-| **F-09** | Arrays | 8-Bit Indexing for $\le 128$ Word-Arrays & `__lohi` Split Arrays | 6502 Idiom | ⚪ Planned |
-| **F-10** | Data Layout | Struct-of-Arrays (`__soa`) Automatic Flattening | Data Layout | ⚪ Planned |
-| **F-11** | ABI | 16-Bit Hardware Register Pair `AX` for Return Values & Params | Calling Conv | ⚪ Planned |
+| **F-09** | Arrays | 8-Bit Indexing for $\le 128$ Word-Arrays & `__lohi` Split Arrays | 6502 Idiom | ✅ Completed |
+| **F-10** | Data Layout | Struct-of-Arrays (`__soa`) Automatic Flattening | Data Layout | ✅ Completed |
+| **F-11** | ABI | 16-Bit Hardware Register Pair `AX` for Return Values & Params | Calling Conv | ✅ Completed |
 | **F-12** | Peephole | Pass-5 Flag Tracking (N/Z-preservation across stores & status ops) | Pass 5 | ✅ Completed |
 | **F-13** | Arithmetics | Reciprocal Constant Division & Modulo (`/ 10`, `% 10`) | Pass 2 SSA | ✅ Completed |
 | **F-14** | Interprocedural | Read-Only Zero-Page Parameter Preservation across `JSR` | Pass 5 | ✅ Completed |
@@ -94,8 +94,15 @@ This document outlines the compiler architecture, completed milestones, planned 
 ### Feature 10: Struct-of-Arrays (`__soa`) Automatic Flattening
 * **Goal:** Automatically transpose arrays of structures (`AOS`) into parallel arrays of primitive fields (`SOA`), enabling single-instruction indexed addressing (`LDA player_x,X`) rather than pointer multiplication.
 
-### Feature 11: 16-Bit Register Pair `AX` for Return Values & Parameters
-* **Goal:** Allow functions returning 16-bit values to pass the low byte in `A` and the high byte in `X`, avoiding Zero-Page allocation for function returns and leaf parameters.
+### Feature 11: 16-Bit Hardware Register Pair `AX` Calling Convention (__ax)
+* **Status:** ✅ **Implemented & Verified (Issue #12)**.
+* **Summary:** Implemented `__ax` directive in grammar and AST, enabling the standard 6502 16-bit calling convention:
+  * Functions marked with `__ax` or returning 16-bit integers return the low byte in accumulator `A` and high byte in index register `X`.
+  * Single 16-bit parameter functions receive arguments directly in `A` (low) and `X` (high), eliminating Zero-Page setup at call sites.
+  * Direct support for constant returns (`LDA #<val; LDX #>val; RTS`), dynamic computed returns (`TAX; LDA return_lo; RTS`), and memory/pointer returns (`LDA ptr; LDX ptr+1; RTS`).
+  * Enables zero-overhead function chaining (e.g. `f(g(x))` passes result directly in `A`/`X` without intervening Zero-Page loads/stores).
+  * Hardened with `setNoOptimize(true)` in `AsmLine` to protect calling convention ABI boundaries against subsequent peephole passes.
+  * Verified bit-exact in headless VICE on port 6541 across all 5 test scenarios (`PASS!`).
 
 ### Feature 16: Compact 8x8->16 Multiplication without 16-Bit Zero Extension
 * **Status:** ✅ Completed in `v0.10.0-dev`.
