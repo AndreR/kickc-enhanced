@@ -520,3 +520,18 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 
 
+
+
+---
+
+### Feature 50: Library C64: High-Speed Disk I/O Suite (Hardware Probing, Turbo Read/Write, ELoad)
+* **Problem:**
+  Standard Commodore Kernal serial I/O (cbm_k_chrout, cbm_k_chrin, cbm_k_open) performs bit-banging over the slow IEC serial bus, requiring ~25–35 seconds to transfer an 8 KB data block (e.g. savegames, level data, music files). Furthermore, scene fastloaders typically focus exclusively on read operations (loaders for demos) and crash on microcontroller-based storage devices (SD2IEC, IEC-ATA) by attempting to execute drive-side 6502 code via M-E.
+* **Solution & Optimization:**
+  * Implement MIT-licensed high-speed disk I/O suite based on Lasse Öörni's proven c64loader (Covert Bitops):
+    * **Drive Probing (disk_probe()):** Reliably detects connected drive type: standard 1541/1571/Pi1541/Ultimate II (CPU-emulating drives with drive RAM), SD2IEC (microcontroller-based FAT drives), or generic IEC devices.
+    * **Turbo Read (disk_fast_load()):** High-speed block loading with up to 25x standard Kernal speed.
+    * **Turbo Write (disk_fast_save()):** High-speed block writing (~1–2 seconds for 8 KB) using custom drive-code on 1541 and ELoad protocol on SD2IEC.
+    * **Transparent Kernal Fallback:** Graceful degradation to standard Kernal I/O when connected to unsupported or virtual network drives.
+  * Packaged as clean C interface in <c64-fastio.h> and c64-fastio.c with zero resident footprint requirements (can execute from RAM or overlays).
+  * **Licensing:** Permissive MIT License (Lasse Öörni / Covert Bitops attribution preserved in source header and documentation).
