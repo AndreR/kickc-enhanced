@@ -551,6 +551,12 @@ public class Pass4CodeGeneration {
                 }
                 // Skip if address is not absolute
                 if (constantVar.getMemoryAddress() == null) continue;
+                if (constantVar.getMemoryAddress() instanceof ConstantInteger && ((ConstantInteger) constantVar.getMemoryAddress()).getValue() < 0x100) {
+                    // Zero page address: emit .label instead of .pc/.fill chunk into PRG to avoid corrupting PRG load address
+                    addConstantLabelDecl(asmName, constantVar, AsmFormat.getAsmConstant(program, constantVar.getMemoryAddress(), 99, scopeRef), asm);
+                    added.add(asmName);
+                    continue;
+                }
                 // Set segment
                 setCurrentSegment(constantVar.getDataSegment(), asm);
                 // Set absolute address

@@ -11,6 +11,14 @@ public class AsmSetPc extends AsmLine {
       this.address = address;
    }
 
+   public String getName() {
+      return name;
+   }
+
+   public String getAddress() {
+      return address;
+   }
+
    @Override
    public int getLineBytes() {
       return 0;

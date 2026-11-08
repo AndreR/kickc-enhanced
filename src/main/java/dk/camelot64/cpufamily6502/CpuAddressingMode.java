@@ -93,7 +93,7 @@ public enum CpuAddressingMode {
     * location in page zero contains the high order eight bits of the effective address. Both memory locations
     * specifying the high and low order bytes of the effective address must be in page zero."
     */
-   IZX("(zp,x)", "%i (%p,x)", 1),
+   IZX("(zp,x)", "%i.z (%p,x)", 1),
 
    /**
     * (abs,x) Indirect Absolute X <br>
