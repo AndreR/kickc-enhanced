@@ -40,7 +40,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-14** | Interprocedural | Read-Only Zero-Page Parameter Preservation across `JSR` | Pass 5 | ✅ Completed |
 | **F-15** | Codegen | Page-Aligned 16-Bit Pointer Addition Folding (`#<$xx00`) | Pass 5 | ✅ Completed |
 | **F-16** | Arithmetics | Compact 8x8->16 Multiplication without 16-bit Zero-Extension | Pass 2 SSA | ✅ Completed |
-| **F-17** | Preprocessor | `#embed` Directive for Direct Binary Asset Embedding | C23 | ⚪ Planned |
+| **F-17** | Preprocessor | `#embed` Directive for Direct Binary Asset Embedding | C23 | ✅ Completed |
 | **F-18** | Types | Typed 8-Bit Enumerations (`enum : uint8_t`) | C23 | ✅ Completed |
 | **F-19** | Operators | Compile-Time Array Length Operator `countof()` | C2Y (C29) | ✅ Completed |
 | **F-20** | Controlflow | Named Loops: `break label;` & `continue label;` | C2Y (C29) | ✅ Completed |
@@ -49,15 +49,15 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-23** | Lexer | Digit Separators (`0b1100_0011`, `1_000`) & C23 Keywords (`nullptr`, `{}`) | C23 | ✅ Completed |
 | **F-24** | Controlflow | `if`- & `switch`-Statements with Initializers | C2Y (C29) | ✅ Completed |
 | **F-25** | ABI / Opt | Auto Carry-Flag Boolean Returns (`__carry` / Auto-Carry ABI) | 6502 Idiom | ✅ Completed |
-| **F-26** | ABI / Opt | Leaf-Function Automatic Register Parameter Passing (A, X, Y) | Calling Conv | ⚪ Planned |
+| **F-26** | ABI / Opt | Leaf-Function Automatic Register Parameter Passing (A, X, Y) | Calling Conv | ✅ Completed |
 | **F-27** | Types | 8.8 Fixed-Point Data Type (`fixed8_8`) & 0-Cycle Shift Fusing | ISO TR 18037 | ⚪ Planned |
 | **F-28** | Numerics | BCD Decimal Accumulator Arithmetic (`__bcd` / `SED` Support) | 6502 Hardware | ⚪ Planned |
 | **F-29** | Memory | Hardware Stack-RAM Segment (`$0100–$01AF` Scratchpad Buffer) | C64 Architecture | ✅ Completed |
 | **F-30** | Timing | Cycle-Exact Delay Synthesizer (`delay_cycles(N)` in `<6502.h>`) | Hardware Timing | ✅ Completed |
-| **F-31** | Codegen | Pre-Indexed Zero-Page Addressing Optimization (`LDA ($zp,X)`) | 6502 Hardware | ⚪ Planned |
-| **F-32** | Generator | Compile-Time Table Generator (`__builtin_lut` / Constexpr Arrays) | Tooling | ⚪ Planned |
+| **F-31** | Codegen | Pre-Indexed Zero-Page Addressing Optimization (`LDA ($zp,X)`) | 6502 Hardware | ✅ Completed |
+| **F-32** | Generator | Compile-Time Table Generator (`__builtin_lut` / Constexpr Arrays) | Tooling | ✅ Completed |
 | **F-33** | Types | ISO-C Bitfields in Structs (`uint8_t a:1, b:1;` for Packed Bools) | ISO C | ⚪ Planned |
-| **F-34** | Peephole | Pass-5 Bit-Test Optimization (`BIT`, `BMI`, `BPL` for Bit 7/6) | Pass 5 | ⚪ Planned |
+| **F-34** | Peephole | Pass-5 Bit-Test Optimization (`BIT`, `BMI`, `BPL` for Bit 7/6) | Pass 5 | ✅ Completed |
 | **F-35** | Codegen | Multi-Entry Byte-Skipping via `BIT $xxxx` (`.byte $2c`) | 6502 Idiom | ✅ Completed |
 | **F-36** | Types | Packed 4-Bit Nibble Arrays (`uint4_t` / Color-RAM Packing) | C64 Architecture | ⚪ Planned |
 | **F-37** | Library | Library Bugfix & Acceleration: `string.h` (`memcpy_fast` fix, page-copy loop) | 6502 Library | ⚪ Planned |
@@ -196,9 +196,10 @@ This document outlines the compiler architecture, completed milestones, planned 
 * **Problem:** Even small leaf functions allocate dedicated Zero-Page parameter memory, leading to memory store instructions prior to every `JSR`.
 * **6502 Idiom:** Small leaf routines take up to three byte arguments directly in CPU registers `A`, `X`, and `Y`.
 * **Compiler Integration:**
-  * Whole-program analysis in Pass 4 identifies leaf functions (no child calls).
-  * The first 3 unsigned byte arguments are mapped directly to physical registers: `arg0 -> A`, `arg1 -> X`, `arg2 -> Y`.
+  * Whole-program analysis in `Pass1LeafFunctionRegisterCallingConvention` identifies leaf functions (no outgoing calls, not interrupts, not stackcall).
+  * Up to 3 8-bit byte arguments are mapped directly to physical registers: `arg0 -> A`, `arg1 -> X`, `arg2 -> Y`.
   * Eliminates Zero-Page allocation and eliminates `STA param_zp` at call sites.
+  * Verified bit-exact in VICE on port 6541 (`PASS!`). (Issue #27).
 
 ---
 
