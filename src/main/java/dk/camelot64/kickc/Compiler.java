@@ -851,6 +851,7 @@ public class Compiler {
       pass5Optimizations.add(new Pass5DeadStoreElimination(program));
       pass5Optimizations.add(new Pass5IllegalOpcodeOptimization(program));
       pass5Optimizations.add(new Pass5BitTestOptimization(program));
+      pass5Optimizations.add(new Pass5MultiEntryByteSkipping(program));
       pass5Optimizations.add(new Pass5PointerReloadElimination(program));
       pass5Optimizations.add(new Pass5PageAlignedPointerAdditionElimination(program));
       pass5Optimizations.add(new Pass5TailCallOptimization(program));
