@@ -685,6 +685,44 @@ This document outlines the compiler architecture, completed milestones, planned 
 
 ---
 
+---
+
+### Feature 74: ABI: Explicit Register Pinning for Foreign & Kernal Calls (__reg(A), __reg(X), __reg(Y))
+* **Problem:**
+  Calling Kernal ROM routines or external assembly libraries currently requires clunky inline assembly blocks because KickC allocates registers dynamically.
+* **Solution & Optimization:**
+  * Support explicit parameter and return register annotations: oid kernal_setlfs(uint8_t lfn __reg(A), uint8_t dev __reg(X), uint8_t sec __reg(Y)) = ;.
+  * Caller sets designated CPU registers directly without Zero-Page intermediate staging. (Issue #74).
+
+---
+
+### Feature 75: Hardware: Bit-Addressable Memory-Mapped I/O Variables (__bit(addr, n))
+* **Problem:**
+  Reading and writing single bits in hardware registers (VIC-II raster MSB, CIA flags) requires manual bitmasking and shifts (al & 0x80).
+* **Solution & Optimization:**
+  * Declare atomic bit variables: __bit(0xD011, 7) volatile bool VIC_RASTER_MSB;.
+  * Reads synthesize to direct BIT ; BMI/BPL without clobbering the accumulator. Writes synthesize to immediate ORA/AND. (Issue #75).
+
+---
+
+### Feature 76: ABI: Register-Mapped Multi-Return Structs (A, X, Y) & Structured Binding
+* **Problem:**
+  Returning multiple values from a function in standard C requires pointer parameters and memory dereferences, whereas 6502 assembly routines naturally return pairs of values across A, X, and Y.
+* **Solution & Optimization:**
+  * Map small 2-3 byte return structs directly to CPU registers A, X, and Y.
+  * Support C23 / modern structured binding: uto [posX, posY] = get_coords(); with zero memory spill. (Issue #76).
+
+---
+
+### Feature 77: Constexpr: Pure Compile-Time Function Execution for Static Table Generation
+* **Problem:**
+  Generating custom trigonometric, physics, or game-grid lookup tables requires external scripts or manual arrays.
+* **Solution & Optimization:**
+  * Allow pure C functions annotated with constexpr to execute at compile time in KickC.
+  * Emits resulting static lookup tables directly into ROM/data segments with 0 runtime code bytes. (Issue #77).
+
+---
+
 ### Feature 66: Lib: High-Performance Fixed-Point Math Suite & Retro Constants
 * **Problem:**
   While fixed-point types allow subpixel precision, mathematical operations like multiplication, division, and trigonometry require careful scaling and cycle-heavy operations on 6502. Developers need a unified, cycle-efficient fixed-point library.
@@ -762,3 +800,49 @@ This document outlines the compiler architecture, completed milestones, planned 
 * **Solution & Optimization:**
   * Informative compiler diagnostic logging reporting cycle and byte costs for each synthesized operation.
   * Automated headless VICE regression test suite validating numerical accuracy against IEEE-754 reference outputs. (Issue #73).
+
+---
+
+### Feature 78: Lang: Nested Functions & Local Subroutines (GNU C Style Local Functions)
+* **Problem:**
+  Modular helper functions frequently pollute the global namespace and require parameter-passing overhead even when only used inside a single parent function.
+* **Solution & Optimization:**
+  * Allow defining functions inside other function bodies with access to parent local variables.
+  * Inlines small helpers automatically; larger ones synthesize to private local labels (parent::child) called via 6502 JSR. (Issue #78).
+
+---
+
+### Feature 79: Safety: C2Y Resource Cleanup via defer Statements
+* **Problem:**
+  Restoring VIC-II bank states, resetting color RAM, or re-enabling interrupts across functions with multiple return paths is error-prone.
+* **Solution & Optimization:**
+  * Implement C2Y defer statements (N3199).
+  * Automatically inlines deferred cleanup statements before every 
+eturn or at scope exit in LIFO order. (Issue #79).
+
+---
+
+### Feature 80: Macro: GCC Statement Expressions ({ ...; expr; }) for Safe Macro Synthesis
+* **Problem:**
+  Safe macro authoring in C requires complex workarounds to avoid evaluating arguments multiple times.
+* **Solution & Optimization:**
+  * Implement GNU statement expressions: ({ auto _a = (a); auto _b = (b); _a > _b ? _a : _b; }).
+  * Allows declaration of scoped temporaries inside expression contexts. (Issue #80).
+
+---
+
+### Feature 81: Lang: Retro-Optimized Variadic Functions & <stdarg.h> Suite
+* **Problem:**
+  KickC lacks general variadic functions (...), preventing developers from authoring custom logging, event, or formatting routines.
+* **Solution & Optimization:**
+  * Implement variadic calling convention and <stdarg.h> (a_list, a_start, a_arg).
+  * Passes variable arguments through a compact reusable Zero-Page buffer or stack frame. (Issue #81).
+
+---
+
+### Feature 82: Async: Zero-Overhead Cooperative Protothreads & Coroutines (yield)
+* **Problem:**
+  State machines for game AI, dialog sequences, and animation scripting require complex manual state tracking and global switch-statements.
+* **Solution & Optimization:**
+  * Implement zero-stack cooperative coroutines using yield.
+  * Generates a 1-byte continuation index and dispatches via 12-cycle RTS jump table on resume. (Issue #82).
