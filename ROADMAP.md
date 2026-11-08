@@ -39,7 +39,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-13** | Arithmetics | Reciprocal Constant Division & Modulo (`/ 10`, `% 10`) | Pass 2 SSA | ✅ Completed |
 | **F-14** | Interprocedural | Read-Only Zero-Page Parameter Preservation across `JSR` | Pass 5 | ✅ Completed |
 | **F-15** | Codegen | Page-Aligned 16-Bit Pointer Addition Folding (`#<$xx00`) | Pass 5 | ✅ Completed |
-| **F-16** | Arithmetics | Compact 8x8->16 Multiplication without 16-bit Zero-Extension | Pass 2 SSA | ⚪ Planned |
+| **F-16** | Arithmetics | Compact 8x8->16 Multiplication without 16-bit Zero-Extension | Pass 2 SSA | ✅ Completed |
 | **F-17** | Preprocessor | `#embed` Directive for Direct Binary Asset Embedding | C23 | ⚪ Planned |
 | **F-18** | Types | Typed 8-Bit Enumerations (`enum : uint8_t`) | C23 | ✅ Completed |
 | **F-19** | Operators | Compile-Time Array Length Operator `countof()` | C2Y (C29) | ✅ Completed |
