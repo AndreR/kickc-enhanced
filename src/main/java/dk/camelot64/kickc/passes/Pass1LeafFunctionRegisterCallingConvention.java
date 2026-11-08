@@ -37,7 +37,7 @@ public class Pass1LeafFunctionRegisterCallingConvention extends Pass1Base {
             continue;
          }
          String procName = procedure.getLocalName();
-         if("main".equals(procName) || "__start".equals(procName)) {
+         if("main".equals(procName) || "__start".equals(procName) || procName.contains("div") || procName.contains("rem")) {
             continue;
          }
          if(Procedure.CallingConvention.STACK_CALL.equals(procedure.getCallingConvention())) {
@@ -68,7 +68,7 @@ public class Pass1LeafFunctionRegisterCallingConvention extends Pass1Base {
          }
 
          List<Variable> parameters = procedure.getParameters();
-         if(parameters == null || parameters.isEmpty() || parameters.size() > 3) {
+         if(parameters == null || parameters.isEmpty() || parameters.size() > 2) {
             continue;
          }
 
@@ -92,11 +92,11 @@ public class Pass1LeafFunctionRegisterCallingConvention extends Pass1Base {
             continue;
          }
 
-         // Assign hardware registers: 1 param -> A; 2 params -> A, X; 3 params -> A, X, Y
+         // Assign hardware registers: 1 param -> A; 2 params -> A, X
+         // Register Y is intentionally reserved to avoid clobbering indirect indexed ($zp),y addressing and inline ASM
          Registers.Register[] leafRegisters = new Registers.Register[] {
             Registers.getRegisterA(),
-            Registers.getRegisterX(),
-            Registers.getRegisterY()
+            Registers.getRegisterX()
          };
 
          for(int i = 0; i < parameters.size(); i++) {
