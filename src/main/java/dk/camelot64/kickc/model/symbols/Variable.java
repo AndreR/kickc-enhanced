@@ -81,6 +81,15 @@ public class Variable implements Symbol {
    /** Explicit member byte offset within a struct/union (for anonymous union/struct members). Null if calculated consecutively. */
    private Long structMemberOffset;
 
+   /** If the variable is an ISO-C bitfield member of a struct. */
+   private boolean bitField = false;
+   /** Bit width of the bitfield (e.g. 1..16). */
+   private Integer bitFieldWidth;
+   /** Bit offset (0..15) within the underlying storage container. */
+   private Integer bitFieldOffset;
+   /** Name of the underlying storage member inside the struct (e.g. "__bf_0"). */
+   private String bitFieldContainerName;
+
    /** Specifies that the variable must be aligned in memory. Only allowed for arrays & strings. [Only Variables in memory and arrays] */
    private Integer memoryAlignment;
 
@@ -505,6 +514,38 @@ public class Variable implements Symbol {
 
    public void setStructMemberOffset(Long structMemberOffset) {
       this.structMemberOffset = structMemberOffset;
+   }
+
+   public boolean isBitField() {
+      return bitField;
+   }
+
+   public void setBitField(boolean bitField) {
+      this.bitField = bitField;
+   }
+
+   public Integer getBitFieldWidth() {
+      return bitFieldWidth;
+   }
+
+   public void setBitFieldWidth(Integer bitFieldWidth) {
+      this.bitFieldWidth = bitFieldWidth;
+   }
+
+   public Integer getBitFieldOffset() {
+      return bitFieldOffset;
+   }
+
+   public void setBitFieldOffset(Integer bitFieldOffset) {
+      this.bitFieldOffset = bitFieldOffset;
+   }
+
+   public String getBitFieldContainerName() {
+      return bitFieldContainerName;
+   }
+
+   public void setBitFieldContainerName(String bitFieldContainerName) {
+      this.bitFieldContainerName = bitFieldContainerName;
    }
 
    public void setMemoryArea(MemoryArea memoryArea) {

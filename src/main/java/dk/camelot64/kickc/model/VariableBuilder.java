@@ -116,15 +116,23 @@ public class VariableBuilder {
    }
 
    private boolean getStructUnwind() {
-      return isStructUnwind(this.type, getKind(), config);
+      return isStructUnwind(this.type, getKind(), config, this.scope);
    }
 
    public static boolean isStructUnwind(SymbolType type, Variable.Kind kind, VariableBuilderConfig config) {
+      return isStructUnwind(type, kind, config, null);
+   }
+
+   public static boolean isStructUnwind(SymbolType type, Variable.Kind kind, VariableBuilderConfig config, Scope scope) {
       if(config.isStructModelClassic())
          return false;
       if(type instanceof SymbolTypeStruct) {
          final SymbolTypeStruct typeStruct = (SymbolTypeStruct) type;
          if(typeStruct.isUnion())
+            return false;
+         ProgramScope programScope = scope != null ? scope.getProgramScope() : null;
+         StructDefinition structDef = typeStruct.getStructDefinition(programScope);
+         if(structDef != null && structDef.hasBitfields())
             return false;
          if(Variable.Kind.LOAD_STORE.equals(kind))
             return false;

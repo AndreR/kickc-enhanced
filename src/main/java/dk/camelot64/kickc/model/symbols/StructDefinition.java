@@ -26,6 +26,13 @@ public class StructDefinition extends Scope {
       return isUnion;
    }
 
+   public boolean hasBitfields() {
+      for(Variable member : getAllVars(false)) {
+         if(member.isBitField()) return true;
+      }
+      return false;
+   }
+
    /**
     * Get a struct member variable
     *
@@ -50,6 +57,12 @@ public class StructDefinition extends Scope {
    public long getMemberByteOffset(Variable member, ProgramScope programScope) {
       if(member.getStructMemberOffset() != null)
          return member.getStructMemberOffset();
+      if(member.isBitField()) {
+         Variable container = getMember(member.getBitFieldContainerName());
+         if(container != null) {
+            return getMemberByteOffset(container, programScope);
+         }
+      }
       if(isUnion)
          return 0;
       long byteOffset = 0;
@@ -57,6 +70,9 @@ public class StructDefinition extends Scope {
          if(structMember.equals(member)) {
             break;
          } else {
+            if(structMember.isBitField()) {
+               continue;
+            }
             if(structMember.getStructMemberOffset() != null) {
                byteOffset = Math.max(byteOffset, structMember.getStructMemberOffset() + SymbolTypeStruct.getMemberSizeBytes(structMember.getType(), structMember.getArraySize(), programScope));
             } else {

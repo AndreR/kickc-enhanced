@@ -1334,6 +1334,30 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       String varName = varDecl.getVarName();
       KickCParser.ExprContext initializer = ctx.expr();
       StatementSource declSource = new StatementSource((ParserRuleContext) ctx.parent.parent);
+      if(ctx.bitfieldExpr() != null) {
+         if(!varDecl.isStructMember()) {
+            throw new CompileError("Bitfields are only allowed inside structs", declSource);
+         }
+         if(initializer != null) {
+            throw new CompileError("Bitfields inside structs cannot have initializers", declSource);
+         }
+         RValue widthVal = (RValue) visit(ctx.bitfieldExpr().expr());
+         if(!(widthVal instanceof ConstantInteger)) {
+            throw new CompileError("Bitfield width must be a constant integer", declSource);
+         }
+         int width = ((ConstantInteger) widthVal).getInteger().intValue();
+         if(width <= 0) {
+            throw new CompileError("Named bitfield width must be positive: " + width, declSource);
+         }
+         final SymbolType effectiveType = varDecl.getEffectiveType();
+         varDecl.exitVar();
+         packBitfield(varName, width, effectiveType, declSource);
+         return null;
+      }
+      if(currentBitfieldPackState != null) {
+         currentBitfieldPackState.currentContainerName = null;
+         currentBitfieldPackState.currentBitOffset = 0;
+      }
       try {
          if(isLutCall(initializer)) {
             return handleDeclVariableInitLut(ctx, (KickCParser.ExprCallContext) initializer, declSource);
@@ -2530,6 +2554,16 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return null;
    }
 
+   private static class BitfieldPackState {
+      int containerIndex = 0;
+      int currentBitOffset = 0;
+      int containerCapacityBits = 8;
+      String currentContainerName = null;
+      SymbolType currentContainerType = null;
+   }
+
+   private BitfieldPackState currentBitfieldPackState = null;
+
    @Override
    public Object visitStructDef(KickCParser.StructDefContext ctx) {
 
@@ -2543,8 +2577,14 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       }
       StructDefinition structDefinition = program.getScope().addStructDefinition(structDefName, isUnion);
       scopeStack.push(structDefinition);
-      for(KickCParser.StructMembersContext memberCtx : ctx.structMembers()) {
-         visit(memberCtx);
+      BitfieldPackState prevBitfieldPackState = currentBitfieldPackState;
+      currentBitfieldPackState = new BitfieldPackState();
+      try {
+         for(KickCParser.StructMembersContext memberCtx : ctx.structMembers()) {
+            visit(memberCtx);
+         }
+      } finally {
+         currentBitfieldPackState = prevBitfieldPackState;
       }
       scopeStack.pop();
 
@@ -2570,6 +2610,71 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
       varDecl.setDeclType(structDefinition.getType());
       return null;
+   }
+
+   @Override
+   public Object visitDeclBitfieldUnnamed(KickCParser.DeclBitfieldUnnamedContext ctx) {
+      StatementSource declSource = new StatementSource((ParserRuleContext) ctx.parent.parent);
+      if(currentBitfieldPackState == null) {
+         throw new CompileError("Unnamed bitfield is only allowed inside structs", declSource);
+      }
+      RValue widthVal = (RValue) visit(ctx.bitfieldExpr().expr());
+      if(!(widthVal instanceof ConstantInteger)) {
+         throw new CompileError("Bitfield width must be a constant integer", declSource);
+      }
+      int width = ((ConstantInteger) widthVal).getInteger().intValue();
+      if(width == 0) {
+         currentBitfieldPackState.currentContainerName = null;
+         currentBitfieldPackState.currentBitOffset = 0;
+      } else if(width > 0) {
+         packBitfield(null, width, varDecl.getEffectiveType(), declSource);
+      } else {
+         throw new CompileError("Bitfield width cannot be negative: " + width, declSource);
+      }
+      return null;
+   }
+
+   private Variable packBitfield(String memberName, int width, SymbolType declaredType, StatementSource source) {
+      if(width < 0 || width > 16) {
+         throw new CompileError("Bitfield width " + width + " out of valid range (1..16)", source);
+      }
+      if(currentBitfieldPackState == null) {
+         throw new CompileError("Bitfields are only allowed inside structs", source);
+      }
+
+      int unitCapacity = (declaredType.getSizeBytes() > 1 || width > 8) ? 16 : 8;
+      SymbolType containerType = (unitCapacity == 16) ? SymbolType.WORD : SymbolType.BYTE;
+
+      if(currentBitfieldPackState.currentContainerName == null
+         || (currentBitfieldPackState.currentBitOffset + width > currentBitfieldPackState.containerCapacityBits)
+         || (unitCapacity > currentBitfieldPackState.containerCapacityBits)) {
+
+         String containerName = "__bf_" + currentBitfieldPackState.containerIndex++;
+         StructDefinition structDef = (StructDefinition) getCurrentScope();
+         new VariableBuilder(containerName, structDef, false, false, containerType, java.util.Collections.emptyList(), structDef.getSegmentData(), program.getTargetPlatform().getVariableBuilderConfig()).build();
+
+         currentBitfieldPackState.currentContainerName = containerName;
+         currentBitfieldPackState.currentBitOffset = 0;
+         currentBitfieldPackState.containerCapacityBits = unitCapacity;
+         currentBitfieldPackState.currentContainerType = containerType;
+      }
+
+      int bitOffset = currentBitfieldPackState.currentBitOffset;
+      String containerName = currentBitfieldPackState.currentContainerName;
+      currentBitfieldPackState.currentBitOffset += width;
+
+      if(memberName == null) {
+         return null;
+      }
+
+      StructDefinition structDef = (StructDefinition) getCurrentScope();
+      Variable memberVar = new VariableBuilder(memberName, structDef, false, false, declaredType, java.util.Collections.emptyList(), structDef.getSegmentData(), program.getTargetPlatform().getVariableBuilderConfig()).build();
+      memberVar.setBitField(true);
+      memberVar.setBitFieldWidth(width);
+      memberVar.setBitFieldOffset(bitOffset);
+      memberVar.setBitFieldContainerName(containerName);
+
+      return memberVar;
    }
 
    @Override
@@ -2919,8 +3024,136 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return exprNotConsumed.contains(rValue);
    }
 
+   public Variable getBitfieldMember(KickCParser.ExprContext exprCtx) {
+      while(exprCtx instanceof KickCParser.ExprParContext) {
+         KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) exprCtx).commaExpr();
+         if(commaCtx instanceof KickCParser.CommaNoneContext) {
+            exprCtx = ((KickCParser.CommaNoneContext) commaCtx).expr();
+         } else if(commaCtx instanceof KickCParser.CommaSimpleContext) {
+            exprCtx = ((KickCParser.CommaSimpleContext) commaCtx).expr();
+         } else {
+            return null;
+         }
+      }
+      if(exprCtx instanceof KickCParser.ExprDotContext dotCtx) {
+         SymbolType structType = inferExprType(dotCtx.expr());
+         if(structType instanceof SymbolTypeStruct) {
+            StructDefinition structDef = ((SymbolTypeStruct) structType).getStructDefinition(program.getScope());
+            if(structDef != null) {
+               Variable member = structDef.getMember(dotCtx.NAME().getText());
+               if(member != null && member.isBitField()) return member;
+            }
+         }
+      } else if(exprCtx instanceof KickCParser.ExprArrowContext arrowCtx) {
+         SymbolType ptrType = inferExprType(arrowCtx.expr());
+         if(ptrType instanceof SymbolTypePointer && ((SymbolTypePointer) ptrType).getElementType() instanceof SymbolTypeStruct) {
+            StructDefinition structDef = ((SymbolTypeStruct) ((SymbolTypePointer) ptrType).getElementType()).getStructDefinition(program.getScope());
+            if(structDef != null) {
+               Variable member = structDef.getMember(arrowCtx.NAME().getText());
+               if(member != null && member.isBitField()) return member;
+            }
+         }
+      }
+      return null;
+   }
+
+   public LValue getBitfieldContainerLValue(KickCParser.ExprContext exprCtx, Variable bitfieldMember) {
+      while(exprCtx instanceof KickCParser.ExprParContext) {
+         KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) exprCtx).commaExpr();
+         if(commaCtx instanceof KickCParser.CommaNoneContext) {
+            exprCtx = ((KickCParser.CommaNoneContext) commaCtx).expr();
+         } else if(commaCtx instanceof KickCParser.CommaSimpleContext) {
+            exprCtx = ((KickCParser.CommaSimpleContext) commaCtx).expr();
+         }
+      }
+      if(exprCtx instanceof KickCParser.ExprDotContext dotCtx) {
+         RValue structExpr = (RValue) visit(dotCtx.expr());
+         return new StructMemberRef(structExpr, bitfieldMember.getBitFieldContainerName());
+      } else if(exprCtx instanceof KickCParser.ExprArrowContext arrowCtx) {
+         RValue structPtrExpr = (RValue) visit(arrowCtx.expr());
+         return new StructMemberRef(new PointerDereferenceSimple(structPtrExpr), bitfieldMember.getBitFieldContainerName());
+      }
+      throw new CompileError("Unexpected bitfield expression: " + exprCtx.getText());
+   }
+
+   public RValue desugarBitfieldRead(ParserRuleContext ctx, StructMemberRef containerRef, Variable member) {
+      int offset = member.getBitFieldOffset();
+      int width = member.getBitFieldWidth();
+      long valMask = (1L << width) - 1;
+      int containerSize = member.getType().getSizeBytes();
+
+      RValue val = containerRef;
+      if(offset > 0) {
+         val = addExprBinary(ctx, val, Operators.SHIFT_RIGHT, new ConstantInteger((long) offset));
+      }
+      boolean needsMask = !(offset == 0 && ((containerSize == 1 && width == 8) || (containerSize == 2 && width == 16)));
+      if(needsMask) {
+         val = addExprBinary(ctx, val, Operators.BOOL_AND, new ConstantInteger(valMask));
+      }
+      if((member.getType() instanceof SymbolTypeIntegerFixed && ((SymbolTypeIntegerFixed) member.getType()).isSigned()) && width < (containerSize * 8)) {
+         long signBit = 1L << (width - 1);
+         RValue xored = addExprBinary(ctx, val, Operators.BOOL_XOR, new ConstantInteger(signBit));
+         val = addExprBinary(ctx, xored, Operators.MINUS, new ConstantInteger(signBit));
+      }
+      return val;
+   }
+
+   public RValue writeBitfield(ParserRuleContext ctx, LValue containerLVal, Variable bitfieldMember, RValue rhsVal) {
+      int offset = bitfieldMember.getBitFieldOffset();
+      int width = bitfieldMember.getBitFieldWidth();
+      int containerSize = bitfieldMember.getType().getSizeBytes();
+      long valMask = (1L << width) - 1;
+      long fullMask = (valMask << offset);
+      long invMask = (~fullMask) & (containerSize == 1 ? 0xFFL : 0xFFFFL);
+
+      if(offset == 0 && ((containerSize == 1 && width == 8) || (containerSize == 2 && width == 16))) {
+         Statement stmt = new StatementAssignment(containerLVal, rhsVal, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx)));
+         addStatement(stmt);
+         consumeExpr(containerLVal);
+         consumeExpr(rhsVal);
+         return rhsVal;
+      }
+
+      RValue containerRVal = copyLValue(containerLVal);
+      RValue cleared = addExprBinary(ctx, containerRVal, Operators.BOOL_AND, new ConstantInteger(invMask));
+
+      RValue insertBits;
+      if(rhsVal instanceof ConstantInteger) {
+         long constVal = ((ConstantInteger) rhsVal).getInteger();
+         long shiftedConst = (constVal & valMask) << offset;
+         insertBits = new ConstantInteger(shiftedConst);
+      } else {
+         RValue maskedRhs = (width == (containerSize * 8)) ? rhsVal : addExprBinary(ctx, rhsVal, Operators.BOOL_AND, new ConstantInteger(valMask));
+         if(offset > 0) {
+            insertBits = addExprBinary(ctx, maskedRhs, Operators.SHIFT_LEFT, new ConstantInteger((long) offset));
+         } else {
+            insertBits = maskedRhs;
+         }
+      }
+
+      RValue newContainerVal;
+      if(insertBits instanceof ConstantInteger && ((ConstantInteger) insertBits).getInteger() == 0L) {
+         newContainerVal = cleared;
+      } else {
+         newContainerVal = addExprBinary(ctx, cleared, Operators.BOOL_OR, insertBits);
+      }
+
+      Statement stmt = new StatementAssignment(containerLVal, newContainerVal, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx)));
+      addStatement(stmt);
+      consumeExpr(containerLVal);
+      consumeExpr(newContainerVal);
+
+      return rhsVal;
+   }
+
    @Override
    public Object visitExprAssignment(KickCParser.ExprAssignmentContext ctx) {
+      Variable bitfieldMember = getBitfieldMember(ctx.expr(0));
+      if(bitfieldMember != null) {
+         LValue containerLVal = getBitfieldContainerLValue(ctx.expr(0), bitfieldMember);
+         RValue rhsVal = (RValue) visit(ctx.expr(1));
+         return writeBitfield(ctx, containerLVal, bitfieldMember, rhsVal);
+      }
       Object val = visit(ctx.expr(0));
       if(val instanceof ConstantRef) {
          throw new CompileError("const variable may not be modified " + val, new StatementSource(ctx));
@@ -2942,6 +3175,17 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public Object visitExprAssignmentCompound(KickCParser.ExprAssignmentCompoundContext ctx) {
+      Variable bitfieldMember = getBitfieldMember(ctx.expr(0));
+      if(bitfieldMember != null) {
+         LValue containerLVal = getBitfieldContainerLValue(ctx.expr(0), bitfieldMember);
+         RValue rhsVal = (RValue) visit(ctx.expr(1));
+         String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
+         Operator operator = Operators.getBinaryCompound(op);
+         StructMemberRef containerRef = (StructMemberRef) copyLValue(containerLVal);
+         RValue currentVal = desugarBitfieldRead(ctx, containerRef, bitfieldMember);
+         RValue updatedVal = addExprBinary(ctx, currentVal, operator, rhsVal);
+         return writeBitfield(ctx, containerLVal, bitfieldMember, updatedVal);
+      }
       // Assignment (rValue/lValue)
       Object value = visit(ctx.expr(0));
       if(!(value instanceof LValue lValue)) {
@@ -2999,6 +3243,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public Object visitExprDot(KickCParser.ExprDotContext ctx) {
+      SymbolType structType = inferExprType(ctx.expr());
+      if(structType instanceof SymbolTypeStruct) {
+         StructDefinition structDef = ((SymbolTypeStruct) structType).getStructDefinition(program.getScope());
+         if(structDef != null) {
+            Variable member = structDef.getMember(ctx.NAME().getText());
+            if(member != null && member.isBitField()) {
+               RValue structExpr = (RValue) visit(ctx.expr());
+               StructMemberRef containerRef = new StructMemberRef(structExpr, member.getBitFieldContainerName());
+               return desugarBitfieldRead(ctx, containerRef, member);
+            }
+         }
+      }
       RValue structExpr = (RValue) visit(ctx.expr());
       String name = ctx.NAME().getText();
       StructMemberRef structMemberRef = new StructMemberRef(structExpr, name);
@@ -3008,6 +3264,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public Object visitExprArrow(KickCParser.ExprArrowContext ctx) {
+      SymbolType ptrType = inferExprType(ctx.expr());
+      if(ptrType instanceof SymbolTypePointer && ((SymbolTypePointer) ptrType).getElementType() instanceof SymbolTypeStruct) {
+         StructDefinition structDef = ((SymbolTypeStruct) ((SymbolTypePointer) ptrType).getElementType()).getStructDefinition(program.getScope());
+         if(structDef != null) {
+            Variable member = structDef.getMember(ctx.NAME().getText());
+            if(member != null && member.isBitField()) {
+               RValue structPtrExpr = (RValue) visit(ctx.expr());
+               StructMemberRef containerRef = new StructMemberRef(new PointerDereferenceSimple(structPtrExpr), member.getBitFieldContainerName());
+               return desugarBitfieldRead(ctx, containerRef, member);
+            }
+         }
+      }
       RValue structPtrExpr = (RValue) visit(ctx.expr());
       String name = ctx.NAME().getText();
       StructMemberRef structMemberRef = new StructMemberRef(new PointerDereferenceSimple(structPtrExpr), name);
@@ -3556,9 +3824,12 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public RValue visitExprUnary(KickCParser.ExprUnaryContext ctx) {
-      RValue child = (RValue) this.visit(ctx.expr());
       String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
       Operator operator = Operators.getUnary(op);
+      if(Operators.ADDRESS_OF.equals(operator) && getBitfieldMember(ctx.expr()) != null) {
+         throw new CompileError("Cannot take address of bitfield member", new StatementSource(ctx));
+      }
+      RValue child = (RValue) this.visit(ctx.expr());
       return addExprUnary(ctx, operator, child);
    }
 
@@ -3872,6 +4143,14 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             List<PrePostModifier> modifiers,
             StatementSource source) {
          for(PrePostModifier mod : modifiers) {
+            if(mod.bitfieldMember != null) {
+               StructMemberRef containerRef = (StructMemberRef) copyLValue(mod.containerLVal);
+               RValue currentVal = parser.desugarBitfieldRead(mod.ctx, containerRef, mod.bitfieldMember);
+               Operator op = mod.operator.equals(Operators.INCREMENT) ? Operators.PLUS : Operators.MINUS;
+               RValue updatedVal = parser.addExprBinary(mod.ctx, currentVal, op, new ConstantInteger(1L));
+               parser.writeBitfield(mod.ctx, mod.containerLVal, mod.bitfieldMember, updatedVal);
+               continue;
+            }
             if(mod.child instanceof ConstantValue) {
                throw new CompileError("Constants can not be modified " + mod.child.toString(), source);
             }
@@ -3894,6 +4173,16 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
       @Override
       public Void visitExprPostMod(KickCParser.ExprPostModContext ctx) {
+         Variable bitfieldMember = mainParser.getBitfieldMember(ctx.expr());
+         if(bitfieldMember != null) {
+            LValue containerLVal = mainParser.getBitfieldContainerLValue(ctx.expr(), bitfieldMember);
+            String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
+            Operator operator = Operators.getUnary(op);
+            PrePostModifier modifier = new PrePostModifier(ctx, operator, bitfieldMember, containerLVal);
+            postMods.add(modifier);
+            this.visit(ctx.expr());
+            return null;
+         }
          // First handle the ++/-- modifier
          RValue child = (RValue) mainParser.visit(ctx.expr());
          String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
@@ -3907,6 +4196,16 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
       @Override
       public Void visitExprPreMod(KickCParser.ExprPreModContext ctx) {
+         Variable bitfieldMember = mainParser.getBitfieldMember(ctx.expr());
+         if(bitfieldMember != null) {
+            LValue containerLVal = mainParser.getBitfieldContainerLValue(ctx.expr(), bitfieldMember);
+            String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
+            Operator operator = Operators.getUnary(op);
+            PrePostModifier modifier = new PrePostModifier(ctx, operator, bitfieldMember, containerLVal);
+            preMods.add(modifier);
+            this.visit(ctx.expr());
+            return null;
+         }
          // First handle the ++/-- modifier
          RValue child = (RValue) mainParser.visit(ctx.expr());
          String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
@@ -3921,10 +4220,20 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       private static class PrePostModifier {
          RValue child;
          public Operator operator;
+         ParserRuleContext ctx;
+         Variable bitfieldMember;
+         LValue containerLVal;
 
          PrePostModifier(RValue child, Operator operator) {
             this.child = child;
             this.operator = operator;
+         }
+
+         PrePostModifier(ParserRuleContext ctx, Operator operator, Variable bitfieldMember, LValue containerLVal) {
+            this.ctx = ctx;
+            this.operator = operator;
+            this.bitfieldMember = bitfieldMember;
+            this.containerLVal = containerLVal;
          }
       }
 

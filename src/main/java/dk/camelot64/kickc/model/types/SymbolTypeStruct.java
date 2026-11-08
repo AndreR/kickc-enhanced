@@ -67,6 +67,7 @@ public class SymbolTypeStruct implements SymbolType {
    }
 
    public StructDefinition getStructDefinition(ProgramScope programScope) {
+      if(programScope == null) return null;
       return programScope.getLocalStructDefinition(structName);
    }
 
@@ -89,6 +90,7 @@ public class SymbolTypeStruct implements SymbolType {
       int sizeBytes = 0;
       if(isUnion) {
          for(Variable member : structDefinition.getAllVars(false)) {
+            if(member.isBitField()) continue;
             SymbolType memberType = member.getType();
             int memberSize = getMemberSizeBytes(memberType, member.getArraySize(), programScope);
             if(member.getStructMemberOffset() != null) {
@@ -99,6 +101,7 @@ public class SymbolTypeStruct implements SymbolType {
          }
       }  else {
          for(Variable member : structDefinition.getAllVars(false)) {
+            if(member.isBitField()) continue;
             SymbolType memberType = member.getType();
             int memberSize = getMemberSizeBytes(memberType, member.getArraySize(), programScope);
             if(member.getStructMemberOffset() != null) {

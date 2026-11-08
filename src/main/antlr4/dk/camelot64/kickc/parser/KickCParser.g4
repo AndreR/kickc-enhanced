@@ -53,8 +53,13 @@ declaratorInitList
     ;
 
 declaratorInit
-    : declarator ('=' expr)? #declVariableInitExpr
+    : declarator (COLON bitfieldExpr)? ('=' expr)? #declVariableInitExpr
     | declarator '=' kasmContent #declVariableInitKasm
+    | COLON bitfieldExpr #declBitfieldUnnamed
+    ;
+
+bitfieldExpr
+    : expr
     ;
 
 typeDef
