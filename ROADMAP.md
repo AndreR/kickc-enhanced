@@ -60,12 +60,12 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-34** | Peephole | Pass-5 Bit-Test Optimization (`BIT`, `BMI`, `BPL` for Bit 7/6) | Pass 5 | ✅ Completed |
 | **F-35** | Codegen | Multi-Entry Byte-Skipping via `BIT $xxxx` (`.byte $2c`) | 6502 Idiom | ✅ Completed |
 | **F-36** | Types | Packed 4-Bit Nibble Arrays (`uint4_t` / Color-RAM Packing) | C64 Architecture | ⚪ Planned |
-| **F-37** | Library | Library Bugfix & Acceleration: `string.h` (`memcpy_fast` fix, page-copy loop) | 6502 Library | ⚪ Planned |
-| **F-38** | Library | Library: `stdlib.h` (`RAND_MAX` bugfix, polymorphic `abs` via C11 `_Generic`) | C11 Library | ⚪ Planned |
-| **F-39** | Library | Library: `ctype.h` / `ctype.c` Standard Conformance (`tolower`, `isdigit`, etc.) | ISO C Library | ⚪ Planned |
-| **F-40** | Library | Library: `conio-cbm-shared.c` Performance & C23 `bool` Modernization | CBM Library | ⚪ Planned |
-| **F-41** | Library | Library: `c64-bitmap.c` ROM Safety Fix & 8-Bit Y Bresenham Routine | C64 Library | ⚪ Planned |
-| **F-42** | Library | Library: `printf.c` / `sprintf.c` 8/16-Bit Fast-Path Dispatch | 6502 Library | ⚪ Planned |
+| **F-37** | Library | Library Bugfix & Acceleration: `string.h` (`memcpy_fast` fix, page-copy loop) | 6502 Library | ✅ Completed |
+| **F-38** | Library | Library: `stdlib.h` (`RAND_MAX` bugfix, polymorphic `abs` via C11 `_Generic`) | C11 Library | ✅ Completed |
+| **F-39** | Library | Library: `ctype.h` / `ctype.c` Standard Conformance (`tolower`, `isdigit`, etc.) | ISO C Library | ✅ Completed |
+| **F-40** | Library | Library: `conio-cbm-shared.c` Performance & C23 `bool` Modernization | CBM Library | ✅ Completed |
+| **F-41** | Library | Library: `c64-bitmap.c` ROM Safety Fix & 8-Bit Y Bresenham Routine | C64 Library | ✅ Completed |
+| **F-42** | Library | Library: `printf.c` / `sprintf.c` 8/16-Bit Fast-Path Dispatch | 6502 Library | ✅ Completed |
 | **F-43** | Library | Library Bugfix: `stdint.h` & `limits.h` (32-Bit Limits, Macro Conversion, `limits.h`) | ISO C Library | ⚪ Planned |
 | **F-44** | Library | Library Bugfix: `sine.c` (`sin16s_gen2` Precedence) & `c64-tod.c` (AM/PM Masking) | 6502 Library | ⚪ Planned |
 | **F-45** | Math | Library Math: Fast 6502 Division & Zero-RAM Square Root (`sqrt16`, `div16u`) | 6502 Math | ⚪ Planned |
@@ -548,9 +548,12 @@ This document outlines the compiler architecture, completed milestones, planned 
 * **Problem:**
   High-ratio crunchers like ZX02, PuCrunch, or Exomizer employ optimal dynamic programming parsers that require megabytes of host RAM and millions of instructions, making real-time on-device compression completely intractable on a 1 MHz NMOS 6502. However, games frequently require fast real-time on-device compression (e.g. savegame serialization, procedural world staging, network packets, delta buffers) directly before writing to slow IEC serial disk drives or serial modems.
 * **Solution & Optimization:**
-  * Implement an ultra-fast, symmetric 6502 RLE suite in <rle.h> and le.c:
-    * le_pack(const void* src, void* dest, uint16_t src_len): Compresses 8 KB of sparse data in ~15–25 milliseconds (< 2 video frames) with zero heap/RAM allocation (utilizing only 2 ZP pointers and a run counter).
-    * le_unpack(const void* src, void* dest, uint16_t max_dest_len): Unpacks data in ~8–12 milliseconds.
+  * Implement an ultra-fast, symmetric 6502 RLE suite in <rle.h> and 
+le.c:
+    * 
+le_pack(const void* src, void* dest, uint16_t src_len): Compresses 8 KB of sparse data in ~15–25 milliseconds (< 2 video frames) with zero heap/RAM allocation (utilizing only 2 ZP pointers and a run counter).
+    * 
+le_unpack(const void* src, void* dest, uint16_t max_dest_len): Unpacks data in ~8–12 milliseconds.
     * Uses a standardized PackBits / byte-run format (flagging repeated byte runs vs. raw literal spans), achieving 60–80% of ZX02's compression ratio on sparse state tables at 100,000x faster compression speed.
 
 ## Quality Assurance & Automated Regression Test Suites (QA-01 to QA-03)
