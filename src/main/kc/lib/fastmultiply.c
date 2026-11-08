@@ -41,15 +41,10 @@ signed int mulf8s(signed char a, signed char b) {
 
 // Fast multiply two unsigned ints to a double unsigned int result
 unsigned long mulf16u(unsigned int a, unsigned int b) {
-    unsigned char a_lo = BYTE0(a);
-    unsigned char a_hi = BYTE1(a);
-    unsigned char b_lo = BYTE0(b);
-    unsigned char b_hi = BYTE1(b);
-
-    unsigned int p0 = fast_mul8u(a_lo, b_lo);
-    unsigned int p1 = fast_mul8u(a_hi, b_lo);
-    unsigned int p2 = fast_mul8u(a_lo, b_hi);
-    unsigned int p3 = fast_mul8u(a_hi, b_hi);
+    unsigned int p0 = fast_mul8u(BYTE0(a), BYTE0(b));
+    unsigned int p1 = fast_mul8u(BYTE1(a), BYTE0(b));
+    unsigned int p2 = fast_mul8u(BYTE0(a), BYTE1(b));
+    unsigned int p3 = fast_mul8u(BYTE1(a), BYTE1(b));
 
     unsigned long res = p0;
     res += ((unsigned long)p1) << 8;
