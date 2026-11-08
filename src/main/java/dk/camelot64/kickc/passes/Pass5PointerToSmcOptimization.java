@@ -100,6 +100,87 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
       return false;
    }
 
+   private static boolean readsRegisterY(AsmInstruction inst) {
+      if(inst.getCpuOpcode() == null) return false;
+      CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+      if(CpuAddressingMode.ABY.equals(mode) || CpuAddressingMode.IZY.equals(mode) || CpuAddressingMode.ZPY.equals(mode)) {
+         return true;
+      }
+      String mnem = inst.getCpuOpcode().getMnemonic().toLowerCase();
+      return mnem.equals("dey") || mnem.equals("iny") || mnem.equals("tya") || mnem.equals("cpy") || mnem.equals("sty");
+   }
+
+   private static boolean overwritesRegisterY(AsmInstruction inst) {
+      if(inst.getCpuOpcode() == null) return false;
+      String mnem = inst.getCpuOpcode().getMnemonic().toLowerCase();
+      if("jsr".equals(mnem)) return true;
+      return inst.getCpuOpcode().getClobber().isRegisterY();
+   }
+
+   private static void tryEliminateDeadLdyZero(LineRef dRef, AsmInstruction dInst) {
+      List<AsmLine> lines = dRef.chunk.getLines();
+      int dIdx = lines.indexOf(dInst);
+      if(dIdx <= 0) return;
+
+      int ldyIdx = -1;
+      for(int i = dIdx - 1; i >= 0; i--) {
+         AsmLine l = lines.get(i);
+         if(l instanceof AsmComment || l instanceof AsmConstant || l instanceof AsmLabelDecl) continue;
+         if(l instanceof AsmLabel || l instanceof AsmScopeBegin || l instanceof AsmScopeEnd || l instanceof AsmInlineKickAsm) {
+            break;
+         }
+         if(l instanceof AsmInstruction inst) {
+            if(inst.getCpuOpcode() == null) break;
+            CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+            if(CpuAddressingMode.REL.equals(mode)) break;
+            String m = inst.getCpuOpcode().getMnemonic().toLowerCase();
+            if(m.equals("jmp") || m.equals("jsr") || m.equals("rts") || m.equals("rti")) break;
+            if(readsRegisterY(inst)) break;
+            if("ldy".equals(m) && CpuAddressingMode.IMM.equals(mode) && AsmProgramStaticRegisterValues.matchImm(inst.getOperand1(), "#0")) {
+               ldyIdx = i;
+               break;
+            }
+            if(overwritesRegisterY(inst)) {
+               break;
+            }
+         }
+      }
+
+      if(ldyIdx == -1) return;
+
+      boolean yIsDead = false;
+      for(int i = dIdx + 1; i < lines.size(); i++) {
+         AsmLine l = lines.get(i);
+         if(l instanceof AsmComment || l instanceof AsmConstant || l instanceof AsmLabelDecl) continue;
+         if(l instanceof AsmLabel || l instanceof AsmScopeBegin || l instanceof AsmScopeEnd || l instanceof AsmInlineKickAsm) {
+            break;
+         }
+         if(l instanceof AsmInstruction inst) {
+            if(inst.getCpuOpcode() == null) break;
+            CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+            if(CpuAddressingMode.REL.equals(mode)) break;
+            String m = inst.getCpuOpcode().getMnemonic().toLowerCase();
+            if("rts".equals(m)) {
+               yIsDead = true;
+               break;
+            }
+            if(m.equals("jmp") || m.equals("jsr") || m.equals("rti")) break;
+            if(readsRegisterY(inst)) {
+               return;
+            }
+            if(overwritesRegisterY(inst)) {
+               yIsDead = true;
+               break;
+            }
+         }
+      }
+
+      if(yIsDead) {
+         AsmLine ldyLine = lines.get(ldyIdx);
+         lines.remove(ldyLine);
+      }
+   }
+
    @Override
    public boolean optimize() {
       if(performed) return false;
@@ -110,6 +191,7 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
 
       while(passModified) {
          passModified = false;
+         AsmProgramStaticRegisterValues staticValues = new AsmProgramStaticRegisterValues(getAsmProgram());
 
          List<LineRef> allLines = new ArrayList<>();
          String currentScope = null;
@@ -256,48 +338,49 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
                   continue;
                }
 
-               // Verify that all dereference instructions have valid absolute addressing opcodes
+               // Step 1: Analyze addressing mode for each dereference site using static register data-flow analysis
+               // Statically proven Y=0 uses ABS ($ffff), while dynamic or indexed Y uses ABY ($ffff,y)
                boolean allOpcodesValid = true;
-               Map<LineRef, CpuOpcode> siteAbsOps = new LinkedHashMap<>();
+               Map<LineRef, CpuOpcode> siteTargetOps = new LinkedHashMap<>();
+               Map<LineRef, Boolean> siteIsYZero = new LinkedHashMap<>();
+
                for(LineRef dRef : derefLines) {
                   AsmInstruction dInst = (AsmInstruction) dRef.line;
-                  CpuOpcode absOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(dInst.getCpuOpcode().getMnemonic(), CpuAddressingMode.ABS, false);
-                  if(absOp == null) {
+                  AsmProgramStaticRegisterValues.AsmRegisterValues regVals = staticValues.getValues(dInst);
+                  boolean isYZero = (regVals != null && AsmProgramStaticRegisterValues.matchImm(regVals.getY(), "#0"));
+                  siteIsYZero.put(dRef, isYZero);
+
+                  CpuAddressingMode targetMode = isYZero ? CpuAddressingMode.ABS : CpuAddressingMode.ABY;
+                  CpuOpcode targetOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(dInst.getCpuOpcode().getMnemonic(), targetMode, false);
+                  if(targetOp == null) {
                      allOpcodesValid = false;
                      break;
                   }
-                  siteAbsOps.put(dRef, absOp);
+                  siteTargetOps.put(dRef, targetOp);
                }
                CpuOpcode staAbs = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("sta", CpuAddressingMode.ABS, false);
                CpuOpcode incAbs = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("inc", CpuAddressingMode.ABS, false);
                if(!allOpcodesValid || staAbs == null || incAbs == null) continue;
 
-               // Step 1: Add label before each dereference site, convert to ABS $ffff, and remove redundant LDY #0
+               // Step 2: Add label before each dereference site, convert to ABS/ABY $ffff, and safely remove dead LDY #0
                List<String> smcLabels = new ArrayList<>();
                for(LineRef dRef : derefLines) {
                   AsmInstruction dInst = (AsmInstruction) dRef.line;
-                  CpuOpcode absOp = siteAbsOps.get(dRef);
+                  CpuOpcode targetOp = siteTargetOps.get(dRef);
+                  boolean isYZero = siteIsYZero.get(dRef);
                   String siteLabel = "smc_ptr_" + (++smcCounter);
                   smcLabels.add(siteLabel);
 
-                  int curIdx = dRef.chunk.getLines().indexOf(dInst);
-                  if(curIdx > 0) {
-                     AsmLine prevLine = dRef.chunk.getLines().get(curIdx - 1);
-                     if(prevLine instanceof AsmInstruction prevInst && prevInst.getCpuOpcode() != null) {
-                        if("ldy".equalsIgnoreCase(prevInst.getCpuOpcode().getMnemonic()) &&
-                           CpuAddressingMode.IMM.equals(prevInst.getCpuOpcode().getAddressingMode()) &&
-                           ("#0".equals(prevInst.getOperand1()) || "0".equals(prevInst.getOperand1()))) {
-                           dRef.chunk.getLines().remove(prevInst);
-                        }
-                     }
+                  if(isYZero) {
+                     tryEliminateDeadLdyZero(dRef, dInst);
                   }
 
-                  curIdx = dRef.chunk.getLines().indexOf(dInst);
+                  int curIdx = dRef.chunk.getLines().indexOf(dInst);
                   if(curIdx < 0) continue;
                   AsmLabel smcLabelInst = new AsmLabel(siteLabel);
                   smcLabelInst.setNoOptimize(true);
                   dRef.chunk.getLines().add(curIdx, smcLabelInst);
-                  dInst.setCpuOpcode(absOp);
+                  dInst.setCpuOpcode(targetOp);
                   dInst.setOperand1("$ffff");
                   dInst.setNoOptimize(true);
                }
