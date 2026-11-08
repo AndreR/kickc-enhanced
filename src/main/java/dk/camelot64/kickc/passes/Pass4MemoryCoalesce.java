@@ -88,9 +88,6 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
     * @return True if the two equivalence classes can be coalesced into one without problems.
     */
    private static boolean canCoalesceSegments(LiveRangeEquivalenceClass ec1, LiveRangeEquivalenceClass ec2, Program program) {
-      if(ec1.getRegister() != null && ec1.getRegister().getType() == Registers.RegisterType.ZP_MEM) {
-         return true;
-      }
       final VariableRef variableRef1 = ec1.getVariables().get(0);
       final String dataSegment1 = program.getScope().getVar(variableRef1).getDataSegment();
       final VariableRef variableRef2 = ec2.getVariables().get(0);
