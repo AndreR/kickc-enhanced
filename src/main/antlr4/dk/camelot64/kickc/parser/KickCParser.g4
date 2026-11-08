@@ -188,8 +188,8 @@ stmt
     | directive* FOR PAR_BEGIN forLoop PAR_END stmt  #stmtFor
     | SWITCH PAR_BEGIN commaExpr PAR_END CURLY_BEGIN switchCases CURLY_END #stmtSwitch
     | RETURN commaExpr? ';' #stmtReturn
-    | BREAK ';' #stmtBreak
-    | CONTINUE ';' #stmtContinue
+    | BREAK NAME? ';' #stmtBreak
+    | CONTINUE NAME? ';' #stmtContinue
     | ASM asmDirectives? CURLY_BEGIN asmLines ASM_CURLY_END #stmtAsm
     | kasmContent #stmtDeclKasm
     | staticAssert ';' #stmtStaticAssert

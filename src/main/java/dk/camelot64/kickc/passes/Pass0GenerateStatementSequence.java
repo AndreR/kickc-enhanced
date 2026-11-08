@@ -1570,7 +1570,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    @Override
    public Void visitStmtSeq(KickCParser.StmtSeqContext ctx) {
       for(int i = 0; i < ctx.getChildCount(); i++) {
-         this.visit(ctx.stmt(i));
+         KickCParser.StmtContext stmtContext = ctx.stmt(i);
+         if(!(stmtContext instanceof KickCParser.StmtLabelContext)
+            && !(stmtContext instanceof KickCParser.StmtWhileContext)
+            && !(stmtContext instanceof KickCParser.StmtDoWhileContext)
+            && !(stmtContext instanceof KickCParser.StmtForContext)
+            && !(stmtContext instanceof KickCParser.StmtSwitchContext)) {
+            pendingLoopLabel = null;
+         }
+         this.visit(stmtContext);
       }
       return null;
    }
@@ -1653,9 +1661,12 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       /** true if the loop is a switch-statement. */
       boolean isSwitch;
 
-      Loop(Scope loopScope, boolean isSwitch) {
+      String name;
+
+      Loop(Scope loopScope, boolean isSwitch, String name) {
          this.loopScope = loopScope;
          this.isSwitch = isSwitch;
+         this.name = name;
       }
 
       Label getBreakLabel() {
@@ -1689,12 +1700,20 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    /** The loops being generated. */
    private final Stack<Loop> loopStack = new Stack<>();
 
+   private String pendingLoopLabel;
+
+   private String consumePendingLoopLabel() {
+      String label = pendingLoopLabel;
+      pendingLoopLabel = null;
+      return label;
+   }
+
    @Override
    public Void visitStmtWhile(KickCParser.StmtWhileContext ctx) {
       // Create the block scope early - to keep all statements of the loop inside it
       BlockScope blockScope = getCurrentScope().addBlockScope();
       scopeStack.push(blockScope);
-      loopStack.push(new Loop(blockScope, false));
+      loopStack.push(new Loop(blockScope, false, consumePendingLoopLabel()));
       Label beginJumpLabel = getCurrentScope().addLabelIntermediate();
       Label doJumpLabel = getCurrentScope().addLabelIntermediate();
       Label endJumpLabel = getCurrentScope().addLabelIntermediate();
@@ -1753,7 +1772,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       // Create the block scope early - to keep all statements of the loop inside it
       BlockScope blockScope = getCurrentScope().addBlockScope();
       scopeStack.push(blockScope);
-      loopStack.push(new Loop(blockScope, false));
+      loopStack.push(new Loop(blockScope, false, consumePendingLoopLabel()));
       List<Comment> comments = ensureUnusedComments(getCommentsSymbol(ctx));
       Label beginJumpLabel = getCurrentScope().addLabelIntermediate();
       StatementLabel beginJumpTarget = new StatementLabel(beginJumpLabel.getRef(), StatementSource.doWhile(ctx), comments);
@@ -1778,7 +1797,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       // Create a block scope - to keep all statements of the loop inside it
       BlockScope blockScope = getCurrentScope().addBlockScope();
       scopeStack.push(blockScope);
-      Loop switchLoop = new Loop(blockScope, true);
+      Loop switchLoop = new Loop(blockScope, true, consumePendingLoopLabel());
       if(containingLoop != null) {
          switchLoop.setContinueLabel(containingLoop.getOrCreateContinueLabel());
       }
@@ -1848,7 +1867,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    public Object visitForClassic(KickCParser.ForClassicContext ctx) {
       BlockScope blockScope = getCurrentScope().addBlockScope();
       scopeStack.push(blockScope);
-      loopStack.push(new Loop(blockScope, false));
+      loopStack.push(new Loop(blockScope, false, consumePendingLoopLabel()));
       KickCParser.StmtForContext stmtForCtx = (KickCParser.StmtForContext) ctx.getParent();
       List<Directive> directives = getDirectives(stmtForCtx.directive());
       boolean isCountdown = directives.stream().anyMatch(d -> d instanceof Directive.Countdown);
@@ -2030,7 +2049,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    public Object visitForRange(KickCParser.ForRangeContext ctx) {
       BlockScope blockScope = getCurrentScope().addBlockScope();
       scopeStack.push(blockScope);
-      loopStack.push(new Loop(blockScope, false));
+      loopStack.push(new Loop(blockScope, false, consumePendingLoopLabel()));
       StatementSource statementSource = StatementSource.forRanged(ctx);
       this.visit(ctx.declType());
       this.visit(ctx.declarator());
@@ -2126,6 +2145,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          throw new CompileError("label already defined '" + labelName + "'.", new StatementSource(ctx));
       Label label = targetScope.addLabel(labelName);
       addStatement(new StatementLabel(label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+      pendingLoopLabel = labelName;
       return null;
    }
 
@@ -2144,10 +2164,26 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       if(loopStack.isEmpty()) {
          throw new CompileError("Break not inside a loop! ", new StatementSource(ctx));
       }
-      Loop currentLoop = loopStack.peek();
-      Label breakLabel = currentLoop.getOrCreateBreakLabel();
+      Loop targetLoop = null;
+      if(ctx.NAME() != null) {
+         String name = ctx.NAME().getText();
+         for(int i = loopStack.size() - 1; i >= 0; i--) {
+            Loop loop = loopStack.get(i);
+            if(name.equals(loop.name)) {
+               targetLoop = loop;
+               break;
+            }
+         }
+         if(targetLoop == null) {
+            throw new CompileError("Named break label '" + name + "' does not match any enclosing loop or switch! ", new StatementSource(ctx));
+         }
+      } else {
+         targetLoop = loopStack.peek();
+      }
+      Label breakLabel = targetLoop.getOrCreateBreakLabel();
       Statement breakJmpStmt = new StatementJump(breakLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS);
       addStatement(breakJmpStmt);
+      pendingLoopLabel = null;
       return null;
    }
 
@@ -2156,18 +2192,40 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       if(loopStack.isEmpty()) {
          throw new CompileError("Continue not inside a loop! ", new StatementSource(ctx));
       }
-      Loop currentLoop = loopStack.peek();
+      Loop targetLoop = null;
+      if(ctx.NAME() != null) {
+         String name = ctx.NAME().getText();
+         for(int i = loopStack.size() - 1; i >= 0; i--) {
+            Loop loop = loopStack.get(i);
+            if(name.equals(loop.name)) {
+               if(loop.isSwitch) {
+                  Label cont = loop.getContinueLabel();
+                  if(cont == null) {
+                     throw new CompileError("Cannot continue a switch statement! ", new StatementSource(ctx));
+                  }
+               }
+               targetLoop = loop;
+               break;
+            }
+         }
+         if(targetLoop == null) {
+            throw new CompileError("Named continue label '" + name + "' does not match any enclosing loop! ", new StatementSource(ctx));
+         }
+      } else {
+         targetLoop = loopStack.peek();
+      }
       Label continueLabel;
-      if(currentLoop.isSwitch) {
-         continueLabel = currentLoop.getContinueLabel();
+      if(targetLoop.isSwitch) {
+         continueLabel = targetLoop.getContinueLabel();
          if(continueLabel == null) {
             throw new CompileError("Continue not inside a loop! ", new StatementSource(ctx));
          }
       } else {
-         continueLabel = currentLoop.getOrCreateContinueLabel();
+         continueLabel = targetLoop.getOrCreateContinueLabel();
       }
       Statement continueJmpStmt = new StatementJump(continueLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS);
       addStatement(continueJmpStmt);
+      pendingLoopLabel = null;
       return null;
    }
 
