@@ -16,8 +16,16 @@
 
 #include <c64.h>
 
-/// The number of sprites in the multiplexer
-extern const char PLEX_COUNT;
+/// The maximum number of sprites in the multiplexer
+#ifndef PLEX_COUNT
+#define PLEX_COUNT 32
+#endif
+
+/// The active number of sprites to sort and display (defaults to PLEX_COUNT)
+extern char plex_count;
+
+/// Set the active number of sprites to sort and display (<= PLEX_COUNT)
+void plexSetCount(char count);
 
 /// The x-positions of the multiplexer sprites (0x000-0x1ff)
 extern unsigned int PLEX_XPOS[PLEX_COUNT];

@@ -299,5 +299,47 @@ unsigned int rand() {
 
 // Seeds the random number generator used by the function rand.
 void srand(unsigned int seed) {
+    if(seed == 0) seed = 1;
     rand_state = seed;
+}
+
+// The 8-bit random state variable
+volatile unsigned char rand8_state = 1;
+
+// Seeds the 8-bit random number generator
+void srand8(unsigned char seed) {
+    if(seed == 0) seed = 1;
+    rand8_state = seed;
+}
+
+// Ultra-fast 8-bit pseudo-random number generator (11 CPU cycles, Galois LFSR period 255)
+unsigned char rand8() {
+    asm {
+        lda rand8_state
+        lsr
+        bcc !+
+        eor #$b8
+    !:
+        sta rand8_state
+    }
+    return rand8_state;
+}
+
+// The 32-bit random state variable
+volatile unsigned long rand32_state = 1;
+
+// Seeds the 32-bit random number generator
+void srand32(unsigned long seed) {
+    if(seed == 0) seed = 1;
+    rand32_state = seed;
+}
+
+// 32-bit pseudo-random number generator (period 4,294,967,295, Xorshift32)
+unsigned long rand32() {
+    unsigned long x = rand32_state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    rand32_state = x;
+    return x;
 }

@@ -3,9 +3,9 @@
 // Utilizes the fact that a*b = ((a+b)/2)^2 - ((a-b)/2)^2
 
 #include <fastmultiply.h>
-#include <multiply.h>
 
 #ifdef FASTMULTIPLY_USE_ROM
+#include <multiply.h>
 
 // Mode 3: 100% ROM-/Cartridge-safe Quarter-Square tables from <multiply.h> (0 bytes RAM)
 static char _mulf_prepared_a = 0;

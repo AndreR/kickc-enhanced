@@ -15,8 +15,13 @@
 #include <c64-multiplexer.h>
 #include <c64.h>
 
-// The number of sprites in the multiplexer
-const char PLEX_COUNT = 32;
+// The active number of sprites to sort and display
+char plex_count = PLEX_COUNT;
+
+void plexSetCount(char count) {
+    if (count > PLEX_COUNT) count = PLEX_COUNT;
+    plex_count = count;
+}
 
 // The x-positions of the multiplexer sprites (0x000-0x1ff)
 unsigned int PLEX_XPOS[PLEX_COUNT];
@@ -45,6 +50,7 @@ volatile char plex_sprite_msb=1;
 // Initialize the multiplexer data structures
 void plexInit(char* screen) {
     plexSetScreen(screen);
+    plex_count = PLEX_COUNT;
     for(char i: 0..PLEX_COUNT-1) {
         PLEX_SORTED_IDX[i] = i;
     }
@@ -65,19 +71,22 @@ inline void plexSetScreen(char* screen) {
 //     elements before the marker are shifted right one at a time until encountering one smaller than the current one.
 //      It is then inserted at the spot. Now the marker can move forward.
 void plexSort() {
-    for(char m: 0..PLEX_COUNT-2) {
-        char nxt_idx = PLEX_SORTED_IDX[m+1];
-        char nxt_y = PLEX_YPOS[nxt_idx];
-        if(nxt_y<PLEX_YPOS[PLEX_SORTED_IDX[m]]) {
-            // Shift values until we encounter a value smaller than nxt_y
-            char s = m;
-            do {
-                PLEX_SORTED_IDX[s+1] = PLEX_SORTED_IDX[s];
-                s--;
-            } while((s!=0xff) && (nxt_y<PLEX_YPOS[PLEX_SORTED_IDX[s]]));
-            // store the mark at the found position
-            s++;
-            PLEX_SORTED_IDX[s] = nxt_idx;
+    if (plex_count >= 2) {
+        char limit = plex_count - 1;
+        for(char m = 0; m < limit; m++) {
+            char nxt_idx = PLEX_SORTED_IDX[m+1];
+            char nxt_y = PLEX_YPOS[nxt_idx];
+            if(nxt_y<PLEX_YPOS[PLEX_SORTED_IDX[m]]) {
+                // Shift values until we encounter a value smaller than nxt_y
+                char s = m;
+                do {
+                    PLEX_SORTED_IDX[s+1] = PLEX_SORTED_IDX[s];
+                    s--;
+                } while((s!=0xff) && (nxt_y<PLEX_YPOS[PLEX_SORTED_IDX[s]]));
+                // store the mark at the found position
+                s++;
+                PLEX_SORTED_IDX[s] = nxt_idx;
+            }
         }
     }
     // Prepare for showing the sprites

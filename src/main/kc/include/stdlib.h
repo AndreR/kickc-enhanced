@@ -79,4 +79,22 @@ unsigned int rand();
 /// Seeds the random number generator used by the function rand.
 void srand(unsigned int seed);
 
+/// The maximal 8-bit random value
+#define RAND8_MAX 255
+
+/// Ultra-fast 8-bit pseudo-random number generator (11 CPU cycles, Galois LFSR period 255)
+unsigned char rand8();
+
+/// Seeds the 8-bit random number generator
+void srand8(unsigned char seed);
+
+/// The maximal 32-bit random value
+#define RAND32_MAX 4294967295UL
+
+/// 32-bit pseudo-random number generator (period 4,294,967,295, Xorshift32)
+unsigned long rand32();
+
+/// Seeds the 32-bit random number generator
+void srand32(unsigned long seed);
+
 #endif

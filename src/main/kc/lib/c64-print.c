@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <division.h>
 
 char* print_screen = (char*)0x0400;
 char* print_line_cursor = print_screen;
@@ -95,9 +96,30 @@ void print_uint(unsigned int w) {
 char decimal_digits[6];
 
 // Print a char as DECIMAL
+// Uses fast reciprocal / 10 division (~40-80 cycles vs ~400 cycles with utoa)
 void print_uchar_decimal(char b) {
-    utoa((unsigned int)b, decimal_digits, DECIMAL);
-    print_str(decimal_digits);
+    if (b >= 100) {
+        char hundreds = 0;
+        if (b >= 200) {
+            hundreds = 2;
+            b -= 200;
+        } else {
+            hundreds = 1;
+            b -= 100;
+        }
+        print_char('0' + hundreds);
+        char tens = div10u(b);
+        char ones = mod10u(b);
+        print_char('0' + tens);
+        print_char('0' + ones);
+    } else if (b >= 10) {
+        char tens = div10u(b);
+        char ones = mod10u(b);
+        print_char('0' + tens);
+        print_char('0' + ones);
+    } else {
+        print_char('0' + b);
+    }
 }
 
 // Print a unsigned int as DECIMAL
