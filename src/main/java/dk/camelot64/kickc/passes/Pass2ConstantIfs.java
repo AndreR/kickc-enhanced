@@ -14,8 +14,13 @@ import dk.camelot64.kickc.model.types.SymbolType;
 import dk.camelot64.kickc.model.types.SymbolTypeInference;
 import dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed;
 import dk.camelot64.kickc.model.values.*;
+import dk.camelot64.kickc.model.DominatorsBlock;
+import dk.camelot64.kickc.model.DominatorsGraph;
+import dk.camelot64.kickc.model.symbols.Variable;
 
+import java.util.List;
 import java.util.ListIterator;
+import java.util.Objects;
 
 /**
  * Compiler Pass identifying constant if() conditions
@@ -44,6 +49,9 @@ public class Pass2ConstantIfs extends Pass2SsaOptimization {
                ConstantLiteral literal = findConditionLiteral(conditional);
                if(literal == null) {
                   literal = findConditionLiteralInterval(conditional);
+               }
+               if(literal == null) {
+                  literal = findConditionLiteralDominance(block, conditional);
                }
                if(literal != null && literal instanceof ConstantBool) {
                   // Condition is a constant boolean
@@ -203,6 +211,137 @@ public class Pass2ConstantIfs extends Pass2SsaOptimization {
       }
       // Not a constant integer
       return null;
+   }
+
+   private ConstantLiteral findConditionLiteralDominance(Graph.Block blockB, StatementConditionalJump conditionalB) {
+      if(!isImmutableCondition(conditionalB)) return null;
+
+      DominatorsGraph dominators = getProgram().getDominators();
+      if(dominators == null) return null;
+      DominatorsBlock bDoms = dominators.getDominators(blockB.getLabel());
+      if(bDoms == null) return null;
+
+      for(Graph.Block blockA : getGraph().getAllBlocks()) {
+         if(blockA.equals(blockB)) continue;
+         StatementConditionalJump conditionalA = getConditionalJump(blockA);
+         if(conditionalA == null || !isImmutableCondition(conditionalA)) continue;
+
+         LabelRef condSuccA = conditionalA.getDestination();
+         LabelRef defaultSuccA = blockA.getDefaultSuccessor();
+
+         // Check true branch of A
+         if(condSuccA != null && bDoms.contains(condSuccA)) {
+            Graph.Block condBlock = getGraph().getBlock(condSuccA);
+            if(condBlock != null) {
+               List<Graph.Block> preds = getGraph().getPredecessors(condBlock);
+               if(preds.size() == 1 && preds.get(0).equals(blockA)) {
+                  if(areConditionsIdentical(conditionalA, conditionalB)) {
+                     getLog().append("RCE: Condition in " + blockB.getLabel() + " identical to " + blockA.getLabel() + " on true branch -> folding TRUE");
+                     return new ConstantBool(true);
+                  } else if(areConditionsInverse(conditionalA, conditionalB)) {
+                     getLog().append("RCE: Condition in " + blockB.getLabel() + " inverse to " + blockA.getLabel() + " on true branch -> folding FALSE");
+                     return new ConstantBool(false);
+                  }
+               }
+            }
+         }
+
+         // Check false branch of A
+         if(defaultSuccA != null && bDoms.contains(defaultSuccA)) {
+            Graph.Block defaultBlock = getGraph().getBlock(defaultSuccA);
+            if(defaultBlock != null) {
+               List<Graph.Block> preds = getGraph().getPredecessors(defaultBlock);
+               if(preds.size() == 1 && preds.get(0).equals(blockA)) {
+                  if(areConditionsIdentical(conditionalA, conditionalB)) {
+                     getLog().append("RCE: Condition in " + blockB.getLabel() + " identical to " + blockA.getLabel() + " on false branch -> folding FALSE");
+                     return new ConstantBool(false);
+                  } else if(areConditionsInverse(conditionalA, conditionalB)) {
+                     getLog().append("RCE: Condition in " + blockB.getLabel() + " inverse to " + blockA.getLabel() + " on false branch -> folding TRUE");
+                     return new ConstantBool(true);
+                  }
+               }
+            }
+         }
+      }
+      return null;
+   }
+
+   private StatementConditionalJump getConditionalJump(Graph.Block block) {
+      for(Statement stmt : block.getStatements()) {
+         if(stmt instanceof StatementConditionalJump) {
+            return (StatementConditionalJump) stmt;
+         }
+      }
+      return null;
+   }
+
+   private boolean isImmutableCondition(StatementConditionalJump conditional) {
+      return isImmutableValue(conditional.getrValue1()) && isImmutableValue(conditional.getrValue2());
+   }
+
+   private boolean isImmutableValue(RValue val) {
+      if(val == null) return true;
+      if(val instanceof ConstantValue) return true;
+      if(val instanceof VariableRef) {
+         Variable variable = getProgramScope().getVariable((VariableRef) val);
+         return variable != null && variable.getKind() != Variable.Kind.LOAD_STORE && variable.getKind() != Variable.Kind.PHI_MASTER;
+      }
+      return false;
+   }
+
+   private boolean areConditionsIdentical(StatementConditionalJump a, StatementConditionalJump b) {
+      if(Objects.equals(a.getrValue1(), b.getrValue1()) &&
+            Objects.equals(a.getOperator(), b.getOperator()) &&
+            Objects.equals(a.getrValue2(), b.getrValue2())) {
+         return true;
+      }
+      // Commutative EQ / NEQ
+      if(Operators.EQ.equals(a.getOperator()) && Operators.EQ.equals(b.getOperator())) {
+         return Objects.equals(a.getrValue1(), b.getrValue2()) && Objects.equals(a.getrValue2(), b.getrValue1());
+      }
+      if(Operators.NEQ.equals(a.getOperator()) && Operators.NEQ.equals(b.getOperator())) {
+         return Objects.equals(a.getrValue1(), b.getrValue2()) && Objects.equals(a.getrValue2(), b.getrValue1());
+      }
+      // Flipped inequality: a < b is identical to b > a
+      if(Operators.LT.equals(a.getOperator()) && Operators.GT.equals(b.getOperator())) {
+         return Objects.equals(a.getrValue1(), b.getrValue2()) && Objects.equals(a.getrValue2(), b.getrValue1());
+      }
+      if(Operators.GT.equals(a.getOperator()) && Operators.LT.equals(b.getOperator())) {
+         return Objects.equals(a.getrValue1(), b.getrValue2()) && Objects.equals(a.getrValue2(), b.getrValue1());
+      }
+      if(Operators.LE.equals(a.getOperator()) && Operators.GE.equals(b.getOperator())) {
+         return Objects.equals(a.getrValue1(), b.getrValue2()) && Objects.equals(a.getrValue2(), b.getrValue1());
+      }
+      if(Operators.GE.equals(a.getOperator()) && Operators.LE.equals(b.getOperator())) {
+         return Objects.equals(a.getrValue1(), b.getrValue2()) && Objects.equals(a.getrValue2(), b.getrValue1());
+      }
+      return false;
+   }
+
+   private boolean areConditionsInverse(StatementConditionalJump a, StatementConditionalJump b) {
+      Operator opA = a.getOperator();
+      Operator opB = b.getOperator();
+      if(opA == null || opB == null) return false;
+
+      // Same operands, inverse operator
+      if(Objects.equals(a.getrValue1(), b.getrValue1()) && Objects.equals(a.getrValue2(), b.getrValue2())) {
+         if(Operators.EQ.equals(opA) && Operators.NEQ.equals(opB)) return true;
+         if(Operators.NEQ.equals(opA) && Operators.EQ.equals(opB)) return true;
+         if(Operators.LT.equals(opA) && Operators.GE.equals(opB)) return true;
+         if(Operators.GE.equals(opA) && Operators.LT.equals(opB)) return true;
+         if(Operators.LE.equals(opA) && Operators.GT.equals(opB)) return true;
+         if(Operators.GT.equals(opA) && Operators.LE.equals(opB)) return true;
+      }
+      // Swapped operands
+      if(Objects.equals(a.getrValue1(), b.getrValue2()) && Objects.equals(a.getrValue2(), b.getrValue1())) {
+         if(Operators.EQ.equals(opA) && Operators.NEQ.equals(opB)) return true;
+         if(Operators.NEQ.equals(opA) && Operators.EQ.equals(opB)) return true;
+         if(Operators.LT.equals(opA) && Operators.LE.equals(opB)) return true;
+         if(Operators.LE.equals(opA) && Operators.LT.equals(opB)) return true;
+         if(Operators.GT.equals(opA) && Operators.GE.equals(opB)) return true;
+         if(Operators.GE.equals(opA) && Operators.GT.equals(opB)) return true;
+      }
+      return false;
    }
 
 }

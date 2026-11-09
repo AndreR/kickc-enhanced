@@ -1,6 +1,3 @@
-tya
-asl
-tay
 clc
 lda {m1}
 adc {c1},y

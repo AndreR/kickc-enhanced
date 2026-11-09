@@ -1,6 +1,3 @@
-txa
-asl
-tax
 clc
 lda {m1}
 adc {c1},x

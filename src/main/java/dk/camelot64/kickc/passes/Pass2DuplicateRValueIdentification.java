@@ -7,8 +7,7 @@ import dk.camelot64.kickc.model.iterator.ProgramValueIterator;
 import dk.camelot64.kickc.model.operators.Operator;
 import dk.camelot64.kickc.model.operators.OperatorCast;
 import dk.camelot64.kickc.model.operators.Operators;
-import dk.camelot64.kickc.model.statements.Statement;
-import dk.camelot64.kickc.model.statements.StatementAssignment;
+import dk.camelot64.kickc.model.statements.*;
 import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.types.SymbolType;
 import dk.camelot64.kickc.model.types.SymbolTypeInference;
@@ -58,7 +57,7 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
                   continue;
                }
                AssignmentWithRValue thisRValue = new AssignmentWithRValue(thisAssignment, block);
-               if(!thisRValue.isConstant() && !thisRValue.isTrivial() && !thisRValue.isVolatile() && !thisRValue.isLoadStore()) {
+               if(!thisRValue.isConstant() && !thisRValue.isTrivial() && !thisRValue.isVolatile()) {
                   boolean duplicate = false;
                   RValueKey key = new RValueKey(thisRValue.rValue1, thisRValue.operator, thisRValue.rValue2);
                   List<AssignmentWithRValue> candidates = rValues.get(key);
@@ -71,15 +70,18 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
                            if(otherRValue.block.getLabel().equals(thisRValue.block.getLabel())) {
                               // The two assignments are in the same block
                               // Since we are visiting statements sequentially the other  other assignment is guaranteed to be executed before this assignment
-                              duplicate |= deduplicateRValue(otherRValue, thisRValue);
-                           } else if(thisDominators.contains(otherRValue.block.getLabel())) {
-                              // The other assignment is guaranteed to be executed before this assignment
-                              if(scopeMatch(thisRValue, otherRValue))
+                              if(isSafeSameBlock(otherRValue, thisRValue))
                                  duplicate |= deduplicateRValue(otherRValue, thisRValue);
-                           } else if(otherDominators.contains(thisRValue.block.getLabel())) {
-                              // This assignment is guaranteed to be executed before the other assignment
-                              if(scopeMatch(thisRValue, otherRValue))
-                                 duplicate |= deduplicateRValue(thisRValue, otherRValue);
+                           } else if(!thisRValue.isLoadStore() && !otherRValue.isLoadStore()) {
+                              if(thisDominators.contains(otherRValue.block.getLabel())) {
+                                 // The other assignment is guaranteed to be executed before this assignment
+                                 if(scopeMatch(thisRValue, otherRValue))
+                                    duplicate |= deduplicateRValue(otherRValue, thisRValue);
+                              } else if(otherDominators.contains(thisRValue.block.getLabel())) {
+                                 // This assignment is guaranteed to be executed before the other assignment
+                                 if(scopeMatch(thisRValue, otherRValue))
+                                    duplicate |= deduplicateRValue(thisRValue, otherRValue);
+                              }
                            }
                         }
                      }
@@ -288,6 +290,45 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
       @Override
       public int hashCode() {
          return Objects.hash(block, assignment, rValue1, operator, rValue2);
+      }
+   }
+
+   private boolean isSafeSameBlock(AssignmentWithRValue first, AssignmentWithRValue second) {
+      if(!first.isLoadStore() && !second.isLoadStore()) return true;
+
+      List<Statement> stmts = first.block.getStatements();
+      int idx1 = stmts.indexOf(first.assignment);
+      int idx2 = stmts.indexOf(second.assignment);
+      if(idx1 < 0 || idx2 < 0 || idx1 >= idx2) return false;
+
+      // Collect all variables referenced by the RValue operands
+      Set<VariableRef> operands = new HashSet<>();
+      collectVarRefs(first.rValue1, operands);
+      collectVarRefs(first.rValue2, operands);
+
+      // Check all statements strictly between idx1 and idx2
+      for(int i = idx1 + 1; i < idx2; i++) {
+         Statement s = stmts.get(i);
+         if(s instanceof StatementAssignment) {
+            LValue lVal = ((StatementAssignment) s).getlValue();
+            if(lVal instanceof VariableRef && operands.contains(lVal)) {
+               return false; // Operand variable overwritten
+            }
+         } else if(s instanceof StatementCall || s instanceof StatementCallExecute) {
+            return false;
+         } else if(s instanceof StatementAsm) {
+            return false;
+         }
+      }
+      return true;
+   }
+
+   private static void collectVarRefs(Value val, Set<VariableRef> out) {
+      if(val == null) return;
+      if(val instanceof VariableRef) {
+         out.add((VariableRef) val);
+      } else if(val instanceof CastValue) {
+         collectVarRefs(((CastValue) val).getValue(), out);
       }
    }
 }

@@ -74,7 +74,9 @@ public class Pass2ConstantIdentification extends Pass2SsaOptimization {
          }
          scope.remove(variable);
          Variable constVar = Variable.createConstant(variable, constVal);
-         constVar.getComments().addAll(constVarVal.getAssignment().getComments());
+         if(constVarVal.getAssignment() != null) {
+            constVar.getComments().addAll(constVarVal.getAssignment().getComments());
+         }
          scope.add(constVar);
          constAliases.put(constRef, constVar.getRef());
          getLog().append("Constant " + constVar.toString(getProgram()) + " = " + constVar.getInitValue());
@@ -165,17 +167,16 @@ public class Pass2ConstantIdentification extends Pass2SsaOptimization {
          }
       }
 
-      // Look for constants among non-versioned variables
+      // Look for constants among non-versioned variables and invariant initialized globals
       VarAssignments.Index varAssignmentsIndex = new VarAssignments.Index(getGraph());
       for(Variable variable : getProgramScope().getAllVariables(true)) {
-         if(variable.isVolatile() || !variable.isKindLoadStore())
-            // Do not examine volatiles, non-constants or versioned variables
+         if(variable.isVolatile() || variable.isKindConstant() || variable.isExport())
             continue;
          if(variable.getRegister() != null && variable.getRegister().isMem())
             // Skip variables allocated into memory
             continue;
          final List<VarAssignments.VarAssignment> varAssignments = varAssignmentsIndex.get(variable.getRef(), getProgramScope());
-         if(varAssignments.size() == 1) {
+         if(varAssignments.size() == 1 && variable.isKindLoadStore()) {
             final VarAssignments.VarAssignment varAssignment = varAssignments.get(0);
             if(!VarAssignments.VarAssignment.Type.STATEMENT_LVALUE.equals(varAssignment.type) || !(varAssignment.statementLValue instanceof StatementAssignment))
                // Only look at assignments
@@ -187,6 +188,11 @@ public class Pass2ConstantIdentification extends Pass2SsaOptimization {
                if(assignment.getrValue1() == null && assignment.getOperator() == null && constant != null) {
                   constants.put(varRef, new ConstantVariableValue(varRef, constant, assignment));
                }
+            }
+         } else if(varAssignments.isEmpty() && variable.getInitValue() instanceof ConstantValue) {
+            ConstantValue constant = getConstant((ConstantValue) variable.getInitValue());
+            if(constant != null) {
+               constants.put(variable.getVariableRef(), new ConstantVariableValue(variable.getVariableRef(), constant, null));
             }
          }
       }

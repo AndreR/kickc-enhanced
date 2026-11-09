@@ -136,6 +136,7 @@ public class Pass1CallStack extends Pass2SsaOptimization {
                   for(int i=0;i<paramTypes.size();i++) {
                      SymbolType paramType = paramTypes.get(i);
                      final RValue parameterVal = call.getParameters().get(i);
+                     rescheduleParameterDefinition(parameterVal, block, stmtIt);
                      generateStackPushValues(parameterVal, paramType, source, comments, stmtIt);
                      // Clear comments - enduring they are only output once
                      comments = Comment.NO_COMMENTS;
@@ -249,4 +250,61 @@ public class Pass1CallStack extends Pass2SsaOptimization {
       }
    }
 
+   private void rescheduleParameterDefinition(RValue parameterVal, Graph.Block block, ListIterator<Statement> stmtIt) {
+      if(!(parameterVal instanceof VariableRef)) return;
+      VariableRef varRef = (VariableRef) parameterVal;
+      Variable var = getProgramScope().getVariable(varRef);
+      if(var == null || !var.isKindIntermediate()) return;
+
+      List<Statement> stmts = block.getStatements();
+      int currentIdx = stmtIt.nextIndex();
+
+      // Find the assignment defining varRef earlier in this block
+      int defIdx = -1;
+      StatementAssignment defAssign = null;
+      for(int k = 0; k < currentIdx; k++) {
+         if(stmts.get(k) instanceof StatementAssignment) {
+            StatementAssignment assign = (StatementAssignment) stmts.get(k);
+            if(varRef.equals(assign.getlValue())) {
+               if(defAssign != null) return; // Multiple assignments, abort
+               defAssign = assign;
+               defIdx = k;
+            }
+         }
+      }
+      if(defAssign == null || defIdx == -1) return;
+
+      // Check that none of the variables read by defAssign are modified between defIdx and currentIdx
+      Set<VariableRef> readVars = new HashSet<>();
+      collectReferencedVariables(defAssign.getrValue1(), readVars);
+      collectReferencedVariables(defAssign.getrValue2(), readVars);
+
+      for(int k = defIdx + 1; k < currentIdx; k++) {
+         Statement s = stmts.get(k);
+         if(s instanceof StatementAssignment) {
+            StatementAssignment otherAssign = (StatementAssignment) s;
+            if(otherAssign.getlValue() instanceof VariableRef) {
+               VariableRef lvar = (VariableRef) otherAssign.getlValue();
+               if(readVars.contains(lvar)) return; // Modified! Cannot move.
+            }
+         } else if(s instanceof StatementCalling) {
+            return; // Call in between! Cannot move.
+         }
+      }
+
+      // Safe to move: remove from defIdx and add at stmtIt
+      stmts.remove(defIdx);
+      stmtIt.add(defAssign);
+      getLog().append("Direct-to-stack: Rescheduled parameter definition " + defAssign.toString(getProgram(), false) + " to precede stack push.");
+   }
+
+   private void collectReferencedVariables(RValue val, Set<VariableRef> vars) {
+      if(val == null) return;
+      if(val instanceof VariableRef) {
+         vars.add((VariableRef) val);
+      } else if(val instanceof CastValue) {
+         collectReferencedVariables(((CastValue) val).getValue(), vars);
+      }
+   }
 }
+

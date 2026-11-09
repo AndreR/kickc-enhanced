@@ -115,7 +115,7 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
          getLog().append("Rewriting multiplication to use shift " + assignment.toString(getProgram(), false));
          SymbolType lValueType = SymbolTypeInference.inferType(getProgramScope(), assignment.getlValue());
          SymbolType varType = SymbolTypeInference.inferType(getProgramScope(), varValue);
-         if(lValueType.getSizeBytes() > varType.getSizeBytes() || constValue > 255) {
+         if(lValueType.getSizeBytes() > varType.getSizeBytes() || (constValue > 255 && varType.getSizeBytes() < 2)) {
             SymbolType targetType = lValueType.getSizeBytes() > varType.getSizeBytes() ? lValueType : SymbolType.WORD;
             stmtIt.previous();
             Variable varPromote = VariableBuilder.createIntermediate(scope, targetType, getProgram());
@@ -134,7 +134,7 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
          SymbolType lValueType = SymbolTypeInference.inferType(getProgramScope(), assignment.getlValue());
          SymbolType varType = SymbolTypeInference.inferType(getProgramScope(), varValue);
          SymbolType resultType = varType;
-         if(lValueType.getSizeBytes() > varType.getSizeBytes() || constValue > 255) {
+         if(lValueType.getSizeBytes() > varType.getSizeBytes() || (constValue > 255 && varType.getSizeBytes() < 2)) {
             resultType = lValueType.getSizeBytes() > varType.getSizeBytes() ? lValueType : SymbolType.WORD;
          }
 
