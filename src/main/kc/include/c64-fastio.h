@@ -1,72 +1,70 @@
 /// @file c64-fastio.h
-/// @brief High-Speed Disk I/O Suite for Commodore 64
+/// @brief Covert Bitops High-Speed Disk I/O Suite for Commodore 64
+/// Based on Covert Bitops Loadersystem V3.x by Lasse Öörni (MIT License).
 ///
-/// Hardware drive probing (1541, 1571, 1581, SD2IEC, CMD),
-/// high-speed block loading/saving, and graceful Kernal fallback.
+/// Features:
+/// - Custom 2-bit fastloader protocol for 1541, 1571, 1581, CMD FD/HD, SD2IEC (ELoad)
+/// - Transparent operation with Kernal disabled ($01 = $35)
+/// - Rapid asset loading with IRQs active
 ///
-/// Portions based on Covert Bitops c64loader by Lasse Öörni (MIT License).
+/// Note: Filenames in Covert Bitops are indexed by 2-character hexadecimal numbers (0x00..0xFF, e.g. "00", "01").
 
 #ifndef _C64_FASTIO_H
 #define _C64_FASTIO_H
 
-#include <c64.h>
 #include <stdint.h>
 #include <stdbool.h>
 
-/// Drive types identified by disk_probe()
+/// Loader operation mode set by fastio_init()
 typedef enum : uint8_t {
-    DRIVE_NONE         = 0x00, ///< No drive responded on device address
-    DRIVE_1541         = 0x01, ///< Commodore 1541 (or 1541-II / 1541C / Pi1541)
-    DRIVE_1571         = 0x02, ///< Commodore 1571
-    DRIVE_1581         = 0x03, ///< Commodore 1581
-    DRIVE_SD2IEC       = 0x04, ///< SD2IEC / IEC-ATA microcontroller drive
-    DRIVE_CMD          = 0x05, ///< CMD FD-2000/4000 or CMD HD
-    DRIVE_GENERIC_IEC  = 0x06  ///< Other generic IEC device
-} DiskDriveType;
+    FASTIO_MODE_KERNAL   = 0x00, ///< Stock Kernal protocol (no IRQs allowed)
+    FASTIO_MODE_IDE64    = 0x01, ///< Kernal protocol with IRQs allowed (IDE64 / fast drive emulation)
+    FASTIO_MODE_FASTLOAD = 0xFF  ///< High-speed 2-bit protocol active
+} FastIOMode;
 
-/// Disk operation status codes
-typedef enum : uint8_t {
-    DISK_OK            = 0x00, ///< Operation successful
-    DISK_ERR_NO_DEVICE = 0x01, ///< Device not present or not responding
-    DISK_ERR_NOT_FOUND = 0x02, ///< File not found
-    DISK_ERR_READ      = 0x03, ///< Read error
-    DISK_ERR_WRITE     = 0x04, ///< Write error
-    DISK_ERR_UNSUPPORTED = 0x05 ///< Fast mode not supported for this drive
-} DiskStatus;
+/// Initializes the fastloader system. Detects drive and uploads fastloader code.
+/// Disables timer IRQ, sets CPU port to $35 (Kernal off).
+/// @param force_safe_mode If true, forces stock Kernal mode instead of uploading drive code.
+/// @return Active loader mode (FASTIO_MODE_FASTLOAD, FASTIO_MODE_IDE64, FASTIO_MODE_KERNAL).
+FastIOMode fastio_init(bool force_safe_mode);
 
-/// Probes the specified device address (8..11) and detects hardware drive type.
-/// @param device Device number (typically 8)
-/// @return Detected drive type (DRIVE_NONE, DRIVE_1541, DRIVE_SD2IEC, etc.)
-DiskDriveType disk_probe(uint8_t device);
+/// Opens a file by file number (0x00..0xFF, corresponding to disk filenames "00".."FF").
+/// @param filenumber Hexadecimal file number (e.g. 0x00 for file "00").
+/// @return true if opened successfully, false on error.
+bool fastio_open(uint8_t filenumber);
 
-/// Reads the drive status / error channel (channel 15) into buffer.
-/// @param device Device number (8..11)
-/// @param buffer Destination character buffer (at least 32 bytes)
-/// @param max_len Maximum length of buffer
-/// @return Number of bytes read
-uint8_t disk_read_status(uint8_t device, char* buffer, uint8_t max_len);
+/// Reads a byte from the currently open file.
+/// @return Read byte, or 0 if EOF.
+uint8_t fastio_get_byte(void);
 
-/// Sends a DOS command to the drive's command channel 15.
-/// @param device Device number (8..11)
-/// @param cmd Null-terminated DOS command string (e.g. "I0", "S0:FILENAME")
-/// @return true if command was sent successfully
-bool disk_send_command(uint8_t device, const char* cmd);
+/// Checks whether a file is currently open.
+/// @return true if open, false if closed or EOF.
+bool fastio_is_open(void);
 
-/// Loads a file into memory. Uses turbo loading where supported, with transparent Kernal fallback.
-/// @param device Device number (8..11)
-/// @param filename Null-terminated filename
-/// @param dest_addr Destination address in RAM (if 0, loads to file's PRG header load address)
-/// @param bytes_loaded Output pointer receiving the number of bytes loaded (can be NULL)
-/// @return DISK_OK on success, or error status code
-DiskStatus disk_fast_load(uint8_t device, const char* filename, void* dest_addr, uint16_t* bytes_loaded);
+/// Loads an unpacked file to the load address specified in its 2-byte header.
+/// @param filenumber Hexadecimal file number (0x00..0xFF).
+/// @return true on success, false on error.
+bool fastio_load(uint8_t filenumber);
 
-/// Saves a block of memory to a file on disk. Uses fast protocol where supported, with Kernal fallback.
-/// @param device Device number (8..11)
-/// @param filename Null-terminated filename
-/// @param src_addr Pointer to source data buffer
-/// @param length Number of bytes to save
-/// @param overwrite If true, prepends "@0:" to replace existing file
-/// @return DISK_OK on success, or error status code
-DiskStatus disk_fast_save(uint8_t device, const char* filename, const void* src_addr, uint16_t length, bool overwrite);
+/// Loads an unpacked file to a specified raw memory destination (ignoring header).
+/// @param filenumber Hexadecimal file number (0x00..0xFF).
+/// @param dest Destination memory pointer.
+/// @return true on success, false on error.
+bool fastio_load_raw(uint8_t filenumber, void* dest);
 
-#endif
+/// Saves a memory block to a preallocated file on disk using fast drivecode.
+/// @param filenumber Hexadecimal file number (0x00..0xFF).
+/// @param src Start address in RAM.
+/// @param length Number of bytes to save.
+/// @return true on success, false on error.
+bool fastio_save(uint8_t filenumber, const void* src, uint16_t length);
+
+/// Sets the safe raster range for 2-bit fastloading when sprites are active.
+/// @param top_y Y-coordinate of topmost sprite.
+/// @param bottom_y Y-coordinate of bottommost sprite.
+void fastio_set_sprite_range(uint8_t top_y, uint8_t bottom_y);
+
+/// Disables sprite raster limits and allows 2-bit transfer anywhere on screen.
+void fastio_set_no_sprites(void);
+
+#endif // _C64_FASTIO_H
