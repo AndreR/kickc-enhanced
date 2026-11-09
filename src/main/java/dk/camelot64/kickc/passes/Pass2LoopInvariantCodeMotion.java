@@ -88,8 +88,12 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
       Variable lVar = getProgramScope().getVariable(lVarRef);
       if(lVar == null || lVar.isVolatile() || lVar.isKindLoadStore()) return false;
 
-      // Check operators
+      // Only hoist computations with operators (LICM targets invariant operations)
+      // Bare variable-to-variable copies or constants do not save computation and risk moving call returns.
       Operator op = assignment.getOperator();
+      if(op == null) {
+         return false;
+      }
       if(op != null) {
          if(Operators.DIVIDE.equals(op) || Operators.MODULO.equals(op)) {
             // Only safe if divisor is a non-zero constant
@@ -135,7 +139,12 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
 
       // Check that all operands are defined outside the loop
       Collection<VariableRef> usedVars = varRefInfos.getUsedVars(assignment);
+      if(usedVars.isEmpty() && assignment.getrValue1() == null) return false;
       for(VariableRef usedVar : usedVars) {
+         // Procedure return variables are dynamic results of calls and must never be hoisted
+         if(usedVar.getFullName().endsWith("::return") || usedVar.getFullName().contains("return")) {
+            return false;
+         }
          Integer defIdx = varRefInfos.getVarDefineStatement(usedVar);
          if(defIdx != null) {
             LabelRef defBlock = statementInfos.getBlockRef(defIdx);
@@ -143,10 +152,50 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
                // Operand defined inside loop -> not invariant
                return false;
             }
+         } else {
+            // Variable defined outside or LOAD_STORE variable: verify it is not modified anywhere in the loop
+            if(isVariableModifiedInLoop(usedVar, loop)) {
+               return false;
+            }
          }
       }
 
       return true;
+   }
+
+   private boolean isVariableModifiedInLoop(VariableRef varRef, NaturalLoop loop) {
+      dk.camelot64.kickc.model.ProcedureModifiedVars procModVars = getProgram().getProcedureModifiedVars();
+      for(LabelRef blockRef : loop.getBlocks()) {
+         Graph.Block block = getGraph().getBlock(blockRef);
+         if(block == null) continue;
+         for(Statement stmt : block.getStatements()) {
+            if(stmt instanceof StatementAssignment) {
+               LValue lVal = ((StatementAssignment) stmt).getlValue();
+               if(varRef.equals(lVal)) return true;
+            } else if(stmt instanceof dk.camelot64.kickc.model.statements.StatementCall) {
+               ProcedureRef callee = ((dk.camelot64.kickc.model.statements.StatementCall) stmt).getProcedure();
+               if(varRef.getFullName().startsWith(callee.getFullName() + "::")) return true;
+               if(procModVars != null) {
+                  Set<VariableRef> mods = procModVars.getModifiedVars(callee);
+                  if(mods != null && mods.contains(varRef)) return true;
+               } else {
+                  return true;
+               }
+            } else if(stmt instanceof dk.camelot64.kickc.model.statements.StatementCallExecute) {
+               ProcedureRef callee = ((dk.camelot64.kickc.model.statements.StatementCallExecute) stmt).getProcedure();
+               if(varRef.getFullName().startsWith(callee.getFullName() + "::")) return true;
+               if(procModVars != null) {
+                  Set<VariableRef> mods = procModVars.getModifiedVars(callee);
+                  if(mods != null && mods.contains(varRef)) return true;
+               } else {
+                  return true;
+               }
+            } else if(stmt instanceof dk.camelot64.kickc.model.statements.StatementAsm) {
+               return true; // Inline assembly might modify memory
+            }
+         }
+      }
+      return false;
    }
 
    private Graph.Block getOrCreatePreheader(NaturalLoop loop, Graph.Block headBlock, List<Graph.Block> entryPreds) {
@@ -198,7 +247,7 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
          }
          if(val instanceof VariableRef) {
             Variable variable = getProgramScope().getVariable((VariableRef) val);
-            if(variable != null && (variable.isVolatile() || variable.isKindLoadStore())) {
+            if(variable != null && variable.isVolatile()) {
                isVol.set(true);
             }
          }

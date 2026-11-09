@@ -134,7 +134,6 @@ public class Program {
       this.includePaths = null;
       this.targetPlatformPaths = null;
       this.loadedFiles = null;
-      this.procedureModifiedVars = null;
       this.structVariableMemberUnwinding = null;
    }
 
@@ -142,6 +141,7 @@ public class Program {
     * Clears all data that is only used in PASS 2-4
     */
    public void endPass4() {
+      this.procedureModifiedVars = null;
       this.libraryPaths = null;
       this.libraryFiles = null;
       this.mainFileComments = null;

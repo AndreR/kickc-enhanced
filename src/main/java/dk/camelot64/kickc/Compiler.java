@@ -455,20 +455,20 @@ public class Compiler {
       optimizations.add(new PassNEliminateUnusedVars(program, true));   // Notice sequence is important
       optimizations.add(new PassNEliminateEmptyProcedure(program));
       optimizations.add(new PassNEliminateEmptyStart(program));
+      optimizations.add(new PassNStatementIndices(program));
+      optimizations.add(() -> {
+         program.clearDominators();
+         program.clearLoopSet();
+         return false;
+      });
       if(enableLoopHeadConstant) {
-         optimizations.add(new PassNStatementIndices(program));
-         optimizations.add(() -> {
-            program.clearDominators();
-            program.clearLoopSet();
-            return false;
-         });
          optimizations.add(new Pass2LoopHeadConstantIdentification(program));
          optimizations.add(new Pass2LoopInvariantCodeMotion(program));
-         optimizations.add(() -> {
-            program.clearStatementIndices();
-            return false;
-         });
       }
+      optimizations.add(() -> {
+         program.clearStatementIndices();
+         return false;
+      });
       return optimizations;
    }
 
