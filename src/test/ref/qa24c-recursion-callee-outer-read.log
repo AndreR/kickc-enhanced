@@ -1,0 +1,474 @@
+Inferred __stackcall for recursive procedure rec_tree
+Converting variable modified inside re-entrant call tree procedure rec_tree() to load/store outer_counter
+Converting outer variable read inside re-entrant call tree procedure check_bound() to load/store outer_bound
+Adding parameter assignment in __stackcall procedure rec_tree::depth = param(rec_tree::depth)
+Inlined call call __init
+Eliminating unused variable with no statement caller::$0
+Calling convention __stackcall adding prepare/execute/finalize for rec_tree::$3 = call rec_tree(rec_tree::$2)
+Calling convention __stackcall adding prepare/execute/finalize for caller::res = call rec_tree(1)
+Calling convention STACK_CALL replacing param(rec_tree::depth) with stackidx(char,rec_tree::OFFSET_STACK_DEPTH)
+Calling convention STACK_CALL adding stack return stackidx(char,rec_tree::OFFSET_STACK_RETURN_0) = rec_tree::return
+Calling convention STACK_CALL adding stack pull rec_tree::$3 = stackpull(char)
+Calling convention STACK_CALL adding stack pull caller::res = stackpull(char)
+Calling convention STACK_CALL adding stack push stackpush(char) = rec_tree::$2
+Calling convention STACK_CALL adding stack push stackpush(char) = 1
+
+CONTROL FLOW GRAPH SSA
+
+char check_bound(char val)
+check_bound: scope:[check_bound]  from rec_tree
+  check_bound::val#1 = phi( rec_tree/check_bound::val#0 )
+  check_bound::$0 = check_bound::val#1 >= outer_bound
+  check_bound::$1 = ! check_bound::$0
+  if(check_bound::$1) goto check_bound::@1
+  to:check_bound::@2
+check_bound::@1: scope:[check_bound]  from check_bound
+  outer_counter = ++ outer_counter
+  check_bound::return#0 = 0
+  to:check_bound::@return
+check_bound::@2: scope:[check_bound]  from check_bound
+  check_bound::return#1 = 1
+  to:check_bound::@return
+check_bound::@return: scope:[check_bound]  from check_bound::@1 check_bound::@2
+  check_bound::return#4 = phi( check_bound::@1/check_bound::return#0, check_bound::@2/check_bound::return#1 )
+  check_bound::return#2 = check_bound::return#4
+  return 
+  to:@return
+
+__stackcall char rec_tree(char depth)
+rec_tree: scope:[rec_tree]  from
+  rec_tree::depth#0 = stackidx(char,rec_tree::OFFSET_STACK_DEPTH)
+  check_bound::val#0 = rec_tree::depth#0
+  call check_bound
+  check_bound::return#3 = check_bound::return#2
+  to:rec_tree::@3
+rec_tree::@3: scope:[rec_tree]  from rec_tree
+  rec_tree::depth#3 = phi( rec_tree/rec_tree::depth#0 )
+  check_bound::return#5 = phi( rec_tree/check_bound::return#3 )
+  rec_tree::$0 = check_bound::return#5
+  rec_tree::$4 = 0 != rec_tree::$0
+  rec_tree::$1 = ! rec_tree::$4
+  if(rec_tree::$1) goto rec_tree::@1
+  to:rec_tree::@2
+rec_tree::@1: scope:[rec_tree]  from rec_tree::@3
+  rec_tree::depth#1 = phi( rec_tree::@3/rec_tree::depth#3 )
+  rec_tree::$2 = rec_tree::depth#1 + 1
+  stackpush(char) = rec_tree::$2
+  callexecute rec_tree 
+  rec_tree::$3 = stackpull(char)
+  rec_tree::return#0 = rec_tree::$3
+  to:rec_tree::@return
+rec_tree::@2: scope:[rec_tree]  from rec_tree::@3
+  rec_tree::depth#2 = phi( rec_tree::@3/rec_tree::depth#3 )
+  rec_tree::return#1 = rec_tree::depth#2
+  to:rec_tree::@return
+rec_tree::@return: scope:[rec_tree]  from rec_tree::@1 rec_tree::@2
+  rec_tree::return#3 = phi( rec_tree::@1/rec_tree::return#0, rec_tree::@2/rec_tree::return#1 )
+  rec_tree::return#2 = rec_tree::return#3
+  stackidx(char,rec_tree::OFFSET_STACK_RETURN_0) = rec_tree::return#2
+  return 
+  to:@return
+
+void caller()
+caller: scope:[caller]  from main
+  outer_bound = 5
+  outer_counter = 0
+  stackpush(char) = 1
+  callexecute rec_tree 
+  caller::res#0 = stackpull(char)
+  caller::$1 = caller::res#0 == 5
+  caller::$2 = outer_counter == 4
+  caller::$3 = caller::$1 && caller::$2
+  if(caller::$3) goto caller::@1
+  to:caller::@2
+caller::@1: scope:[caller]  from caller
+  SCREEN[0] = 'O'
+  SCREEN[1] = 'K'
+  to:caller::@return
+caller::@2: scope:[caller]  from caller
+  SCREEN[0] = 'E'
+  SCREEN[1] = 'R'
+  SCREEN[2] = 'R'
+  to:caller::@return
+caller::@return: scope:[caller]  from caller::@1 caller::@2
+  return 
+  to:@return
+
+void main()
+main: scope:[main]  from __start::@1
+  call caller
+  to:main::@1
+main::@1: scope:[main]  from main
+  to:main::@return
+main::@return: scope:[main]  from main::@1
+  return 
+  to:@return
+
+void __start()
+__start: scope:[__start]  from
+  to:__start::__init1
+__start::__init1: scope:[__start]  from __start
+  outer_bound = 0
+  outer_counter = 0
+  to:__start::@1
+__start::@1: scope:[__start]  from __start::__init1
+  call main
+  to:__start::@2
+__start::@2: scope:[__start]  from __start::@1
+  to:__start::@return
+__start::@return: scope:[__start]  from __start::@2
+  return 
+  to:@return
+
+SYMBOL TABLE SSA
+__constant char * const SCREEN = (char *)$400
+__constant unsigned int STACK_BASE = $103
+void __start()
+void caller()
+bool caller::$1
+bool caller::$2
+bool caller::$3
+char caller::res
+char caller::res#0
+char check_bound(char val)
+bool check_bound::$0
+bool check_bound::$1
+char check_bound::return
+char check_bound::return#0
+char check_bound::return#1
+char check_bound::return#2
+char check_bound::return#3
+char check_bound::return#4
+char check_bound::return#5
+char check_bound::val
+char check_bound::val#0
+char check_bound::val#1
+void main()
+__loadstore char outer_bound
+__loadstore char outer_counter
+__stackcall char rec_tree(char depth)
+char rec_tree::$0
+bool rec_tree::$1
+number rec_tree::$2
+char rec_tree::$3
+bool rec_tree::$4
+__constant char rec_tree::OFFSET_STACK_DEPTH = 0
+__constant char rec_tree::OFFSET_STACK_RETURN_0 = 0
+char rec_tree::depth
+char rec_tree::depth#0
+char rec_tree::depth#1
+char rec_tree::depth#2
+char rec_tree::depth#3
+char rec_tree::return
+char rec_tree::return#0
+char rec_tree::return#1
+char rec_tree::return#2
+char rec_tree::return#3
+
+Adding number conversion cast (unumber) 0 in check_bound::return#0 = 0
+Adding number conversion cast (unumber) 1 in check_bound::return#1 = 1
+Adding number conversion cast (unumber) 0 in rec_tree::$4 = 0 != rec_tree::$0
+Adding number conversion cast (unumber) 1 in rec_tree::$2 = rec_tree::depth#1 + 1
+Adding number conversion cast (unumber) rec_tree::$2 in rec_tree::$2 = rec_tree::depth#1 + (unumber)1
+Adding number conversion cast (unumber) 5 in outer_bound = 5
+Adding number conversion cast (unumber) 0 in outer_counter = 0
+Adding number conversion cast (unumber) 1 in stackpush(char) = 1
+Adding number conversion cast (unumber) 5 in caller::$1 = caller::res#0 == 5
+Adding number conversion cast (unumber) 4 in caller::$2 = outer_counter == 4
+Adding number conversion cast (unumber) 0 in SCREEN[0] = 'O'
+Adding number conversion cast (unumber) 1 in SCREEN[1] = 'K'
+Adding number conversion cast (unumber) 0 in SCREEN[0] = 'E'
+Adding number conversion cast (unumber) 1 in SCREEN[1] = 'R'
+Adding number conversion cast (unumber) 2 in SCREEN[2] = 'R'
+Successful SSA optimization PassNAddNumberTypeConversions
+Inlining cast check_bound::return#0 = (unumber)0
+Inlining cast check_bound::return#1 = (unumber)1
+Inlining cast outer_bound = (unumber)5
+Inlining cast outer_counter = (unumber)0
+Inlining cast stackpush(char) = (unumber)1
+Successful SSA optimization Pass2InlineCast
+Simplifying constant pointer cast (char *) 1024
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 5
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 5
+Simplifying constant integer cast 4
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 2
+Successful SSA optimization PassNCastSimplification
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 5
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 5
+Finalized unsigned number type (uint4_t) 4
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 2
+Successful SSA optimization PassNFinalizeNumberTypeConversions
+Inferred type updated to char in rec_tree::$2 = rec_tree::depth#1 + 1
+Inversing boolean not [2] check_bound::$1 = check_bound::val#1 < outer_bound from [1] check_bound::$0 = check_bound::val#1 >= outer_bound
+Inversing boolean not [17] rec_tree::$1 = 0 == rec_tree::$0 from [16] rec_tree::$4 = 0 != rec_tree::$0
+Successful SSA optimization Pass2UnaryNotSimplification
+Alias check_bound::return#2 = check_bound::return#4 
+Alias check_bound::return#3 = check_bound::return#5 
+Alias rec_tree::depth#0 = rec_tree::depth#3 rec_tree::depth#1 rec_tree::depth#2 rec_tree::return#1 
+Alias rec_tree::return#0 = rec_tree::$3 
+Alias rec_tree::return#2 = rec_tree::return#3 
+Successful SSA optimization Pass2AliasElimination
+Identical Phi Values check_bound::val#1 check_bound::val#0
+Successful SSA optimization Pass2IdenticalPhiElimination
+Simple Condition check_bound::$1 [2] if(check_bound::val#0<outer_bound) goto check_bound::@1
+Simple Condition rec_tree::$1 [14] if(0==rec_tree::$0) goto rec_tree::@1
+Successful SSA optimization Pass2ConditionalJumpSimplification
+Rewriting && if()-condition to two if()s [29] caller::$3 = caller::$1 && caller::$2
+Successful SSA optimization Pass2ConditionalAndOrRewriting
+Constant check_bound::return#0 = 0
+Constant check_bound::return#1 = 1
+Successful SSA optimization Pass2ConstantIdentification
+Simplifying expression containing zero SCREEN in [31] SCREEN[0] = 'O'
+Simplifying expression containing zero SCREEN in [33] SCREEN[0] = 'E'
+Successful SSA optimization PassNSimplifyExpressionWithZero
+Simple Condition caller::$1 [24] if(caller::res#0==5) goto caller::@3
+Simple Condition caller::$2 [31] if(outer_counter==4) goto caller::@1
+Successful SSA optimization Pass2ConditionalJumpSimplification
+Negating conditional jump and destination [24] if(caller::res#0!=5) goto caller::@2
+Successful SSA optimization Pass2ConditionalJumpSequenceImprovement
+Inlining constant with var siblings check_bound::return#0
+Inlining constant with var siblings check_bound::return#1
+Constant inlined check_bound::return#0 = 0
+Constant inlined check_bound::return#1 = 1
+Successful SSA optimization Pass2ConstantInlining
+Consolidated array index constant in *(SCREEN+1)
+Consolidated array index constant in *(SCREEN+1)
+Consolidated array index constant in *(SCREEN+2)
+Successful SSA optimization Pass2ConstantAdditionElimination
+Adding NOP phi() at start of __start
+Adding NOP phi() at start of __start::@1
+Adding NOP phi() at start of __start::@2
+Adding NOP phi() at start of main
+Adding NOP phi() at start of main::@1
+Adding NOP phi() at start of check_bound::@2
+CALL GRAPH
+Calls in [__start] to main:4 
+Calls in [rec_tree] to check_bound:9 rec_tree:19 
+Calls in [main] to caller:23 
+Calls in [caller] to rec_tree:34 
+
+Created 2 initial phi equivalence classes
+Coalesced [13] rec_tree::return#5 = rec_tree::depth#0
+Coalesced [21] rec_tree::return#4 = rec_tree::return#0
+Coalesced down to 2 phi equivalence classes
+Culled Empty Block label __start::@2
+Culled Empty Block label rec_tree::@2
+Culled Empty Block label main::@1
+Culled Empty Block label check_bound::@2
+Renumbering block rec_tree::@3 to rec_tree::@2
+Adding NOP phi() at start of __start
+Adding NOP phi() at start of __start::@1
+Adding NOP phi() at start of main
+
+FINAL CONTROL FLOW GRAPH
+
+void __start()
+__start: scope:[__start]  from
+  [0] phi()
+  to:__start::__init1
+__start::__init1: scope:[__start]  from __start
+  [1] outer_bound = 0
+  [2] outer_counter = 0
+  to:__start::@1
+__start::@1: scope:[__start]  from __start::__init1
+  [3] phi()
+  [4] call main
+  to:__start::@return
+__start::@return: scope:[__start]  from __start::@1
+  [5] return 
+  to:@return
+
+__stackcall char rec_tree(char depth)
+rec_tree: scope:[rec_tree]  from
+  [6] rec_tree::depth#0 = stackidx(char,rec_tree::OFFSET_STACK_DEPTH)
+  [7] check_bound::val#0 = rec_tree::depth#0
+  [8] call check_bound
+  [9] check_bound::return#3 = check_bound::return#2
+  to:rec_tree::@2
+rec_tree::@2: scope:[rec_tree]  from rec_tree
+  [10] rec_tree::$0 = check_bound::return#3
+  [11] if(0==rec_tree::$0) goto rec_tree::@1
+  to:rec_tree::@return
+rec_tree::@1: scope:[rec_tree]  from rec_tree::@2
+  [12] rec_tree::$2 = rec_tree::depth#0 + 1
+  [13] stackpush(char) = rec_tree::$2
+  [14] callexecute rec_tree 
+  [15] rec_tree::return#0 = stackpull(char)
+  to:rec_tree::@return
+rec_tree::@return: scope:[rec_tree]  from rec_tree::@1 rec_tree::@2
+  [16] rec_tree::return#2 = phi( rec_tree::@1/rec_tree::return#0, rec_tree::@2/rec_tree::depth#0 )
+  [17] stackidx(char,rec_tree::OFFSET_STACK_RETURN_0) = rec_tree::return#2
+  [18] return 
+  to:@return
+
+void main()
+main: scope:[main]  from __start::@1
+  [19] phi()
+  [20] call caller
+  to:main::@return
+main::@return: scope:[main]  from main
+  [21] return 
+  to:@return
+
+char check_bound(char val)
+check_bound: scope:[check_bound]  from rec_tree
+  [22] if(check_bound::val#0<outer_bound) goto check_bound::@1
+  to:check_bound::@return
+check_bound::@1: scope:[check_bound]  from check_bound
+  [23] outer_counter = ++ outer_counter
+  to:check_bound::@return
+check_bound::@return: scope:[check_bound]  from check_bound check_bound::@1
+  [24] check_bound::return#2 = phi( check_bound::@1/0, check_bound/1 )
+  [25] return 
+  to:@return
+
+void caller()
+caller: scope:[caller]  from main
+  [26] outer_bound = 5
+  [27] outer_counter = 0
+  [28] stackpush(char) = 1
+  [29] callexecute rec_tree 
+  [30] caller::res#0 = stackpull(char)
+  [31] if(caller::res#0!=5) goto caller::@2
+  to:caller::@3
+caller::@3: scope:[caller]  from caller
+  [32] if(outer_counter==4) goto caller::@1
+  to:caller::@2
+caller::@2: scope:[caller]  from caller caller::@3
+  [33] *SCREEN = 'E'
+  [34] *(SCREEN+1) = 'R'
+  [35] *(SCREEN+2) = 'R'
+  to:caller::@return
+caller::@return: scope:[caller]  from caller::@1 caller::@2
+  [36] return 
+  to:@return
+caller::@1: scope:[caller]  from caller::@3
+  [37] *SCREEN = 'O'
+  [38] *(SCREEN+1) = 'K'
+  to:caller::@return
+
+Initial phi equivalence classes
+[ rec_tree::return#2 rec_tree::return#0 rec_tree::depth#0 ]
+[ check_bound::return#2 ]
+Added variable outer_bound to live range equivalence class [ outer_bound ]
+Added variable outer_counter to live range equivalence class [ outer_counter ]
+Added variable check_bound::val#0 to live range equivalence class [ check_bound::val#0 ]
+Added variable check_bound::return#3 to live range equivalence class [ check_bound::return#3 ]
+Added variable rec_tree::$0 to live range equivalence class [ rec_tree::$0 ]
+Added variable rec_tree::$2 to live range equivalence class [ rec_tree::$2 ]
+Added variable caller::res#0 to live range equivalence class [ caller::res#0 ]
+Complete equivalence classes
+[ rec_tree::return#2 rec_tree::return#0 rec_tree::depth#0 ]
+[ check_bound::return#2 ]
+[ outer_bound ]
+[ outer_counter ]
+[ check_bound::val#0 ]
+[ check_bound::return#3 ]
+[ rec_tree::$0 ]
+[ rec_tree::$2 ]
+[ caller::res#0 ]
+Allocated zp[1]:2 [ rec_tree::return#2 rec_tree::return#0 rec_tree::depth#0 ]
+Allocated zp[1]:3 [ check_bound::return#3 ]
+Allocated zp[1]:4 [ rec_tree::$0 ]
+Allocated zp[1]:5 [ rec_tree::$2 ]
+Allocated zp[1]:6 [ check_bound::val#0 ]
+Allocated zp[1]:7 [ check_bound::return#2 ]
+Allocated zp[1]:8 [ caller::res#0 ]
+Allocated zp[1]:9 [ outer_counter ]
+Allocated zp[1]:10 [ outer_bound ]
+REGISTER UPLIFT POTENTIAL REGISTERS
+Statement [1] outer_bound = 0 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [2] outer_counter = 0 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [6] rec_tree::depth#0 = stackidx(char,rec_tree::OFFSET_STACK_DEPTH) [ outer_bound outer_counter rec_tree::depth#0 ] ( main:4::caller:20::rec_tree:29 [ outer_bound outer_counter rec_tree::depth#0 ] { { check_bound::val#0 = rec_tree::depth#0 } { check_bound::return#2 = check_bound::return#3 } }  ) always clobbers reg byte a reg byte x 
+Statement [15] rec_tree::return#0 = stackpull(char) [ outer_counter rec_tree::return#0 ] ( main:4::caller:20::rec_tree:29 [ outer_counter rec_tree::return#0 ] { }  ) always clobbers reg byte a 
+Statement [17] stackidx(char,rec_tree::OFFSET_STACK_RETURN_0) = rec_tree::return#2 [ outer_counter ] ( main:4::caller:20::rec_tree:29 [ outer_counter ] { }  ) always clobbers reg byte x 
+Statement [26] outer_bound = 5 [ outer_bound ] ( main:4::caller:20 [ outer_bound ] { }  ) always clobbers reg byte a 
+Statement [27] outer_counter = 0 [ outer_bound outer_counter ] ( main:4::caller:20 [ outer_bound outer_counter ] { }  ) always clobbers reg byte a 
+Statement [28] stackpush(char) = 1 [ outer_bound outer_counter ] ( main:4::caller:20 [ outer_bound outer_counter ] { }  ) always clobbers reg byte a 
+Statement [30] caller::res#0 = stackpull(char) [ outer_counter caller::res#0 ] ( main:4::caller:20 [ outer_counter caller::res#0 ] { }  ) always clobbers reg byte a 
+Statement [32] if(outer_counter==4) goto caller::@1 [ ] ( main:4::caller:20 [ ] { }  ) always clobbers reg byte a 
+Statement [33] *SCREEN = 'E' [ ] ( main:4::caller:20 [ ] { }  ) always clobbers reg byte a 
+Statement [34] *(SCREEN+1) = 'R' [ ] ( main:4::caller:20 [ ] { }  ) always clobbers reg byte a 
+Statement [35] *(SCREEN+2) = 'R' [ ] ( main:4::caller:20 [ ] { }  ) always clobbers reg byte a 
+Statement [37] *SCREEN = 'O' [ ] ( main:4::caller:20 [ ] { }  ) always clobbers reg byte a 
+Statement [38] *(SCREEN+1) = 'K' [ ] ( main:4::caller:20 [ ] { }  ) always clobbers reg byte a 
+Potential registers zp[1]:2 [ rec_tree::return#2 rec_tree::return#0 rec_tree::depth#0 ] : zp[1]:2 , reg byte a , reg byte x , reg byte y , 
+Potential registers zp[1]:7 [ check_bound::return#2 ] : zp[1]:7 , reg byte a , reg byte x , reg byte y , 
+Potential registers zp[1]:10 [ outer_bound ] : zp[1]:10 , 
+Potential registers zp[1]:9 [ outer_counter ] : zp[1]:9 , 
+Potential registers zp[1]:6 [ check_bound::val#0 ] : zp[1]:6 , reg byte a , reg byte x , reg byte y , 
+Potential registers zp[1]:3 [ check_bound::return#3 ] : zp[1]:3 , reg byte a , reg byte x , reg byte y , 
+Potential registers zp[1]:4 [ rec_tree::$0 ] : zp[1]:4 , reg byte a , reg byte x , reg byte y , 
+Potential registers zp[1]:5 [ rec_tree::$2 ] : zp[1]:5 , reg byte a , reg byte x , reg byte y , 
+Potential registers zp[1]:8 [ caller::res#0 ] : zp[1]:8 , reg byte a , reg byte x , reg byte y , 
+
+REGISTER UPLIFT SCOPES
+Uplift Scope [rec_tree] 5,672.33: zp[1]:2 [ rec_tree::return#2 rec_tree::return#0 rec_tree::depth#0 ] 2,002: zp[1]:4 [ rec_tree::$0 ] 2,002: zp[1]:5 [ rec_tree::$2 ] 
+Uplift Scope [check_bound] 2,002: zp[1]:3 [ check_bound::return#3 ] 1,012: zp[1]:6 [ check_bound::val#0 ] 333.67: zp[1]:7 [ check_bound::return#2 ] 
+Uplift Scope [caller] 202: zp[1]:8 [ caller::res#0 ] 
+Uplift Scope [] 10.27: zp[1]:9 [ outer_counter ] 7.6: zp[1]:10 [ outer_bound ] 
+Uplift Scope [main] 
+Uplift Scope [__start] 
+
+Uplifting [rec_tree] best 205 combination reg byte x [ rec_tree::return#2 rec_tree::return#0 rec_tree::depth#0 ] reg byte a [ rec_tree::$0 ] reg byte a [ rec_tree::$2 ] 
+Uplifting [check_bound] best 184 combination reg byte a [ check_bound::return#3 ] reg byte x [ check_bound::val#0 ] reg byte a [ check_bound::return#2 ] 
+Uplifting [caller] best 178 combination reg byte a [ caller::res#0 ] 
+Uplifting [] best 178 combination zp[1]:9 [ outer_counter ] zp[1]:10 [ outer_bound ] 
+Uplifting [main] best 178 combination 
+Uplifting [__start] best 178 combination 
+Allocated (was zp[1]:9) zp[1]:2 [ outer_counter ]
+Allocated (was zp[1]:10) zp[1]:3 [ outer_bound ]
+Removing instruction jmp __init1
+Removing instruction jmp __b1
+Removing instruction jmp __breturn
+Removing instruction jmp __b2
+Removing instruction jmp __breturn
+Removing instruction jmp __breturn
+Removing instruction jmp __b3
+Removing instruction jmp __b2
+Removing instruction jmp __breturn
+Removing instruction lda #0
+Removing instruction lda #'R'
+Tail Call Optimization: Replacing jsr caller; rts with jmp caller
+Replacing label __breturn_from___b1 with __breturn_from___b2
+Removing instruction __b1_from___init1:
+Removing instruction main_from___b1:
+Removing instruction __breturn_from___b1:
+Removing instruction __init1:
+Removing instruction __b1:
+Removing instruction __breturn:
+Removing instruction __b2:
+Removing instruction __breturn:
+Removing instruction __breturn_from_check_bound:
+Removing instruction __breturn_from___b1:
+Removing instruction __b3:
+Skipping double jump to __breturn in jmp __breturn_from___b2
+Replacing jump to rts with rts in jmp __breturn
+Replacing jump to rts with rts in jmp __breturn
+Removing unreachable instruction rts
+Relabelling long label __breturn_from___b2 to __b2
+Removing instruction jmp __breturn
+Removing instruction __b2:
+Removing instruction __breturn:
+Removing instruction __breturn:
+Folding inverted branch over jmp to bne __breturn

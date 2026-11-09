@@ -1,5 +1,6 @@
 package dk.camelot64.kickc.passes;
 
+import dk.camelot64.kickc.model.CallGraph;
 import dk.camelot64.kickc.model.Comment;
 import dk.camelot64.kickc.model.ControlFlowBlock;
 import dk.camelot64.kickc.model.Graph;
@@ -11,13 +12,12 @@ import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.types.SymbolType;
 import dk.camelot64.kickc.model.values.LValue;
 import dk.camelot64.kickc.model.values.ParamValue;
+import dk.camelot64.kickc.model.values.ProcedureRef;
+import dk.camelot64.kickc.model.values.ScopeRef;
 import dk.camelot64.kickc.model.values.Value;
 import dk.camelot64.kickc.model.values.VariableRef;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 /** Handle calling conventions {@link Procedure.CallingConvention#STACK_CALL} by converting parameters, return values and modified variables to load/store and  by adding parameter assignemtn statements to procedures*/
 public class Pass1CallStackVarPrepare extends Pass2SsaOptimization {
@@ -29,24 +29,54 @@ public class Pass1CallStackVarPrepare extends Pass2SsaOptimization {
    @Override
    public boolean step() {
 
-      // Set variables modified in STACK_CALL/VAR_CALL procedures to load/store
+      // Find all procedures that are STACK_CALL/VAR_CALL or transitively called by them
+      Set<ProcedureRef> reentrantProcs = new LinkedHashSet<>();
+      Queue<ProcedureRef> reentrantQueue = new ArrayDeque<>();
       for(Procedure procedure : getProgramScope().getAllProcedures(true)) {
          if(Procedure.CallingConvention.STACK_CALL.equals(procedure.getCallingConvention()) || Procedure.CallingConvention.VAR_CALL.equals(procedure.getCallingConvention())) {
-            Set<VariableRef> modifiedVars = getProgram().getProcedureModifiedVars().getModifiedVars(procedure.getRef());
+            reentrantProcs.add(procedure.getRef());
+            reentrantQueue.add(procedure.getRef());
+         }
+      }
+      CallGraph callGraph = getProgram().getCallGraph();
+      while(!reentrantQueue.isEmpty()) {
+         ProcedureRef procRef = reentrantQueue.poll();
+         CallGraph.CallBlock callBlock = callGraph.getCallBlock(procRef);
+         if(callBlock != null) {
+            for(ScopeRef calledScope : callBlock.getCalledBlocks()) {
+               if(calledScope instanceof ProcedureRef) {
+                  ProcedureRef calledProc = (ProcedureRef) calledScope;
+                  if(!reentrantProcs.contains(calledProc)) {
+                     reentrantProcs.add(calledProc);
+                     reentrantQueue.add(calledProc);
+                  }
+               }
+            }
+         }
+      }
+
+      // Set variables modified in re-entrant call tree to load/store
+      for(ProcedureRef procRef : reentrantProcs) {
+         Procedure procedure = getProgramScope().getProcedure(procRef);
+         if(procedure == null) continue;
+         Set<VariableRef> modifiedVars = getProgram().getProcedureModifiedVars().getModifiedVars(procedure.getRef());
+         if(modifiedVars != null) {
             for(VariableRef modifiedVar : modifiedVars) {
                final Variable variable = getProgramScope().getVariable(modifiedVar);
-               if(variable.isKindPhiMaster()) {
-                  getLog().append("Converting variable modified inside "+procedure.getCallingConvention().getName()+" procedure "+procedure.getFullName()+"() to load/store "+variable.toString(getProgram()));
+               if(variable != null && variable.isKindPhiMaster()) {
+                  getLog().append("Converting variable modified inside re-entrant call tree procedure "+procedure.getFullName()+"() to load/store "+variable.toString(getProgram()));
                   variable.setKind(Variable.Kind.LOAD_STORE);
                }
             }
          }
       }
 
-      // Set outer variables read inside STACK_CALL/VAR_CALL procedures to load/store
-      for(Procedure procedure : getProgramScope().getAllProcedures(true)) {
-         if(Procedure.CallingConvention.STACK_CALL.equals(procedure.getCallingConvention()) || Procedure.CallingConvention.VAR_CALL.equals(procedure.getCallingConvention())) {
-            List<Graph.Block> procBlocks = getGraph().getScopeBlocks(procedure.getRef());
+      // Set outer variables read inside re-entrant call tree to load/store
+      for(ProcedureRef procRef : reentrantProcs) {
+         Procedure procedure = getProgramScope().getProcedure(procRef);
+         if(procedure == null) continue;
+         List<Graph.Block> procBlocks = getGraph().getScopeBlocks(procedure.getRef());
+         if(procBlocks != null) {
             for(Graph.Block block : procBlocks) {
                ProgramValueIterator.execute(block, (programValue, currentStmt, stmtIt, currentBlock) -> {
                   Value val = programValue.get();
@@ -57,7 +87,7 @@ public class Pass1CallStackVarPrepare extends Pass2SsaOptimization {
                         Variable var = getProgramScope().getVariable(varRef);
                         if(var != null && var.isKindPhiMaster() && !var.isKindConstant()) {
                            var.setKind(Variable.Kind.LOAD_STORE);
-                           getLog().append("Converting outer variable read inside " + procedure.getCallingConvention().getName() + " procedure " + procedure.getFullName() + "() to load/store " + var.toString(getProgram()));
+                           getLog().append("Converting outer variable read inside re-entrant call tree procedure " + procedure.getFullName() + "() to load/store " + var.toString(getProgram()));
                         }
                      }
                   }

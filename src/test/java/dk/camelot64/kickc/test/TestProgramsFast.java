@@ -5370,4 +5370,10 @@ public class TestProgramsFast extends TestPrograms {
       compileAndCompare("qa24b-recursion-outer-read.c");
    }
 
+   // QA-24c: Outer variable read/written by a procedure called from a recursive procedure
+   @Test
+   public void testQa24cRecursionCalleeOuterRead() throws IOException {
+      compileAndCompare("qa24c-recursion-callee-outer-read.c");
+   }
+
 }

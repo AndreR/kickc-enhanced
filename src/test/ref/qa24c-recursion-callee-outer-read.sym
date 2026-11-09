@@ -1,0 +1,35 @@
+__constant char * const SCREEN = (char *) 1024
+__constant unsigned int STACK_BASE = $103
+void __start()
+void caller()
+char caller::res
+char caller::res#0 // reg byte a 202.0
+char check_bound(char val)
+char check_bound::return
+char check_bound::return#2 // reg byte a 333.6666666666667
+char check_bound::return#3 // reg byte a 2002.0
+char check_bound::val // 100000.0
+char check_bound::val#0 // reg byte x 1012.0
+void main()
+__loadstore char outer_bound // zp[1]:3 7.6
+__loadstore char outer_counter // zp[1]:2 10.272727272727273
+__stackcall char rec_tree(char depth)
+char rec_tree::$0 // reg byte a 2002.0
+char rec_tree::$2 // reg byte a 2002.0
+__constant char rec_tree::OFFSET_STACK_DEPTH = 0
+__constant char rec_tree::OFFSET_STACK_RETURN_0 = 0
+char rec_tree::depth
+char rec_tree::depth#0 // reg byte x 667.3333333333334
+char rec_tree::return
+char rec_tree::return#0 // reg byte x 2002.0
+char rec_tree::return#2 // reg byte x 3003.0
+
+reg byte x [ rec_tree::return#2 rec_tree::return#0 rec_tree::depth#0 ]
+reg byte a [ check_bound::return#2 ]
+zp[1]:3 [ outer_bound ]
+zp[1]:2 [ outer_counter ]
+reg byte x [ check_bound::val#0 ]
+reg byte a [ check_bound::return#3 ]
+reg byte a [ rec_tree::$0 ]
+reg byte a [ rec_tree::$2 ]
+reg byte a [ caller::res#0 ]
