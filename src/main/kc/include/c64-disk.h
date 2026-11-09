@@ -75,4 +75,14 @@ DiskStatus disk_load(uint8_t device, const char* filename, void* dest_addr, uint
 /// @return DISK_OK on success, or error status code
 DiskStatus disk_save(uint8_t device, const char* filename, const void* src_addr, uint16_t length, bool overwrite);
 
+/// Reads the leading bytes (header) of a file without overwriting main memory payload.
+/// Opens the file via KERNAL OPEN/CHKIN, skips the 2-byte PRG load address, and reads
+/// up to header_len bytes into dest_header via CHRIN ($FFCF).
+/// @param device Device number (8..11)
+/// @param filename Null-terminated filename
+/// @param dest_header Destination buffer for header bytes
+/// @param header_len Number of header bytes to read
+/// @return DISK_OK on success, or error status code
+DiskStatus disk_read_header(uint8_t device, const char* filename, void* dest_header, uint8_t header_len);
+
 #endif // _C64_DISK_H

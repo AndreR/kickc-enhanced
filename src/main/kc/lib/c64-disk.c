@@ -197,3 +197,77 @@ DiskStatus disk_save(uint8_t device, const char* filename, const void* src_addr,
     }
     return DISK_OK;
 }
+
+DiskStatus disk_read_header(uint8_t device, const char* filename, void* dest_header, uint8_t header_len) {
+    uint8_t fn_len = (uint8_t)strlen(filename);
+    if (fn_len == 0) return DISK_ERR_NOT_FOUND;
+
+    asm {
+        lda #2          // filenumber 2
+        ldx device
+        ldy #0          // secondary address 0 (read)
+        jsr $ffba       // SETLFS
+
+        lda fn_len
+        ldx filename
+        ldy filename+1
+        jsr $ffbd       // SETNAM
+
+        jsr $ffc0       // OPEN
+        bcc !open_ok+
+        jmp !err+
+
+    !open_ok:
+        ldx #2
+        jsr $ffc6       // CHKIN
+        bcc !chkin_ok+
+        jmp !close_err+
+
+    !chkin_ok:
+        // Skip 2-byte PRG load address
+        jsr $ffcf
+        lda $90
+        bne !io_err+
+        jsr $ffcf
+        lda $90
+        bne !io_err+
+    }
+
+    uint8_t* dst = (uint8_t*)dest_header;
+    for (uint8_t i = 0; i < header_len; i++) {
+        char ch = 0;
+        uint8_t st = 0;
+        asm {
+            jsr $ffcf
+            sta ch
+            lda $90
+            sta st
+        }
+        if (st != 0 && (st & 0xbf) != 0) {
+            asm {
+                jsr $ffcc // CLRCHN
+                lda #2
+                jsr $ffc3 // CLOSE
+            }
+            return DISK_ERR_READ;
+        }
+        dst[i] = (uint8_t)ch;
+    }
+
+    asm {
+        jsr $ffcc       // CLRCHN
+        lda #2
+        jsr $ffc3       // CLOSE
+    }
+    return DISK_OK;
+
+    asm {
+    !close_err:
+        jsr $ffcc
+        lda #2
+        jsr $ffc3
+    !err:
+    !io_err:
+    }
+    return DISK_ERR_READ;
+}
