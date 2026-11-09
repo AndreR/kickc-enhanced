@@ -5364,4 +5364,10 @@ public class TestProgramsFast extends TestPrograms {
       compileAndCompare("qa24-recursion.c");
    }
 
+   // QA-24b: Outer / global variable read inside a recursive (STACK_CALL) procedure
+   @Test
+   public void testQa24bRecursionOuterRead() throws IOException {
+      compileAndCompare("qa24b-recursion-outer-read.c");
+   }
+
 }

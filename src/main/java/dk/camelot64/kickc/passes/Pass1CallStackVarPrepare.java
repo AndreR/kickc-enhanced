@@ -4,16 +4,19 @@ import dk.camelot64.kickc.model.Comment;
 import dk.camelot64.kickc.model.ControlFlowBlock;
 import dk.camelot64.kickc.model.Graph;
 import dk.camelot64.kickc.model.Program;
+import dk.camelot64.kickc.model.iterator.ProgramValueIterator;
 import dk.camelot64.kickc.model.statements.StatementAssignment;
 import dk.camelot64.kickc.model.symbols.Procedure;
 import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.types.SymbolType;
 import dk.camelot64.kickc.model.values.LValue;
 import dk.camelot64.kickc.model.values.ParamValue;
+import dk.camelot64.kickc.model.values.Value;
 import dk.camelot64.kickc.model.values.VariableRef;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 
 /** Handle calling conventions {@link Procedure.CallingConvention#STACK_CALL} by converting parameters, return values and modified variables to load/store and  by adding parameter assignemtn statements to procedures*/
@@ -36,6 +39,29 @@ public class Pass1CallStackVarPrepare extends Pass2SsaOptimization {
                   getLog().append("Converting variable modified inside "+procedure.getCallingConvention().getName()+" procedure "+procedure.getFullName()+"() to load/store "+variable.toString(getProgram()));
                   variable.setKind(Variable.Kind.LOAD_STORE);
                }
+            }
+         }
+      }
+
+      // Set outer variables read inside STACK_CALL/VAR_CALL procedures to load/store
+      for(Procedure procedure : getProgramScope().getAllProcedures(true)) {
+         if(Procedure.CallingConvention.STACK_CALL.equals(procedure.getCallingConvention()) || Procedure.CallingConvention.VAR_CALL.equals(procedure.getCallingConvention())) {
+            List<Graph.Block> procBlocks = getGraph().getScopeBlocks(procedure.getRef());
+            for(Graph.Block block : procBlocks) {
+               ProgramValueIterator.execute(block, (programValue, currentStmt, stmtIt, currentBlock) -> {
+                  Value val = programValue.get();
+                  if(val instanceof VariableRef) {
+                     VariableRef varRef = (VariableRef) val;
+                     String scopeNames = varRef.getScopeNames();
+                     if(scopeNames == null || (!scopeNames.equals(procedure.getFullName()) && !scopeNames.startsWith(procedure.getFullName() + "::"))) {
+                        Variable var = getProgramScope().getVariable(varRef);
+                        if(var != null && var.isKindPhiMaster() && !var.isKindConstant()) {
+                           var.setKind(Variable.Kind.LOAD_STORE);
+                           getLog().append("Converting outer variable read inside " + procedure.getCallingConvention().getName() + " procedure " + procedure.getFullName() + "() to load/store " + var.toString(getProgram()));
+                        }
+                     }
+                  }
+               });
             }
          }
       }
@@ -72,6 +98,5 @@ public class Pass1CallStackVarPrepare extends Pass2SsaOptimization {
 
       return false;
    }
-
 
 }

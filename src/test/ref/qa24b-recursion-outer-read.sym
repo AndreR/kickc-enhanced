@@ -1,0 +1,22 @@
+__constant char * const SCREEN = (char *) 1024
+__constant unsigned int STACK_BASE = $103
+void __start()
+void caller()
+char caller::res
+char caller::res#0 // reg byte a 202.0
+void main()
+__loadstore char outer_limit // zp[1]:2 184.00000000000003
+__stackcall char rec_search(char depth)
+char rec_search::$2 // reg byte a 2002.0
+__constant char rec_search::OFFSET_STACK_DEPTH = 0
+__constant char rec_search::OFFSET_STACK_RETURN_0 = 0
+char rec_search::depth
+char rec_search::depth#0 // reg byte a 2002.0
+char rec_search::return
+char rec_search::return#0 // reg byte a 2002.0
+char rec_search::return#2 // reg byte a 3003.0
+
+reg byte a [ rec_search::return#2 rec_search::return#0 rec_search::depth#0 ]
+zp[1]:2 [ outer_limit ]
+reg byte a [ rec_search::$2 ]
+reg byte a [ caller::res#0 ]
