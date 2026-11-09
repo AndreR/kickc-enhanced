@@ -9,6 +9,7 @@ import dk.camelot64.kickc.model.statements.StatementAssignment;
 import dk.camelot64.kickc.model.symbols.Scope;
 import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.types.SymbolType;
+import dk.camelot64.kickc.model.types.SymbolTypePointer;
 import dk.camelot64.kickc.model.types.SymbolTypeInference;
 import dk.camelot64.kickc.model.values.*;
 
@@ -30,6 +31,28 @@ public class Pass2DeInlineWordDerefIdx extends Pass2SsaOptimization {
             RValue indexValue = dereferenceIndexed.getIndex();
             SymbolType indexType = SymbolTypeInference.inferType(getProgramScope(), indexValue);
             if(indexType.getSizeBytes()>1) {
+               // Check if the target is a static array known to fit within 256 bytes total
+               Long totalBytes = getArrayTotalBytes(dereferenceIndexed.getPointer());
+               if(totalBytes != null && totalBytes <= 256L) {
+                  Scope currentScope = getProgramScope().getScope(currentBlock.getScope());
+                  Variable byteIndexVar = VariableBuilder.createIntermediate(currentScope, SymbolType.BYTE, getProgram());
+                  stmtIt.previous();
+                  StatementAssignment castAssignment = new StatementAssignment(
+                     (LValue) byteIndexVar.getRef(),
+                     Operators.getCastUnary(SymbolType.BYTE),
+                     indexValue,
+                     true,
+                     currentStmt.getSource(),
+                     Comment.NO_COMMENTS
+                  );
+                  stmtIt.add(castAssignment);
+                  stmtIt.next();
+                  dereferenceIndexed.setIndex(byteIndexVar.getRef());
+                  getLog().append("Narrowed array word index to byte for direct 6502 indexed addressing: " + currentStmt.toString(getProgram(), false));
+                  optimized.set(true);
+                  return;
+               }
+
                // Index is multiple bytes - de-inline it
                getLog().append("De-inlining pointer[w] to *(pointer+w)   "+currentStmt.toString(getProgram(), false));
                Scope currentScope = getProgramScope().getScope(currentBlock.getScope());
@@ -47,5 +70,51 @@ public class Pass2DeInlineWordDerefIdx extends Pass2SsaOptimization {
       return optimized.get();
    }
 
+   private Long getArrayTotalBytes(RValue pointer) {
+      SymbolVariableRef symbolRef = null;
+      if(pointer instanceof SymbolVariableRef) {
+         symbolRef = (SymbolVariableRef) pointer;
+      } else if(pointer instanceof ConstantSymbolPointer) {
+         SymbolRef sym = ((ConstantSymbolPointer) pointer).getToSymbol();
+         if(sym instanceof SymbolVariableRef) {
+            symbolRef = (SymbolVariableRef) sym;
+         }
+      }
+      if(symbolRef != null) {
+         Variable var = getProgramScope().getVariable(symbolRef);
+         if(var != null && var.isArray()) {
+            SymbolType type = var.getType();
+            if(type instanceof SymbolTypePointer) {
+               SymbolType elemType = ((SymbolTypePointer) type).getElementType();
+               int elemBytes = elemType.getSizeBytes();
+               if(var.getArraySize() != null) {
+                  try {
+                     ConstantLiteral lit = var.getArraySize().calculateLiteral(getProgramScope());
+                     if(lit instanceof ConstantInteger) {
+                        return ((ConstantInteger) lit).getInteger() * elemBytes;
+                     }
+                  } catch(Exception e) {
+                     // ignore
+                  }
+               }
+               ConstantValue initValue = var.getInitValue();
+               if(initValue instanceof ConstantArrayList) {
+                  return (long) ((ConstantArrayList) initValue).getElements().size() * elemBytes;
+               }
+               if(initValue instanceof ConstantArrayFilled) {
+                  try {
+                     ConstantLiteral lit = ((ConstantArrayFilled) initValue).getSize().calculateLiteral(getProgramScope());
+                     if(lit instanceof ConstantInteger) {
+                        return ((ConstantInteger) lit).getInteger() * elemBytes;
+                     }
+                  } catch(Exception e) {
+                     // ignore
+                  }
+               }
+            }
+         }
+      }
+      return null;
+   }
 
 }

@@ -5376,4 +5376,16 @@ public class TestProgramsFast extends TestPrograms {
       compileAndCompare("qa24c-recursion-callee-outer-read.c");
    }
 
+   // QA-25: Direct indexed addressing for static arrays <= 256 bytes indexed by word expressions
+   @Test
+   public void testQa25ArrayWordNarrow() throws IOException {
+      compileAndCompare("qa25-array-word-narrow.c");
+   }
+
+   // QA-26: Stack parameter unpacking and redundant TSX elimination
+   @Test
+   public void testQa26StackCallTsx() throws IOException {
+      compileAndCompare("qa26-stack-call-tsx.c");
+   }
+
 }

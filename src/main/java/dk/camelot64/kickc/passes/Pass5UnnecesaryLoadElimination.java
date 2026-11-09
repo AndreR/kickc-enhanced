@@ -165,6 +165,14 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                      modified = remove(lineIt);
                   }
                }
+               if(cpuOpcode.getMnemonic().equals("tsx")) {
+                  AsmProgramStaticRegisterValues.AsmRegisterValues instructionValues = staticValues.getValues(instruction);
+                  if(instructionValues != null && Boolean.TRUE.equals(instructionValues.isXIsSp())) {
+                     if(canRemoveRegister(lines, lineIt.previousIndex(), "X")) {
+                        modified = remove(lineIt);
+                     }
+                  }
+               }
             }
          }
       }

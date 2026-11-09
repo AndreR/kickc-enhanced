@@ -1,0 +1,315 @@
+Adding parameter assignment in __stackcall procedure multi_param::d = param(multi_param::d)
+Adding parameter assignment in __stackcall procedure multi_param::c = param(multi_param::c)
+Adding parameter assignment in __stackcall procedure multi_param::b = param(multi_param::b)
+Adding parameter assignment in __stackcall procedure multi_param::a = param(multi_param::a)
+Eliminating unused variable with no statement main::$0
+Calling convention __stackcall adding prepare/execute/finalize for main::res = call multi_param($a, $14, $1e, $28)
+Calling convention STACK_CALL replacing param(multi_param::a) with stackidx(char,multi_param::OFFSET_STACK_A)
+Calling convention STACK_CALL replacing param(multi_param::b) with stackidx(char,multi_param::OFFSET_STACK_B)
+Calling convention STACK_CALL replacing param(multi_param::c) with stackidx(char,multi_param::OFFSET_STACK_C)
+Calling convention STACK_CALL replacing param(multi_param::d) with stackidx(char,multi_param::OFFSET_STACK_D)
+Calling convention STACK_CALL adding stack return stackidx(char,multi_param::OFFSET_STACK_RETURN_3) = multi_param::return
+Calling convention STACK_CALL adding stack pull main::res = stackpull(char)
+Calling convention STACK_CALL adding stack push stackpush(char) = $a
+Calling convention STACK_CALL adding stack push stackpush(char) = $14
+Calling convention STACK_CALL adding stack push stackpush(char) = $1e
+Calling convention STACK_CALL adding stack push stackpush(char) = $28
+
+CONTROL FLOW GRAPH SSA
+
+__stackcall char multi_param(char a , char b , char c , char d)
+multi_param: scope:[multi_param]  from
+  multi_param::a#0 = stackidx(char,multi_param::OFFSET_STACK_A)
+  multi_param::b#0 = stackidx(char,multi_param::OFFSET_STACK_B)
+  multi_param::c#0 = stackidx(char,multi_param::OFFSET_STACK_C)
+  multi_param::d#0 = stackidx(char,multi_param::OFFSET_STACK_D)
+  multi_param::$0 = multi_param::a#0 + multi_param::b#0
+  multi_param::$1 = multi_param::$0 + multi_param::c#0
+  multi_param::$2 = multi_param::$1 + multi_param::d#0
+  multi_param::return#0 = multi_param::$2
+  to:multi_param::@return
+multi_param::@return: scope:[multi_param]  from multi_param
+  multi_param::return#1 = phi( multi_param/multi_param::return#0 )
+  stackidx(char,multi_param::OFFSET_STACK_RETURN_3) = multi_param::return#1
+  return 
+  to:@return
+
+void main()
+main: scope:[main]  from __start
+  stackpush(char) = $a
+  stackpush(char) = $14
+  stackpush(char) = $1e
+  stackpush(char) = $28
+  callexecute multi_param 
+  sideeffect stackpullpadding(3)
+  main::res#0 = stackpull(char)
+  main::$1 = main::res#0 == $64
+  if(main::$1) goto main::@1
+  to:main::@2
+main::@1: scope:[main]  from main
+  SCREEN[0] = 'O'
+  SCREEN[1] = 'K'
+  to:main::@return
+main::@2: scope:[main]  from main
+  SCREEN[0] = 'E'
+  SCREEN[1] = 'R'
+  SCREEN[2] = 'R'
+  to:main::@return
+main::@return: scope:[main]  from main::@1 main::@2
+  return 
+  to:@return
+
+void __start()
+__start: scope:[__start]  from
+  call main
+  to:__start::@1
+__start::@1: scope:[__start]  from __start
+  to:__start::@return
+__start::@return: scope:[__start]  from __start::@1
+  return 
+  to:@return
+
+SYMBOL TABLE SSA
+__constant char * const SCREEN = (char *)$400
+__constant unsigned int STACK_BASE = $103
+void __start()
+void main()
+bool main::$1
+char main::res
+char main::res#0
+__stackcall char multi_param(char a , char b , char c , char d)
+char multi_param::$0
+char multi_param::$1
+char multi_param::$2
+__constant char multi_param::OFFSET_STACK_A = 3
+__constant char multi_param::OFFSET_STACK_B = 2
+__constant char multi_param::OFFSET_STACK_C = 1
+__constant char multi_param::OFFSET_STACK_D = 0
+__constant char multi_param::OFFSET_STACK_RETURN_3 = 3
+char multi_param::a
+char multi_param::a#0
+char multi_param::b
+char multi_param::b#0
+char multi_param::c
+char multi_param::c#0
+char multi_param::d
+char multi_param::d#0
+char multi_param::return
+char multi_param::return#0
+char multi_param::return#1
+
+Adding number conversion cast (unumber) $a in stackpush(char) = $a
+Adding number conversion cast (unumber) $14 in stackpush(char) = $14
+Adding number conversion cast (unumber) $1e in stackpush(char) = $1e
+Adding number conversion cast (unumber) $28 in stackpush(char) = $28
+Adding number conversion cast (unumber) $64 in main::$1 = main::res#0 == $64
+Adding number conversion cast (unumber) 0 in SCREEN[0] = 'O'
+Adding number conversion cast (unumber) 1 in SCREEN[1] = 'K'
+Adding number conversion cast (unumber) 0 in SCREEN[0] = 'E'
+Adding number conversion cast (unumber) 1 in SCREEN[1] = 'R'
+Adding number conversion cast (unumber) 2 in SCREEN[2] = 'R'
+Successful SSA optimization PassNAddNumberTypeConversions
+Inlining cast stackpush(char) = (unumber)$a
+Inlining cast stackpush(char) = (unumber)$14
+Inlining cast stackpush(char) = (unumber)$1e
+Inlining cast stackpush(char) = (unumber)$28
+Successful SSA optimization Pass2InlineCast
+Simplifying constant pointer cast (char *) 1024
+Simplifying constant integer cast $a
+Simplifying constant integer cast $14
+Simplifying constant integer cast $1e
+Simplifying constant integer cast $28
+Simplifying constant integer cast $64
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 2
+Successful SSA optimization PassNCastSimplification
+Finalized unsigned number type (uint4_t) $a
+Finalized unsigned number type (char) $14
+Finalized unsigned number type (char) $1e
+Finalized unsigned number type (char) $28
+Finalized unsigned number type (char) $64
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 2
+Successful SSA optimization PassNFinalizeNumberTypeConversions
+Alias multi_param::return#0 = multi_param::$2 multi_param::return#1 
+Successful SSA optimization Pass2AliasElimination
+Simple Condition main::$1 [17] if(main::res#0==$64) goto main::@1
+Successful SSA optimization Pass2ConditionalJumpSimplification
+Simplifying expression containing zero SCREEN in [18] SCREEN[0] = 'O'
+Simplifying expression containing zero SCREEN in [20] SCREEN[0] = 'E'
+Successful SSA optimization PassNSimplifyExpressionWithZero
+Removing unused procedure __start
+Removing unused procedure block __start
+Removing unused procedure block __start::@1
+Removing unused procedure block __start::@return
+Successful SSA optimization PassNEliminateEmptyStart
+Consolidated array index constant in *(SCREEN+1)
+Consolidated array index constant in *(SCREEN+1)
+Consolidated array index constant in *(SCREEN+2)
+Successful SSA optimization Pass2ConstantAdditionElimination
+Finalized unsigned number type (uint4_t) 3
+Successful SSA optimization PassNFinalizeNumberTypeConversions
+CALL GRAPH
+Calls in [main] to multi_param:4 
+
+Created 0 initial phi equivalence classes
+Coalesced down to 0 phi equivalence classes
+
+FINAL CONTROL FLOW GRAPH
+
+void main()
+main: scope:[main]  from
+  [0] stackpush(char) = $a
+  [1] stackpush(char) = $14
+  [2] stackpush(char) = $1e
+  [3] stackpush(char) = $28
+  [4] callexecute multi_param 
+  sideeffect stackpullpadding(3)
+  [6] main::res#0 = stackpull(char)
+  [7] if(main::res#0==$64) goto main::@1
+  to:main::@2
+main::@2: scope:[main]  from main
+  [8] *SCREEN = 'E'
+  [9] *(SCREEN+1) = 'R'
+  [10] *(SCREEN+2) = 'R'
+  to:main::@return
+main::@return: scope:[main]  from main::@1 main::@2
+  [11] return 
+  to:@return
+main::@1: scope:[main]  from main
+  [12] *SCREEN = 'O'
+  [13] *(SCREEN+1) = 'K'
+  to:main::@return
+
+__stackcall char multi_param(char a , char b , char c , char d)
+multi_param: scope:[multi_param]  from
+  [14] multi_param::a#0 = stackidx(char,multi_param::OFFSET_STACK_A)
+  [15] multi_param::b#0 = stackidx(char,multi_param::OFFSET_STACK_B)
+  [16] multi_param::c#0 = stackidx(char,multi_param::OFFSET_STACK_C)
+  [17] multi_param::d#0 = stackidx(char,multi_param::OFFSET_STACK_D)
+  [18] multi_param::$0 = multi_param::a#0 + multi_param::b#0
+  [19] multi_param::$1 = multi_param::$0 + multi_param::c#0
+  [20] multi_param::return#0 = multi_param::$1 + multi_param::d#0
+  to:multi_param::@return
+multi_param::@return: scope:[multi_param]  from multi_param
+  [21] stackidx(char,multi_param::OFFSET_STACK_RETURN_3) = multi_param::return#0
+  [22] return 
+  to:@return
+
+Initial phi equivalence classes
+Added variable main::res#0 to live range equivalence class [ main::res#0 ]
+Added variable multi_param::a#0 to live range equivalence class [ multi_param::a#0 ]
+Added variable multi_param::b#0 to live range equivalence class [ multi_param::b#0 ]
+Added variable multi_param::c#0 to live range equivalence class [ multi_param::c#0 ]
+Added variable multi_param::d#0 to live range equivalence class [ multi_param::d#0 ]
+Added variable multi_param::$0 to live range equivalence class [ multi_param::$0 ]
+Added variable multi_param::$1 to live range equivalence class [ multi_param::$1 ]
+Added variable multi_param::return#0 to live range equivalence class [ multi_param::return#0 ]
+Complete equivalence classes
+[ main::res#0 ]
+[ multi_param::a#0 ]
+[ multi_param::b#0 ]
+[ multi_param::c#0 ]
+[ multi_param::d#0 ]
+[ multi_param::$0 ]
+[ multi_param::$1 ]
+[ multi_param::return#0 ]
+Allocated zp[1]:2 [ multi_param::$0 ]
+Allocated zp[1]:3 [ multi_param::$1 ]
+Allocated zp[1]:4 [ multi_param::return#0 ]
+Allocated zp[1]:5 [ multi_param::b#0 ]
+Allocated zp[1]:6 [ multi_param::c#0 ]
+Allocated zp[1]:7 [ multi_param::d#0 ]
+Allocated zp[1]:8 [ multi_param::a#0 ]
+Allocated zp[1]:9 [ main::res#0 ]
+REGISTER UPLIFT POTENTIAL REGISTERS
+Statement [0] stackpush(char) = $a [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [1] stackpush(char) = $14 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [2] stackpush(char) = $1e [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [3] stackpush(char) = $28 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement sideeffect stackpullpadding(3) always clobbers reg byte a reg byte x 
+Statement [6] main::res#0 = stackpull(char) [ main::res#0 ] (  [ main::res#0 ] { }  ) always clobbers reg byte a 
+Statement [8] *SCREEN = 'E' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [9] *(SCREEN+1) = 'R' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [10] *(SCREEN+2) = 'R' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [12] *SCREEN = 'O' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [13] *(SCREEN+1) = 'K' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [14] multi_param::a#0 = stackidx(char,multi_param::OFFSET_STACK_A) [ multi_param::a#0 ] ( multi_param:4 [ multi_param::a#0 ] { }  ) always clobbers reg byte a reg byte x 
+Statement [15] multi_param::b#0 = stackidx(char,multi_param::OFFSET_STACK_B) [ multi_param::a#0 multi_param::b#0 ] ( multi_param:4 [ multi_param::a#0 multi_param::b#0 ] { }  ) always clobbers reg byte a reg byte x 
+Removing always clobbered register reg byte a as potential for zp[1]:8 [ multi_param::a#0 ]
+Removing always clobbered register reg byte x as potential for zp[1]:8 [ multi_param::a#0 ]
+Statement [16] multi_param::c#0 = stackidx(char,multi_param::OFFSET_STACK_C) [ multi_param::a#0 multi_param::b#0 multi_param::c#0 ] ( multi_param:4 [ multi_param::a#0 multi_param::b#0 multi_param::c#0 ] { }  ) always clobbers reg byte a reg byte x 
+Removing always clobbered register reg byte a as potential for zp[1]:5 [ multi_param::b#0 ]
+Removing always clobbered register reg byte x as potential for zp[1]:5 [ multi_param::b#0 ]
+Statement [17] multi_param::d#0 = stackidx(char,multi_param::OFFSET_STACK_D) [ multi_param::a#0 multi_param::b#0 multi_param::c#0 multi_param::d#0 ] ( multi_param:4 [ multi_param::a#0 multi_param::b#0 multi_param::c#0 multi_param::d#0 ] { }  ) always clobbers reg byte a reg byte x 
+Removing always clobbered register reg byte a as potential for zp[1]:6 [ multi_param::c#0 ]
+Removing always clobbered register reg byte x as potential for zp[1]:6 [ multi_param::c#0 ]
+Statement [18] multi_param::$0 = multi_param::a#0 + multi_param::b#0 [ multi_param::c#0 multi_param::d#0 multi_param::$0 ] ( multi_param:4 [ multi_param::c#0 multi_param::d#0 multi_param::$0 ] { }  ) always clobbers reg byte a 
+Removing always clobbered register reg byte a as potential for zp[1]:7 [ multi_param::d#0 ]
+Statement [19] multi_param::$1 = multi_param::$0 + multi_param::c#0 [ multi_param::d#0 multi_param::$1 ] ( multi_param:4 [ multi_param::d#0 multi_param::$1 ] { }  ) always clobbers reg byte a 
+Statement [20] multi_param::return#0 = multi_param::$1 + multi_param::d#0 [ multi_param::return#0 ] ( multi_param:4 [ multi_param::return#0 ] { }  ) always clobbers reg byte a 
+Statement [21] stackidx(char,multi_param::OFFSET_STACK_RETURN_3) = multi_param::return#0 [ ] ( multi_param:4 [ ] { }  ) always clobbers reg byte x 
+Statement [0] stackpush(char) = $a [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [1] stackpush(char) = $14 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [2] stackpush(char) = $1e [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [3] stackpush(char) = $28 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement sideeffect stackpullpadding(3) always clobbers reg byte a reg byte x 
+Statement [6] main::res#0 = stackpull(char) [ main::res#0 ] (  [ main::res#0 ] { }  ) always clobbers reg byte a 
+Statement [8] *SCREEN = 'E' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [9] *(SCREEN+1) = 'R' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [10] *(SCREEN+2) = 'R' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [12] *SCREEN = 'O' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [13] *(SCREEN+1) = 'K' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [14] multi_param::a#0 = stackidx(char,multi_param::OFFSET_STACK_A) [ multi_param::a#0 ] ( multi_param:4 [ multi_param::a#0 ] { }  ) always clobbers reg byte a reg byte x 
+Statement [15] multi_param::b#0 = stackidx(char,multi_param::OFFSET_STACK_B) [ multi_param::a#0 multi_param::b#0 ] ( multi_param:4 [ multi_param::a#0 multi_param::b#0 ] { }  ) always clobbers reg byte a reg byte x 
+Statement [16] multi_param::c#0 = stackidx(char,multi_param::OFFSET_STACK_C) [ multi_param::a#0 multi_param::b#0 multi_param::c#0 ] ( multi_param:4 [ multi_param::a#0 multi_param::b#0 multi_param::c#0 ] { }  ) always clobbers reg byte a reg byte x 
+Statement [17] multi_param::d#0 = stackidx(char,multi_param::OFFSET_STACK_D) [ multi_param::a#0 multi_param::b#0 multi_param::c#0 multi_param::d#0 ] ( multi_param:4 [ multi_param::a#0 multi_param::b#0 multi_param::c#0 multi_param::d#0 ] { }  ) always clobbers reg byte a reg byte x 
+Statement [18] multi_param::$0 = multi_param::a#0 + multi_param::b#0 [ multi_param::c#0 multi_param::d#0 multi_param::$0 ] ( multi_param:4 [ multi_param::c#0 multi_param::d#0 multi_param::$0 ] { }  ) always clobbers reg byte a 
+Statement [19] multi_param::$1 = multi_param::$0 + multi_param::c#0 [ multi_param::d#0 multi_param::$1 ] ( multi_param:4 [ multi_param::d#0 multi_param::$1 ] { }  ) always clobbers reg byte a 
+Statement [20] multi_param::return#0 = multi_param::$1 + multi_param::d#0 [ multi_param::return#0 ] ( multi_param:4 [ multi_param::return#0 ] { }  ) always clobbers reg byte a 
+Statement [21] stackidx(char,multi_param::OFFSET_STACK_RETURN_3) = multi_param::return#0 [ ] ( multi_param:4 [ ] { }  ) always clobbers reg byte x 
+Potential registers zp[1]:9 [ main::res#0 ] : zp[1]:9 , reg byte a , reg byte x , reg byte y , 
+Potential registers zp[1]:8 [ multi_param::a#0 ] : zp[1]:8 , reg byte y , 
+Potential registers zp[1]:5 [ multi_param::b#0 ] : zp[1]:5 , reg byte y , 
+Potential registers zp[1]:6 [ multi_param::c#0 ] : zp[1]:6 , reg byte y , 
+Potential registers zp[1]:7 [ multi_param::d#0 ] : zp[1]:7 , reg byte x , reg byte y , 
+Potential registers zp[1]:2 [ multi_param::$0 ] : zp[1]:2 , reg byte a , reg byte x , reg byte y , 
+Potential registers zp[1]:3 [ multi_param::$1 ] : zp[1]:3 , reg byte a , reg byte x , reg byte y , 
+Potential registers zp[1]:4 [ multi_param::return#0 ] : zp[1]:4 , reg byte a , reg byte x , reg byte y , 
+
+REGISTER UPLIFT SCOPES
+Uplift Scope [multi_param] 22: zp[1]:2 [ multi_param::$0 ] 22: zp[1]:3 [ multi_param::$1 ] 22: zp[1]:4 [ multi_param::return#0 ] 7.33: zp[1]:5 [ multi_param::b#0 ] 7.33: zp[1]:6 [ multi_param::c#0 ] 7.33: zp[1]:7 [ multi_param::d#0 ] 5.5: zp[1]:8 [ multi_param::a#0 ] 
+Uplift Scope [main] 4: zp[1]:9 [ main::res#0 ] 
+Uplift Scope [] 
+
+Uplifting [multi_param] best 149 combination reg byte a [ multi_param::$0 ] reg byte a [ multi_param::$1 ] reg byte a [ multi_param::return#0 ] reg byte y [ multi_param::b#0 ] zp[1]:6 [ multi_param::c#0 ] zp[1]:7 [ multi_param::d#0 ] zp[1]:8 [ multi_param::a#0 ] 
+Limited combination testing to 100 combinations of 1536 possible.
+Uplifting [main] best 143 combination reg byte a [ main::res#0 ] 
+Uplifting [] best 143 combination 
+Attempting to uplift remaining variables inzp[1]:6 [ multi_param::c#0 ]
+Uplifting [multi_param] best 143 combination zp[1]:6 [ multi_param::c#0 ] 
+Attempting to uplift remaining variables inzp[1]:7 [ multi_param::d#0 ]
+Uplifting [multi_param] best 143 combination zp[1]:7 [ multi_param::d#0 ] 
+Attempting to uplift remaining variables inzp[1]:8 [ multi_param::a#0 ]
+Uplifting [multi_param] best 143 combination zp[1]:8 [ multi_param::a#0 ] 
+Allocated (was zp[1]:6) zp[1]:2 [ multi_param::c#0 ]
+Allocated (was zp[1]:7) zp[1]:3 [ multi_param::d#0 ]
+Allocated (was zp[1]:8) zp[1]:4 [ multi_param::a#0 ]
+Removing instruction jmp __b2
+Removing instruction jmp __breturn
+Removing instruction jmp __breturn
+Removing instruction lda #'R'
+Removing instruction tsx
+Removing instruction tsx
+Removing instruction tsx
+Removing instruction __b2:
+Removing instruction __breturn:
+Replacing jump to rts with rts in jmp __breturn
+Removing instruction tsx
+Removing instruction __breturn:

@@ -1,0 +1,316 @@
+
+CONTROL FLOW GRAPH SSA
+
+unsigned int get_score(unsigned int idx)
+get_score: scope:[get_score]  from main::@3
+  get_score::idx#1 = phi( main::@3/get_score::idx#0 )
+  get_score::$0 = get_score::idx#1 * SIZEOF_UNSIGNED_INT
+  get_score::return#0 = score_table[get_score::$0]
+  to:get_score::@return
+get_score::@return: scope:[get_score]  from get_score
+  get_score::return#3 = phi( get_score/get_score::return#0 )
+  get_score::return#1 = get_score::return#3
+  return 
+  to:@return
+
+void main()
+main: scope:[main]  from __start
+  main::sum#0 = 0
+  main::i#0 = 0
+  to:main::@2
+main::@2: scope:[main]  from main main::@6
+  main::sum#5 = phi( main/main::sum#0, main::@6/main::sum#1 )
+  main::i#2 = phi( main/main::i#0, main::@6/main::i#1 )
+  main::$1 = main::i#2 < 4
+  if(main::$1) goto main::@3
+  to:main::@4
+main::@3: scope:[main]  from main::@2
+  main::sum#4 = phi( main::@2/main::sum#5 )
+  main::i#3 = phi( main::@2/main::i#2 )
+  main::$2 = main::i#3 * 2
+  get_score::idx#0 = main::$2
+  call get_score
+  get_score::return#2 = get_score::return#1
+  to:main::@6
+main::@6: scope:[main]  from main::@3
+  main::i#4 = phi( main::@3/main::i#3 )
+  main::sum#2 = phi( main::@3/main::sum#4 )
+  get_score::return#4 = phi( main::@3/get_score::return#2 )
+  main::$3 = get_score::return#4
+  main::sum#1 = main::sum#2 + main::$3
+  main::i#1 = ++ main::i#4
+  to:main::@2
+main::@4: scope:[main]  from main::@2
+  main::sum#3 = phi( main::@2/main::sum#5 )
+  main::$0 = main::sum#3 == $a0
+  if(main::$0) goto main::@1
+  to:main::@5
+main::@1: scope:[main]  from main::@4
+  SCREEN[0] = 'O'
+  SCREEN[1] = 'K'
+  to:main::@return
+main::@5: scope:[main]  from main::@4
+  SCREEN[0] = 'E'
+  SCREEN[1] = 'R'
+  SCREEN[2] = 'R'
+  to:main::@return
+main::@return: scope:[main]  from main::@1 main::@5
+  return 
+  to:@return
+
+void __start()
+__start: scope:[__start]  from
+  call main
+  to:__start::@1
+__start::@1: scope:[__start]  from __start
+  to:__start::@return
+__start::@return: scope:[__start]  from __start::@1
+  return 
+  to:@return
+
+SYMBOL TABLE SSA
+__constant char * const SCREEN = (char *)$400
+__constant char SIZEOF_UNSIGNED_INT = 2
+void __start()
+unsigned int get_score(unsigned int idx)
+unsigned int get_score::$0
+unsigned int get_score::idx
+unsigned int get_score::idx#0
+unsigned int get_score::idx#1
+unsigned int get_score::return
+unsigned int get_score::return#0
+unsigned int get_score::return#1
+unsigned int get_score::return#2
+unsigned int get_score::return#3
+unsigned int get_score::return#4
+void main()
+bool main::$0
+bool main::$1
+number main::$2
+unsigned int main::$3
+unsigned int main::i
+unsigned int main::i#0
+unsigned int main::i#1
+unsigned int main::i#2
+unsigned int main::i#3
+unsigned int main::i#4
+unsigned int main::sum
+unsigned int main::sum#0
+unsigned int main::sum#1
+unsigned int main::sum#2
+unsigned int main::sum#3
+unsigned int main::sum#4
+unsigned int main::sum#5
+__constant unsigned int score_table[$10] = { $a, $14, $1e, $28, $32, $3c, $46, $50, $5a, $64, $6e, $78, $82, $8c, $96, $a0 }
+
+Adding number conversion cast (unumber) 4 in main::$1 = main::i#2 < 4
+Adding number conversion cast (unumber) 2 in main::$2 = main::i#3 * 2
+Adding number conversion cast (unumber) main::$2 in main::$2 = main::i#3 * (unumber)2
+Adding number conversion cast (unumber) $a0 in main::$0 = main::sum#3 == $a0
+Adding number conversion cast (unumber) 0 in SCREEN[0] = 'O'
+Adding number conversion cast (unumber) 1 in SCREEN[1] = 'K'
+Adding number conversion cast (unumber) 0 in SCREEN[0] = 'E'
+Adding number conversion cast (unumber) 1 in SCREEN[1] = 'R'
+Adding number conversion cast (unumber) 2 in SCREEN[2] = 'R'
+Successful SSA optimization PassNAddNumberTypeConversions
+Simplifying constant pointer cast (char *) 1024
+Simplifying constant integer cast 4
+Simplifying constant integer cast 2
+Simplifying constant integer cast $a0
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 2
+Successful SSA optimization PassNCastSimplification
+Finalized unsigned number type (uint4_t) 4
+Finalized unsigned number type (uint4_t) 2
+Finalized unsigned number type (char) $a0
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 2
+Successful SSA optimization PassNFinalizeNumberTypeConversions
+Inferred type updated to unsigned int in main::$2 = main::i#3 * 2
+Alias get_score::return#0 = get_score::return#3 get_score::return#1 
+Alias main::i#2 = main::i#3 main::i#4 
+Alias main::sum#2 = main::sum#4 main::sum#5 main::sum#3 
+Alias get_score::idx#0 = main::$2 
+Alias get_score::return#2 = get_score::return#4 
+Successful SSA optimization Pass2AliasElimination
+Identical Phi Values get_score::idx#1 get_score::idx#0
+Successful SSA optimization Pass2IdenticalPhiElimination
+Simple Condition main::$1 [8] if(main::i#2<4) goto main::@3
+Simple Condition main::$0 [16] if(main::sum#2==$a0) goto main::@1
+Successful SSA optimization Pass2ConditionalJumpSimplification
+Constant main::sum#0 = 0
+Constant main::i#0 = 0
+Successful SSA optimization Pass2ConstantIdentification
+Narrowed array word index to byte for direct 6502 indexed addressing: [2] get_score::return#0 = score_table[get_score::$1]
+Successful SSA optimization Pass2DeInlineWordDerefIdx
+Simplifying expression containing zero SCREEN in [17] SCREEN[0] = 'O'
+Simplifying expression containing zero SCREEN in [19] SCREEN[0] = 'E'
+Successful SSA optimization PassNSimplifyExpressionWithZero
+Removing unused procedure __start
+Removing unused procedure block __start
+Removing unused procedure block __start::@1
+Removing unused procedure block __start::@return
+Successful SSA optimization PassNEliminateEmptyStart
+Inlining cast [1] get_score::$1 = (char)get_score::$0
+Successful SSA optimization Pass2InlineCast
+Rewriting multiplication to use shift [0] get_score::$0 = get_score::idx#0 * SIZEOF_UNSIGNED_INT
+Rewriting multiplication to use shift [6] get_score::idx#0 = main::i#2 * 2
+Successful SSA optimization Pass2MultiplyToShiftRewriting
+Inlining constant with var siblings main::sum#0
+Inlining constant with var siblings main::i#0
+Constant inlined main::i#0 = 0
+Constant inlined main::sum#0 = 0
+Successful SSA optimization Pass2ConstantInlining
+Consolidated array index constant in *(SCREEN+1)
+Consolidated array index constant in *(SCREEN+1)
+Consolidated array index constant in *(SCREEN+2)
+Successful SSA optimization Pass2ConstantAdditionElimination
+Eliminating unused constant SIZEOF_UNSIGNED_INT
+Successful SSA optimization PassNEliminateUnusedVars
+Finalized unsigned number type (char) $10
+Successful SSA optimization PassNFinalizeNumberTypeConversions
+Adding NOP phi() at start of main
+CALL GRAPH
+Calls in [main] to get_score:11 
+
+Created 2 initial phi equivalence classes
+Coalesced [16] main::i#5 = main::i#1
+Coalesced [17] main::sum#6 = main::sum#1
+Coalesced down to 2 phi equivalence classes
+Adding NOP phi() at start of main
+
+FINAL CONTROL FLOW GRAPH
+
+void main()
+main: scope:[main]  from
+  [0] phi()
+  to:main::@2
+main::@2: scope:[main]  from main main::@6
+  [1] main::sum#2 = phi( main/0, main::@6/main::sum#1 )
+  [1] main::i#2 = phi( main/0, main::@6/main::i#1 )
+  [2] if(main::i#2<4) goto main::@3
+  to:main::@4
+main::@4: scope:[main]  from main::@2
+  [3] if(main::sum#2==$a0) goto main::@1
+  to:main::@5
+main::@5: scope:[main]  from main::@4
+  [4] *SCREEN = 'E'
+  [5] *(SCREEN+1) = 'R'
+  [6] *(SCREEN+2) = 'R'
+  to:main::@return
+main::@return: scope:[main]  from main::@1 main::@5
+  [7] return 
+  to:@return
+main::@1: scope:[main]  from main::@4
+  [8] *SCREEN = 'O'
+  [9] *(SCREEN+1) = 'K'
+  to:main::@return
+main::@3: scope:[main]  from main::@2
+  [10] get_score::idx#0 = main::i#2 << 1
+  [11] call get_score
+  [12] get_score::return#2 = get_score::return#0
+  to:main::@6
+main::@6: scope:[main]  from main::@3
+  [13] main::$3 = get_score::return#2
+  [14] main::sum#1 = main::sum#2 + main::$3
+  [15] main::i#1 = ++ main::i#2
+  to:main::@2
+
+unsigned int get_score(unsigned int idx)
+get_score: scope:[get_score]  from main::@3
+  [16] get_score::$0 = get_score::idx#0 << 1
+  [17] get_score::$1 = (char)get_score::$0
+  [18] get_score::return#0 = score_table[get_score::$1]
+  to:get_score::@return
+get_score::@return: scope:[get_score]  from get_score
+  [19] return 
+  to:@return
+
+Initial phi equivalence classes
+[ main::i#2 main::i#1 ]
+[ main::sum#2 main::sum#1 ]
+Added variable get_score::idx#0 to live range equivalence class [ get_score::idx#0 ]
+Added variable get_score::return#2 to live range equivalence class [ get_score::return#2 ]
+Added variable main::$3 to live range equivalence class [ main::$3 ]
+Added variable get_score::$0 to live range equivalence class [ get_score::$0 ]
+Added variable get_score::$1 to live range equivalence class [ get_score::$1 ]
+Added variable get_score::return#0 to live range equivalence class [ get_score::return#0 ]
+Complete equivalence classes
+[ main::i#2 main::i#1 ]
+[ main::sum#2 main::sum#1 ]
+[ get_score::idx#0 ]
+[ get_score::return#2 ]
+[ main::$3 ]
+[ get_score::$0 ]
+[ get_score::$1 ]
+[ get_score::return#0 ]
+Allocated zp[1]:2 [ get_score::$1 ]
+Allocated zp[2]:3 [ get_score::idx#0 ]
+Allocated zp[2]:5 [ get_score::$0 ]
+Allocated zp[2]:7 [ get_score::return#0 ]
+Allocated zp[2]:9 [ main::i#2 main::i#1 ]
+Allocated zp[2]:11 [ get_score::return#2 ]
+Allocated zp[2]:13 [ main::$3 ]
+Allocated zp[2]:15 [ main::sum#2 main::sum#1 ]
+REGISTER UPLIFT POTENTIAL REGISTERS
+Statement [2] if(main::i#2<4) goto main::@3 [ main::i#2 main::sum#2 ] (  [ main::i#2 main::sum#2 ] { }  ) always clobbers reg byte a 
+Statement [3] if(main::sum#2==$a0) goto main::@1 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [4] *SCREEN = 'E' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [5] *(SCREEN+1) = 'R' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [6] *(SCREEN+2) = 'R' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [8] *SCREEN = 'O' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [9] *(SCREEN+1) = 'K' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [10] get_score::idx#0 = main::i#2 << 1 [ main::i#2 main::sum#2 get_score::idx#0 ] (  [ main::i#2 main::sum#2 get_score::idx#0 ] { { get_score::return#0 = get_score::return#2 } }  ) always clobbers reg byte a 
+Statement [12] get_score::return#2 = get_score::return#0 [ main::i#2 main::sum#2 get_score::return#2 ] (  [ main::i#2 main::sum#2 get_score::return#2 ] { { get_score::return#0 = get_score::return#2 } }  ) always clobbers reg byte a 
+Statement [13] main::$3 = get_score::return#2 [ main::i#2 main::sum#2 main::$3 ] (  [ main::i#2 main::sum#2 main::$3 ] { }  ) always clobbers reg byte a 
+Statement [14] main::sum#1 = main::sum#2 + main::$3 [ main::i#2 main::sum#1 ] (  [ main::i#2 main::sum#1 ] { }  ) always clobbers reg byte a 
+Statement [16] get_score::$0 = get_score::idx#0 << 1 [ get_score::$0 ] ( get_score:11 [ main::i#2 main::sum#2 get_score::$0 ] { { get_score::return#0 = get_score::return#2 } }  ) always clobbers reg byte a 
+Statement [18] get_score::return#0 = score_table[get_score::$1] [ get_score::return#0 ] ( get_score:11 [ main::i#2 main::sum#2 get_score::return#0 ] { { get_score::return#0 = get_score::return#2 } }  ) always clobbers reg byte a 
+Potential registers zp[2]:9 [ main::i#2 main::i#1 ] : zp[2]:9 , 
+Potential registers zp[2]:15 [ main::sum#2 main::sum#1 ] : zp[2]:15 , 
+Potential registers zp[2]:3 [ get_score::idx#0 ] : zp[2]:3 , 
+Potential registers zp[2]:11 [ get_score::return#2 ] : zp[2]:11 , 
+Potential registers zp[2]:13 [ main::$3 ] : zp[2]:13 , 
+Potential registers zp[2]:5 [ get_score::$0 ] : zp[2]:5 , 
+Potential registers zp[1]:2 [ get_score::$1 ] : zp[1]:2 , reg byte a , reg byte x , reg byte y , 
+Potential registers zp[2]:7 [ get_score::return#0 ] : zp[2]:7 , 
+
+REGISTER UPLIFT SCOPES
+Uplift Scope [get_score] 202: zp[1]:2 [ get_score::$1 ] 112: zp[2]:3 [ get_score::idx#0 ] 101: zp[2]:5 [ get_score::$0 ] 37.33: zp[2]:7 [ get_score::return#0 ] 22: zp[2]:11 [ get_score::return#2 ] 
+Uplift Scope [main] 28.29: zp[2]:9 [ main::i#2 main::i#1 ] 22: zp[2]:13 [ main::$3 ] 15: zp[2]:15 [ main::sum#2 main::sum#1 ] 
+Uplift Scope [] 
+
+Uplifting [get_score] best 1204 combination reg byte x [ get_score::$1 ] zp[2]:3 [ get_score::idx#0 ] zp[2]:5 [ get_score::$0 ] zp[2]:7 [ get_score::return#0 ] zp[2]:11 [ get_score::return#2 ] 
+Uplifting [main] best 1204 combination zp[2]:9 [ main::i#2 main::i#1 ] zp[2]:13 [ main::$3 ] zp[2]:15 [ main::sum#2 main::sum#1 ] 
+Uplifting [] best 1204 combination 
+Coalescing zero page register [ zp[2]:3 [ get_score::idx#0 ] ] with [ zp[2]:5 [ get_score::$0 ] ] - score: 1
+Coalescing zero page register [ zp[2]:11 [ get_score::return#2 ] ] with [ zp[2]:7 [ get_score::return#0 ] ] - score: 1
+Coalescing zero page register [ zp[2]:11 [ get_score::return#2 get_score::return#0 ] ] with [ zp[2]:13 [ main::$3 ] ] - score: 1
+Allocated (was zp[2]:3) zp[2]:2 [ get_score::idx#0 get_score::$0 ]
+Allocated (was zp[2]:11) zp[2]:4 [ get_score::return#2 get_score::return#0 main::$3 ]
+Allocated (was zp[2]:9) zp[2]:6 [ main::i#2 main::i#1 ]
+Allocated (was zp[2]:15) zp[2]:8 [ main::sum#2 main::sum#1 ]
+Removing instruction jmp __b2
+Removing instruction jmp __b4
+Removing instruction jmp __b5
+Removing instruction jmp __breturn
+Removing instruction jmp __b6
+Removing instruction jmp __breturn
+Removing instruction lda #>0
+Removing instruction lda #<0
+Removing instruction lda #>0
+Removing instruction lda #'R'
+Removing instruction __b2_from_main:
+Removing instruction __b4:
+Removing instruction __b5:
+Removing instruction __b6:
+Removing instruction __b2_from___b6:
+Removing instruction __breturn:
+Replacing jump to rts with rts in jmp __breturn
+Removing instruction __breturn:

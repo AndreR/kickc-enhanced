@@ -33,6 +33,7 @@ public class AsmProgramStaticRegisterValues {
       if(v1.getxMem() != null && v1.getxMem().equals(v2.getxMem())) res.setxMem(v1.getxMem());
       if(v1.getyMem() != null && v1.getyMem().equals(v2.getyMem())) res.setyMem(v1.getyMem());
       if(v1.getzMem() != null && v1.getzMem().equals(v2.getzMem())) res.setzMem(v1.getzMem());
+      if(Boolean.TRUE.equals(v1.isXIsSp()) && Boolean.TRUE.equals(v2.isXIsSp())) res.setXIsSp(true);
       return res;
    }
 
@@ -283,6 +284,7 @@ public class AsmProgramStaticRegisterValues {
          current = new AsmRegisterValues(current);
          final CpuClobber cpuClobber = ((AsmInlineKickAsm) line).getClobber();
          handleClobber(current, cpuClobber);
+         current.setXIsSp(false);
          lastInstructionWasUnconditionalControlFlow = false;
       } else if(line instanceof AsmInstruction) {
          AsmInstruction instruction = (AsmInstruction) line;
@@ -415,6 +417,12 @@ public class AsmProgramStaticRegisterValues {
          if(mnemnonic.equals("clc")) {
             current.setFlagC(Boolean.FALSE);
          }
+         if(mnemnonic.equals("tsx")) {
+            current.setXIsSp(true);
+         }
+         if(mnemnonic.equals("pha") || mnemnonic.equals("pla") || mnemnonic.equals("php") || mnemnonic.equals("plp") || mnemnonic.equals("txs") || mnemnonic.equals("jsr") || mnemnonic.equals("rts") || mnemnonic.equals("rti")) {
+            current.setXIsSp(false);
+         }
          if(cpuOpcode.isJump() && instruction.getOperandJumpTarget() != null) {
             String target = instruction.getOperandJumpTarget();
             if(target.startsWith("!") && target.endsWith("+")) {
@@ -440,6 +448,7 @@ public class AsmProgramStaticRegisterValues {
       if(cpuClobber.isRegisterX()) {
          current.setX(null);
          current.setxMem(null);
+         current.setXIsSp(false);
       }
       if(cpuClobber.isRegisterY()) {
          current.setY(null);
@@ -479,6 +488,7 @@ public class AsmProgramStaticRegisterValues {
       private String xMem;
       private String yMem;
       private String zMem;
+      private Boolean xIsSp = false;
 
       public AsmRegisterValues() {
       }
@@ -496,6 +506,7 @@ public class AsmProgramStaticRegisterValues {
          this.xMem = original.getxMem();
          this.yMem = original.getyMem();
          this.zMem = original.getzMem();
+         this.xIsSp = original.isXIsSp();
       }
 
       public String getA() {
@@ -594,6 +605,13 @@ public class AsmProgramStaticRegisterValues {
          this.zMem = zMem;
       }
 
+      public Boolean isXIsSp() {
+         return xIsSp;
+      }
+
+      public void setXIsSp(Boolean xIsSp) {
+         this.xIsSp = xIsSp;
+      }
 
    }
 
