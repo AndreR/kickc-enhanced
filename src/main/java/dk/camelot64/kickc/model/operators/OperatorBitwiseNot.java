@@ -3,6 +3,7 @@ package dk.camelot64.kickc.model.operators;
 import dk.camelot64.kickc.model.CompileError;
 import dk.camelot64.kickc.model.symbols.ProgramScope;
 import dk.camelot64.kickc.model.types.SymbolType;
+import dk.camelot64.kickc.model.values.ConstantEnumerable;
 import dk.camelot64.kickc.model.values.ConstantInteger;
 import dk.camelot64.kickc.model.values.ConstantLiteral;
 
@@ -15,8 +16,8 @@ public class OperatorBitwiseNot extends OperatorUnary {
 
    @Override
    public ConstantLiteral calculateLiteral(ConstantLiteral left, ProgramScope scope) {
-      if(left instanceof ConstantInteger) {
-         return new ConstantInteger(Math.abs(~((ConstantInteger) left).getInteger()));
+      if(left instanceof ConstantEnumerable) {
+         return new ConstantInteger(Math.abs(~((ConstantEnumerable) left).getInteger()));
       }
       throw new CompileError("Calculation not implemented " + getOperator() + " " + left );
    }

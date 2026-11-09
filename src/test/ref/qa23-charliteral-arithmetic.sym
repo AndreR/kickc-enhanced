@@ -1,0 +1,18 @@
+void main()
+__constant char main::a = -'A'
+__constant char main::b = +'A'
+__constant char main::c = ~'A'
+__constant char main::d = $64-'A'
+__constant char main::e = 'A'*2
+__constant char main::f = 'B'/2
+__constant char main::g = 'C'%$a
+__constant char main::h = 'D'<<1
+__constant char main::i = 'D'>>1
+char main::j
+__constant volatile char * const screen = (char *) 1024
+char sub_char(char c)
+char sub_char::c // 100000.0
+__constant char sub_char::c#0 = 'C' // c
+char sub_char::return
+__constant char sub_char::return#0 = sub_char::c#0-'A' // return
+

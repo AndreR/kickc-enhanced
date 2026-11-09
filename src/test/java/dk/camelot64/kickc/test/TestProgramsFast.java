@@ -5352,4 +5352,10 @@ public class TestProgramsFast extends TestPrograms {
       compileAndCompare("qa22-reserve-zp.c");
    }
 
+   // QA-23: Constant folding for unary and binary operators on character literals
+   @Test
+   public void testQa23CharLiteralArithmetic() throws IOException {
+      compileAndCompare("qa23-charliteral-arithmetic.c");
+   }
+
 }

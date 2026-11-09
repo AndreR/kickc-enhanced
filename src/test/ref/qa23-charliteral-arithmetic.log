@@ -1,0 +1,238 @@
+Eliminating unused variable with no statement main::$0
+
+CONTROL FLOW GRAPH SSA
+
+char sub_char(char c)
+sub_char: scope:[sub_char]  from main
+  sub_char::c#1 = phi( main/sub_char::c#0 )
+  sub_char::$0 = sub_char::c#1 - 'A'
+  sub_char::return#0 = sub_char::$0
+  to:sub_char::@return
+sub_char::@return: scope:[sub_char]  from sub_char
+  sub_char::return#3 = phi( sub_char/sub_char::return#0 )
+  sub_char::return#1 = sub_char::return#3
+  return 
+  to:@return
+
+void main()
+main: scope:[main]  from __start
+  sub_char::c#0 = 'C'
+  call sub_char
+  sub_char::return#2 = sub_char::return#1
+  to:main::@1
+main::@1: scope:[main]  from main
+  sub_char::return#4 = phi( main/sub_char::return#2 )
+  main::j#0 = sub_char::return#4
+  screen[0] = main::a
+  screen[1] = main::b
+  screen[2] = main::c
+  screen[3] = main::d
+  screen[4] = main::e
+  screen[5] = main::f
+  screen[6] = main::g
+  screen[7] = main::h
+  screen[8] = main::i
+  screen[9] = main::j#0
+  to:main::@return
+main::@return: scope:[main]  from main::@1
+  return 
+  to:@return
+
+void __start()
+__start: scope:[__start]  from
+  call main
+  to:__start::@1
+__start::@1: scope:[__start]  from __start
+  to:__start::@return
+__start::@return: scope:[__start]  from __start::@1
+  return 
+  to:@return
+
+SYMBOL TABLE SSA
+void __start()
+void main()
+__constant char main::a = -'A'
+__constant char main::b = +'A'
+__constant char main::c = ~'A'
+__constant char main::d = (char)$64-'A'
+__constant char main::e = (char)'A'*2
+__constant char main::f = (char)'B'/2
+__constant char main::g = (char)'C'%$a
+__constant char main::h = 'D'<<1
+__constant char main::i = 'D'>>1
+char main::j
+char main::j#0
+__constant volatile char * const screen = (char *)$400
+char sub_char(char c)
+char sub_char::$0
+char sub_char::c
+char sub_char::c#0
+char sub_char::c#1
+char sub_char::return
+char sub_char::return#0
+char sub_char::return#1
+char sub_char::return#2
+char sub_char::return#3
+char sub_char::return#4
+
+Adding number conversion cast (unumber) $64 in 
+Adding number conversion cast (unumber) 2 in 
+Adding number conversion cast (unumber) 2 in 
+Adding number conversion cast (unumber) $a in 
+Adding number conversion cast (unumber) 1 in 
+Adding number conversion cast (unumber) 1 in 
+Adding number conversion cast (unumber) 0 in screen[0] = main::a
+Adding number conversion cast (unumber) 1 in screen[1] = main::b
+Adding number conversion cast (unumber) 2 in screen[2] = main::c
+Adding number conversion cast (unumber) 3 in screen[3] = main::d
+Adding number conversion cast (unumber) 4 in screen[4] = main::e
+Adding number conversion cast (unumber) 5 in screen[5] = main::f
+Adding number conversion cast (unumber) 6 in screen[6] = main::g
+Adding number conversion cast (unumber) 7 in screen[7] = main::h
+Adding number conversion cast (unumber) 8 in screen[8] = main::i
+Adding number conversion cast (unumber) 9 in screen[9] = main::j#0
+Successful SSA optimization PassNAddNumberTypeConversions
+Simplifying constant pointer cast (char *) 1024
+Simplifying constant integer cast $64
+Simplifying constant integer cast 2
+Simplifying constant integer cast 2
+Simplifying constant integer cast $a
+Simplifying constant integer cast 1
+Simplifying constant integer cast 1
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 2
+Simplifying constant integer cast 3
+Simplifying constant integer cast 4
+Simplifying constant integer cast 5
+Simplifying constant integer cast 6
+Simplifying constant integer cast 7
+Simplifying constant integer cast 8
+Simplifying constant integer cast 9
+Successful SSA optimization PassNCastSimplification
+Finalized unsigned number type (char) $64
+Finalized unsigned number type (uint4_t) 2
+Finalized unsigned number type (uint4_t) 2
+Finalized unsigned number type (uint4_t) $a
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 2
+Finalized unsigned number type (uint4_t) 3
+Finalized unsigned number type (uint4_t) 4
+Finalized unsigned number type (uint4_t) 5
+Finalized unsigned number type (uint4_t) 6
+Finalized unsigned number type (uint4_t) 7
+Finalized unsigned number type (uint4_t) 8
+Finalized unsigned number type (uint4_t) 9
+Successful SSA optimization PassNFinalizeNumberTypeConversions
+Alias sub_char::return#0 = sub_char::$0 sub_char::return#3 sub_char::return#1 
+Alias sub_char::return#2 = sub_char::return#4 
+Successful SSA optimization Pass2AliasElimination
+Identical Phi Values sub_char::c#1 sub_char::c#0
+Successful SSA optimization Pass2IdenticalPhiElimination
+Constant sub_char::c#0 = 'C'
+Successful SSA optimization Pass2ConstantIdentification
+Simplifying expression containing zero screen in [7] screen[0] = main::a
+Successful SSA optimization PassNSimplifyExpressionWithZero
+Removing unused procedure __start
+Removing unused procedure block __start
+Removing unused procedure block __start::@1
+Removing unused procedure block __start::@return
+Successful SSA optimization PassNEliminateEmptyStart
+Simplifying constant integer cast $64-'A'
+Simplifying constant integer cast 'A'*2
+Simplifying constant integer cast 'B'/2
+Simplifying constant integer cast 'C'%$a
+Successful SSA optimization PassNCastSimplification
+Constant right-side identified [0] sub_char::return#0 = sub_char::c#0 - 'A'
+Successful SSA optimization Pass2ConstantRValueConsolidation
+Constant sub_char::return#0 = sub_char::c#0-'A'
+Successful SSA optimization Pass2ConstantIdentification
+Constant sub_char::return#2 = sub_char::return#0
+Successful SSA optimization Pass2ConstantIdentification
+Constant main::j#0 = sub_char::return#2
+Successful SSA optimization Pass2ConstantIdentification
+Inlining constant with different constant siblings sub_char::return#2
+Constant inlined sub_char::return#2 = sub_char::return#0
+Constant inlined main::j#0 = sub_char::return#0
+Successful SSA optimization Pass2ConstantInlining
+Consolidated array index constant in *(screen+1)
+Consolidated array index constant in *(screen+2)
+Consolidated array index constant in *(screen+3)
+Consolidated array index constant in *(screen+4)
+Consolidated array index constant in *(screen+5)
+Consolidated array index constant in *(screen+6)
+Consolidated array index constant in *(screen+7)
+Consolidated array index constant in *(screen+8)
+Consolidated array index constant in *(screen+9)
+Successful SSA optimization Pass2ConstantAdditionElimination
+Adding NOP phi() at start of main
+Adding NOP phi() at start of sub_char
+CALL GRAPH
+Calls in [main] to sub_char:1 
+
+Created 0 initial phi equivalence classes
+Coalesced down to 0 phi equivalence classes
+
+FINAL CONTROL FLOW GRAPH
+
+void main()
+main: scope:[main]  from
+  [0] phi()
+  [1] call sub_char
+  to:main::@1
+main::@1: scope:[main]  from main
+  [2] *screen = main::a
+  [3] *(screen+1) = main::b
+  [4] *(screen+2) = main::c
+  [5] *(screen+3) = main::d
+  [6] *(screen+4) = main::e
+  [7] *(screen+5) = main::f
+  [8] *(screen+6) = main::g
+  [9] *(screen+7) = main::h
+  [10] *(screen+8) = main::i
+  [11] *(screen+9) = sub_char::return#0
+  to:main::@return
+main::@return: scope:[main]  from main::@1
+  [12] return 
+  to:@return
+
+char sub_char(char c)
+sub_char: scope:[sub_char]  from main
+  [13] phi()
+  to:sub_char::@return
+sub_char::@return: scope:[sub_char]  from sub_char
+  [14] return 
+  to:@return
+
+Initial phi equivalence classes
+Complete equivalence classes
+REGISTER UPLIFT POTENTIAL REGISTERS
+Statement [2] *screen = main::a [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [3] *(screen+1) = main::b [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [4] *(screen+2) = main::c [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [5] *(screen+3) = main::d [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [6] *(screen+4) = main::e [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [7] *(screen+5) = main::f [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [8] *(screen+6) = main::g [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [9] *(screen+7) = main::h [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [10] *(screen+8) = main::i [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [11] *(screen+9) = sub_char::return#0 [ ] (  [ ] { }  ) always clobbers reg byte a 
+
+REGISTER UPLIFT SCOPES
+Uplift Scope [sub_char] 
+Uplift Scope [main] 
+Uplift Scope [] 
+
+Uplifting [sub_char] best 78 combination 
+Uplifting [main] best 78 combination 
+Uplifting [] best 78 combination 
+Removing instruction jmp __b1
+Removing instruction jmp __breturn
+Removing instruction jmp __breturn
+Removing instruction sub_char_from_main:
+Removing instruction __b1:
+Removing instruction __breturn:
+Removing instruction __breturn:

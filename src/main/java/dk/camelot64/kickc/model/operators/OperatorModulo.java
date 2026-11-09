@@ -2,6 +2,7 @@ package dk.camelot64.kickc.model.operators;
 
 import dk.camelot64.kickc.model.CompileError;
 import dk.camelot64.kickc.model.types.*;
+import dk.camelot64.kickc.model.values.ConstantEnumerable;
 import dk.camelot64.kickc.model.values.ConstantInteger;
 import dk.camelot64.kickc.model.values.ConstantLiteral;
 import dk.camelot64.kickc.model.values.ConstantPointer;
@@ -15,10 +16,10 @@ public class OperatorModulo extends OperatorBinary {
 
    @Override
    public ConstantLiteral calculateLiteral(ConstantLiteral left, ConstantLiteral right) {
-      if(left instanceof ConstantInteger && right instanceof ConstantInteger) {
-         return new ConstantInteger(((ConstantInteger) left).getInteger() % ((ConstantInteger) right).getInteger());
-      } else if(left instanceof ConstantPointer && right instanceof ConstantInteger) {
-         return new ConstantInteger(((ConstantPointer) left).getLocation() % ((ConstantInteger) right).getInteger());
+      if(left instanceof ConstantEnumerable && right instanceof ConstantEnumerable) {
+         return new ConstantInteger(((ConstantEnumerable) left).getInteger() % ((ConstantEnumerable) right).getInteger());
+      } else if(left instanceof ConstantPointer && right instanceof ConstantEnumerable) {
+         return new ConstantInteger(((ConstantPointer) left).getLocation() % ((ConstantEnumerable) right).getInteger());
       }
       throw new CompileError("Calculation not implemented " + left + " " + getOperator() + " " + right);
    }
