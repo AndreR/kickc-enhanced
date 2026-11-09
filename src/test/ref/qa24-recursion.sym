@@ -1,0 +1,60 @@
+__constant char * const SCREEN = (char *) 1024
+__constant unsigned int STACK_BASE = $103
+__stackcall char fib(char n)
+char fib::$3 // reg byte x 11.0
+__loadstore char fib::$4 // zp[1]:5 11.0
+char fib::$5 // reg byte x 11.0
+char fib::$6 // reg byte x 11.0
+__constant char fib::OFFSET_STACK_N = 0
+__constant char fib::OFFSET_STACK_RETURN_0 = 0
+__loadstore char fib::n // zp[1]:4 17.599999999999998
+char fib::return
+char fib::return#0 // reg byte a 22.0
+char fib::return#1 // reg byte a 22.0
+char fib::return#2 // reg byte a 33.0
+void main()
+__loadstore char main::f5 // zp[1]:10 3.9999999999999996
+char main::loc
+char main::loc#0 // reg byte x 0.8
+__loadstore unsigned int main::s5 // zp[2]:11 1.3333333333333333
+__stackcall unsigned int sum_to(unsigned int n)
+unsigned int sum_to::$1 // zp[2]:6 11.0
+unsigned int sum_to::$2 // zp[2]:8 11.0
+__constant char sum_to::OFFSET_STACK_N = 0
+__constant char sum_to::OFFSET_STACK_RETURN_0 = 0
+__loadstore unsigned int sum_to::n // zp[2]:2 16.5
+unsigned int sum_to::return
+unsigned int sum_to::return#1 // return zp[2]:2 22.0
+unsigned int sum_to::return#2 // return zp[2]:2 22.0
+__stackcall char test_locals(char depth)
+char test_locals::$4 // reg byte a 22.0
+char test_locals::$6 // reg byte y 7.333333333333333
+__constant char test_locals::OFFSET_STACK_DEPTH = 0
+__constant char test_locals::OFFSET_STACK_RETURN_0 = 0
+__loadstore char test_locals::a // zp[1]:4 7.333333333333333
+__loadstore char test_locals::b // zp[1]:5 5.5
+char test_locals::depth
+char test_locals::depth#0 // reg byte y 13.75
+char test_locals::res
+char test_locals::res#1 // reg byte x 7.333333333333333
+char test_locals::res#2 // reg byte x 22.0
+char test_locals::return
+char test_locals::return#0 // reg byte a 22.0
+
+reg byte x [ test_locals::res#2 test_locals::res#1 ]
+zp[2]:2 [ sum_to::return#2 sum_to::return#1 sum_to::n ]
+reg byte a [ fib::return#2 fib::return#0 fib::return#1 ]
+zp[1]:10 [ main::f5 ]
+zp[2]:11 [ main::s5 ]
+reg byte x [ main::loc#0 ]
+reg byte y [ test_locals::depth#0 ]
+reg byte y [ test_locals::$6 ]
+reg byte a [ test_locals::$4 ]
+reg byte a [ test_locals::return#0 ]
+zp[2]:6 [ sum_to::$1 ]
+zp[2]:8 [ sum_to::$2 ]
+zp[1]:4 [ fib::n test_locals::a ]
+reg byte x [ fib::$3 ]
+zp[1]:5 [ fib::$4 test_locals::b ]
+reg byte x [ fib::$5 ]
+reg byte x [ fib::$6 ]

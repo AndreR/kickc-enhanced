@@ -1,0 +1,790 @@
+Inferred __stackcall for recursive procedure fib
+Inferred __stackcall for recursive procedure sum_to
+Inferred __stackcall for recursive procedure test_locals
+Adding parameter assignment in __stackcall procedure fib::n = param(fib::n)
+Adding parameter assignment in __stackcall procedure sum_to::n = param(sum_to::n)
+Adding parameter assignment in __stackcall procedure test_locals::depth = param(test_locals::depth)
+Eliminating unused variable with no statement test_locals::$0
+Eliminating unused variable with no statement test_locals::$1
+Eliminating unused variable with no statement main::$0
+Eliminating unused variable with no statement main::$1
+Eliminating unused variable with no statement main::$2
+Recursion spilling: push fib::n before call fib
+Recursion spilling: pull fib::n after call fib
+Calling convention __stackcall adding prepare/execute/finalize for fib::$4 = call fib(fib::$3)
+Recursion spilling: push fib::$4 before call fib
+Recursion spilling: pull fib::$4 after call fib
+Calling convention __stackcall adding prepare/execute/finalize for fib::$6 = call fib(fib::$5)
+Recursion spilling: push sum_to::n before call sum_to
+Recursion spilling: pull sum_to::n after call sum_to
+Calling convention __stackcall adding prepare/execute/finalize for sum_to::$2 = call sum_to(sum_to::$1)
+Recursion spilling: push test_locals::a before call test_locals
+Recursion spilling: push test_locals::b before call test_locals
+Recursion spilling: pull test_locals::b after call test_locals
+Recursion spilling: pull test_locals::a after call test_locals
+Calling convention __stackcall adding prepare/execute/finalize for test_locals::$7 = call test_locals(test_locals::$6)
+Calling convention __stackcall adding prepare/execute/finalize for main::f5 = call fib(5)
+Recursion spilling: push main::f5 before call sum_to
+Recursion spilling: pull main::f5 after call sum_to
+Calling convention __stackcall adding prepare/execute/finalize for main::s5 = call sum_to(5)
+Recursion spilling: push main::f5 before call test_locals
+Recursion spilling: push main::s5 before call test_locals
+Recursion spilling: pull main::s5 after call test_locals
+Recursion spilling: pull main::f5 after call test_locals
+Calling convention __stackcall adding prepare/execute/finalize for main::loc = call test_locals(2)
+Calling convention STACK_CALL replacing param(fib::n) with stackidx(char,fib::OFFSET_STACK_N)
+Calling convention STACK_CALL replacing param(sum_to::n) with stackidx(unsigned int,sum_to::OFFSET_STACK_N)
+Calling convention STACK_CALL replacing param(test_locals::depth) with stackidx(char,test_locals::OFFSET_STACK_DEPTH)
+Calling convention STACK_CALL adding stack return stackidx(char,fib::OFFSET_STACK_RETURN_0) = fib::return
+Calling convention STACK_CALL adding stack return stackidx(unsigned int,sum_to::OFFSET_STACK_RETURN_0) = sum_to::return
+Calling convention STACK_CALL adding stack return stackidx(char,test_locals::OFFSET_STACK_RETURN_0) = test_locals::return
+Calling convention STACK_CALL adding stack pull fib::$4 = stackpull(char)
+Calling convention STACK_CALL adding stack pull fib::$6 = stackpull(char)
+Calling convention STACK_CALL adding stack pull sum_to::$2 = stackpull(unsigned int)
+Calling convention STACK_CALL adding stack pull test_locals::$7 = stackpull(char)
+Calling convention STACK_CALL adding stack pull main::f5 = stackpull(char)
+Calling convention STACK_CALL adding stack pull main::s5 = stackpull(unsigned int)
+Calling convention STACK_CALL adding stack pull main::loc = stackpull(char)
+Calling convention STACK_CALL adding stack push stackpush(char) = fib::$3
+Calling convention STACK_CALL adding stack push stackpush(char) = fib::$5
+Calling convention STACK_CALL adding stack push stackpush(unsigned int) = sum_to::$1
+Calling convention STACK_CALL adding stack push stackpush(char) = test_locals::$6
+Calling convention STACK_CALL adding stack push stackpush(char) = 5
+Calling convention STACK_CALL adding stack push stackpush(unsigned int) = 5
+Calling convention STACK_CALL adding stack push stackpush(char) = 2
+
+CONTROL FLOW GRAPH SSA
+
+__stackcall char fib(char n)
+fib: scope:[fib]  from
+  fib::n = stackidx(char,fib::OFFSET_STACK_N)
+  fib::$0 = fib::n == 0
+  fib::$1 = fib::n == 1
+  fib::$2 = fib::$0 || fib::$1
+  if(fib::$2) goto fib::@1
+  to:fib::@2
+fib::@1: scope:[fib]  from fib
+  fib::return#0 = fib::n
+  to:fib::@return
+fib::@2: scope:[fib]  from fib
+  fib::$3 = fib::n - 1
+  stackpush(char) = fib::n
+  stackpush(char) = fib::$3
+  callexecute fib 
+  fib::$4 = stackpull(char)
+  fib::n = stackpull(char)
+  fib::$5 = fib::n - 2
+  stackpush(char) = fib::$4
+  stackpush(char) = fib::$5
+  callexecute fib 
+  fib::$6 = stackpull(char)
+  fib::$4 = stackpull(char)
+  fib::$7 = fib::$4 + fib::$6
+  fib::return#1 = fib::$7
+  to:fib::@return
+fib::@return: scope:[fib]  from fib::@1 fib::@2
+  fib::return#3 = phi( fib::@1/fib::return#0, fib::@2/fib::return#1 )
+  fib::return#2 = fib::return#3
+  stackidx(char,fib::OFFSET_STACK_RETURN_0) = fib::return#2
+  return 
+  to:@return
+
+__stackcall unsigned int sum_to(unsigned int n)
+sum_to: scope:[sum_to]  from
+  sum_to::n = stackidx(unsigned int,sum_to::OFFSET_STACK_N)
+  sum_to::$0 = sum_to::n == 0
+  if(sum_to::$0) goto sum_to::@1
+  to:sum_to::@2
+sum_to::@1: scope:[sum_to]  from sum_to
+  sum_to::return#0 = 0
+  to:sum_to::@return
+sum_to::@2: scope:[sum_to]  from sum_to
+  sum_to::$1 = sum_to::n - 1
+  stackpush(unsigned int) = sum_to::n
+  stackpush(unsigned int) = sum_to::$1
+  callexecute sum_to 
+  sum_to::$2 = stackpull(unsigned int)
+  sum_to::n = stackpull(unsigned int)
+  sum_to::$3 = sum_to::n + sum_to::$2
+  sum_to::return#1 = sum_to::$3
+  to:sum_to::@return
+sum_to::@return: scope:[sum_to]  from sum_to::@1 sum_to::@2
+  sum_to::return#3 = phi( sum_to::@1/sum_to::return#0, sum_to::@2/sum_to::return#1 )
+  sum_to::return#2 = sum_to::return#3
+  stackidx(unsigned int,sum_to::OFFSET_STACK_RETURN_0) = sum_to::return#2
+  return 
+  to:@return
+
+__stackcall char test_locals(char depth)
+test_locals: scope:[test_locals]  from
+  test_locals::depth#0 = stackidx(char,test_locals::OFFSET_STACK_DEPTH)
+  test_locals::a = test_locals::depth#0 + $a
+  test_locals::b = test_locals::depth#0 + $14
+  test_locals::res#0 = 0
+  test_locals::$2 = test_locals::depth#0 > 0
+  test_locals::$3 = ! test_locals::$2
+  if(test_locals::$3) goto test_locals::@1
+  to:test_locals::@2
+test_locals::@1: scope:[test_locals]  from test_locals test_locals::@2
+  test_locals::res#2 = phi( test_locals/test_locals::res#0, test_locals::@2/test_locals::res#1 )
+  test_locals::$4 = test_locals::res#2 + test_locals::a
+  test_locals::$5 = test_locals::$4 + test_locals::b
+  test_locals::return#0 = test_locals::$5
+  to:test_locals::@return
+test_locals::@2: scope:[test_locals]  from test_locals
+  test_locals::depth#1 = phi( test_locals/test_locals::depth#0 )
+  test_locals::$6 = test_locals::depth#1 - 1
+  stackpush(char) = test_locals::a
+  stackpush(char) = test_locals::b
+  stackpush(char) = test_locals::$6
+  callexecute test_locals 
+  test_locals::$7 = stackpull(char)
+  test_locals::b = stackpull(char)
+  test_locals::a = stackpull(char)
+  test_locals::res#1 = test_locals::$7
+  to:test_locals::@1
+test_locals::@return: scope:[test_locals]  from test_locals::@1
+  test_locals::return#2 = phi( test_locals::@1/test_locals::return#0 )
+  test_locals::return#1 = test_locals::return#2
+  stackidx(char,test_locals::OFFSET_STACK_RETURN_0) = test_locals::return#1
+  return 
+  to:@return
+
+void main()
+main: scope:[main]  from __start
+  stackpush(char) = 5
+  callexecute fib 
+  main::f5 = stackpull(char)
+  stackpush(char) = main::f5
+  stackpush(unsigned int) = 5
+  callexecute sum_to 
+  main::s5 = stackpull(unsigned int)
+  main::f5 = stackpull(char)
+  stackpush(char) = main::f5
+  stackpush(unsigned int) = main::s5
+  stackpush(char) = 2
+  callexecute test_locals 
+  main::loc#0 = stackpull(char)
+  main::s5 = stackpull(unsigned int)
+  main::f5 = stackpull(char)
+  main::$3 = main::f5 == 5
+  main::$4 = main::s5 == $f
+  main::$5 = main::$3 && main::$4
+  main::$6 = main::loc#0 == $60
+  main::$7 = main::$5 && main::$6
+  if(main::$7) goto main::@1
+  to:main::@2
+main::@1: scope:[main]  from main
+  SCREEN[0] = 'O'
+  SCREEN[1] = 'K'
+  to:main::@return
+main::@2: scope:[main]  from main
+  SCREEN[0] = 'E'
+  SCREEN[1] = 'R'
+  SCREEN[2] = 'R'
+  to:main::@return
+main::@return: scope:[main]  from main::@1 main::@2
+  return 
+  to:@return
+
+void __start()
+__start: scope:[__start]  from
+  call main
+  to:__start::@1
+__start::@1: scope:[__start]  from __start
+  to:__start::@return
+__start::@return: scope:[__start]  from __start::@1
+  return 
+  to:@return
+
+SYMBOL TABLE SSA
+__constant char * const SCREEN = (char *)$400
+__constant unsigned int STACK_BASE = $103
+void __start()
+__stackcall char fib(char n)
+bool fib::$0
+bool fib::$1
+bool fib::$2
+number fib::$3
+__loadstore char fib::$4
+number fib::$5
+char fib::$6
+char fib::$7
+__constant char fib::OFFSET_STACK_N = 0
+__constant char fib::OFFSET_STACK_RETURN_0 = 0
+__loadstore char fib::n
+char fib::return
+char fib::return#0
+char fib::return#1
+char fib::return#2
+char fib::return#3
+void main()
+bool main::$3
+bool main::$4
+bool main::$5
+bool main::$6
+bool main::$7
+__loadstore char main::f5
+char main::loc
+char main::loc#0
+__loadstore unsigned int main::s5
+__stackcall unsigned int sum_to(unsigned int n)
+bool sum_to::$0
+number sum_to::$1
+unsigned int sum_to::$2
+unsigned int sum_to::$3
+__constant char sum_to::OFFSET_STACK_N = 0
+__constant char sum_to::OFFSET_STACK_RETURN_0 = 0
+__loadstore unsigned int sum_to::n
+unsigned int sum_to::return
+unsigned int sum_to::return#0
+unsigned int sum_to::return#1
+unsigned int sum_to::return#2
+unsigned int sum_to::return#3
+__stackcall char test_locals(char depth)
+bool test_locals::$2
+bool test_locals::$3
+char test_locals::$4
+char test_locals::$5
+number test_locals::$6
+char test_locals::$7
+__constant char test_locals::OFFSET_STACK_DEPTH = 0
+__constant char test_locals::OFFSET_STACK_RETURN_0 = 0
+__loadstore char test_locals::a
+__loadstore char test_locals::b
+char test_locals::depth
+char test_locals::depth#0
+char test_locals::depth#1
+char test_locals::res
+char test_locals::res#0
+char test_locals::res#1
+char test_locals::res#2
+char test_locals::return
+char test_locals::return#0
+char test_locals::return#1
+char test_locals::return#2
+
+Adding number conversion cast (unumber) 0 in fib::$0 = fib::n == 0
+Adding number conversion cast (unumber) 1 in fib::$1 = fib::n == 1
+Adding number conversion cast (unumber) 1 in fib::$3 = fib::n - 1
+Adding number conversion cast (unumber) fib::$3 in fib::$3 = fib::n - (unumber)1
+Adding number conversion cast (unumber) 2 in fib::$5 = fib::n - 2
+Adding number conversion cast (unumber) fib::$5 in fib::$5 = fib::n - (unumber)2
+Adding number conversion cast (unumber) 0 in sum_to::$0 = sum_to::n == 0
+Adding number conversion cast (unumber) 0 in sum_to::return#0 = 0
+Adding number conversion cast (unumber) 1 in sum_to::$1 = sum_to::n - 1
+Adding number conversion cast (unumber) sum_to::$1 in sum_to::$1 = sum_to::n - (unumber)1
+Adding number conversion cast (unumber) $a in test_locals::a = test_locals::depth#0 + $a
+Adding number conversion cast (unumber) $14 in test_locals::b = test_locals::depth#0 + $14
+Adding number conversion cast (unumber) 0 in test_locals::$2 = test_locals::depth#0 > 0
+Adding number conversion cast (unumber) 1 in test_locals::$6 = test_locals::depth#1 - 1
+Adding number conversion cast (unumber) test_locals::$6 in test_locals::$6 = test_locals::depth#1 - (unumber)1
+Adding number conversion cast (unumber) 5 in stackpush(char) = 5
+Adding number conversion cast (unumber) 5 in stackpush(unsigned int) = 5
+Adding number conversion cast (unumber) 2 in stackpush(char) = 2
+Adding number conversion cast (unumber) 5 in main::$3 = main::f5 == 5
+Adding number conversion cast (unumber) $f in main::$4 = main::s5 == $f
+Adding number conversion cast (unumber) $60 in main::$6 = main::loc#0 == $60
+Adding number conversion cast (unumber) 0 in SCREEN[0] = 'O'
+Adding number conversion cast (unumber) 1 in SCREEN[1] = 'K'
+Adding number conversion cast (unumber) 0 in SCREEN[0] = 'E'
+Adding number conversion cast (unumber) 1 in SCREEN[1] = 'R'
+Adding number conversion cast (unumber) 2 in SCREEN[2] = 'R'
+Successful SSA optimization PassNAddNumberTypeConversions
+Inlining cast sum_to::return#0 = (unumber)0
+Inlining cast stackpush(char) = (unumber)5
+Inlining cast stackpush(unsigned int) = (unumber)5
+Inlining cast stackpush(char) = (unumber)2
+Successful SSA optimization Pass2InlineCast
+Simplifying constant pointer cast (char *) 1024
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 1
+Simplifying constant integer cast 2
+Simplifying constant integer cast 0
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast $a
+Simplifying constant integer cast $14
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 5
+Simplifying constant integer cast 5
+Simplifying constant integer cast 2
+Simplifying constant integer cast 5
+Simplifying constant integer cast $f
+Simplifying constant integer cast $60
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 2
+Successful SSA optimization PassNCastSimplification
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 2
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) $a
+Finalized unsigned number type (char) $14
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 5
+Finalized unsigned number type (uint4_t) 5
+Finalized unsigned number type (uint4_t) 2
+Finalized unsigned number type (uint4_t) 5
+Finalized unsigned number type (uint4_t) $f
+Finalized unsigned number type (char) $60
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 2
+Successful SSA optimization PassNFinalizeNumberTypeConversions
+Inferred type updated to char in fib::$3 = fib::n - 1
+Inferred type updated to char in fib::$5 = fib::n - 2
+Inferred type updated to unsigned int in sum_to::$1 = sum_to::n - 1
+Inferred type updated to char in test_locals::$6 = test_locals::depth#1 - 1
+Inversing boolean not [45] test_locals::$3 = test_locals::depth#0 <= 0 from [44] test_locals::$2 = test_locals::depth#0 > 0
+Successful SSA optimization Pass2UnaryNotSimplification
+Alias fib::return#1 = fib::$7 
+Alias fib::return#2 = fib::return#3 
+Alias sum_to::return#1 = sum_to::$3 
+Alias sum_to::return#2 = sum_to::return#3 
+Alias test_locals::return#0 = test_locals::$5 test_locals::return#2 test_locals::return#1 
+Alias test_locals::depth#0 = test_locals::depth#1 
+Alias test_locals::res#1 = test_locals::$7 
+Successful SSA optimization Pass2AliasElimination
+Simple Condition sum_to::$0 [24] if(sum_to::n==0) goto sum_to::@1
+Simple Condition test_locals::$3 [41] if(test_locals::depth#0<=0) goto test_locals::@1
+Successful SSA optimization Pass2ConditionalJumpSimplification
+Rewriting || if()-condition to two if()s [3] fib::$2 = fib::$0 || fib::$1
+Rewriting && if()-condition to two if()s [74] main::$7 = main::$5 && main::$6
+Rewriting && if()-condition to two if()s [72] main::$5 = main::$3 && main::$4
+Successful SSA optimization Pass2ConditionalAndOrRewriting
+Constant sum_to::return#0 = 0
+Constant test_locals::res#0 = 0
+Successful SSA optimization Pass2ConstantIdentification
+Simplifying expression containing zero SCREEN in [76] SCREEN[0] = 'O'
+Simplifying expression containing zero SCREEN in [78] SCREEN[0] = 'E'
+Successful SSA optimization PassNSimplifyExpressionWithZero
+Removing unused procedure __start
+Removing unused procedure block __start
+Removing unused procedure block __start::@1
+Removing unused procedure block __start::@return
+Successful SSA optimization PassNEliminateEmptyStart
+Simple Condition fib::$0 [3] if(fib::n==0) goto fib::@1
+Simple Condition fib::$1 [21] if(fib::n==1) goto fib::@1
+Simple Condition main::$3 [69] if(main::f5==5) goto main::@4
+Simple Condition main::$6 [76] if(main::loc#0==$60) goto main::@1
+Simple Condition main::$4 [77] if(main::s5==$f) goto main::@3
+Successful SSA optimization Pass2ConditionalJumpSimplification
+Negating conditional jump and destination [69] if(main::f5!=5) goto main::@2
+Negating conditional jump and destination [77] if(main::s5!=$f) goto main::@2
+Successful SSA optimization Pass2ConditionalJumpSequenceImprovement
+Inlining constant with var siblings sum_to::return#0
+Inlining constant with var siblings test_locals::res#0
+Constant inlined test_locals::res#0 = 0
+Constant inlined sum_to::return#0 = 0
+Successful SSA optimization Pass2ConstantInlining
+Consolidated array index constant in *(SCREEN+1)
+Consolidated array index constant in *(SCREEN+1)
+Consolidated array index constant in *(SCREEN+2)
+Successful SSA optimization Pass2ConstantAdditionElimination
+Adding NOP phi() at start of sum_to::@1
+CALL GRAPH
+Calls in [main] to fib:1 sum_to:5 test_locals:11 
+Calls in [test_locals] to test_locals:32 
+Calls in [sum_to] to sum_to:47 
+Calls in [fib] to fib:62 fib:68 
+
+Created 3 initial phi equivalence classes
+Coalesced [36] test_locals::res#3 = test_locals::res#1
+Coalesced [51] sum_to::return#4 = sum_to::return#1
+Coalesced [72] fib::return#5 = fib::return#1
+Coalesced [77] fib::return#4 = fib::return#0
+Coalesced down to 3 phi equivalence classes
+Culled Empty Block label sum_to::@1
+Renumbering block sum_to::@2 to sum_to::@1
+
+FINAL CONTROL FLOW GRAPH
+
+void main()
+main: scope:[main]  from
+  [0] stackpush(char) = 5
+  [1] callexecute fib 
+  [2] main::f5 = stackpull(char)
+  [3] stackpush(char) = main::f5
+  [4] stackpush(unsigned int) = 5
+  [5] callexecute sum_to 
+  [6] main::s5 = stackpull(unsigned int)
+  [7] main::f5 = stackpull(char)
+  [8] stackpush(char) = main::f5
+  [9] stackpush(unsigned int) = main::s5
+  [10] stackpush(char) = 2
+  [11] callexecute test_locals 
+  [12] main::loc#0 = stackpull(char)
+  [13] main::s5 = stackpull(unsigned int)
+  [14] main::f5 = stackpull(char)
+  [15] if(main::f5!=5) goto main::@2
+  to:main::@4
+main::@4: scope:[main]  from main
+  [16] if(main::s5!=$f) goto main::@2
+  to:main::@3
+main::@3: scope:[main]  from main::@4
+  [17] if(main::loc#0==$60) goto main::@1
+  to:main::@2
+main::@2: scope:[main]  from main main::@3 main::@4
+  [18] *SCREEN = 'E'
+  [19] *(SCREEN+1) = 'R'
+  [20] *(SCREEN+2) = 'R'
+  to:main::@return
+main::@return: scope:[main]  from main::@1 main::@2
+  [21] return 
+  to:@return
+main::@1: scope:[main]  from main::@3
+  [22] *SCREEN = 'O'
+  [23] *(SCREEN+1) = 'K'
+  to:main::@return
+
+__stackcall char test_locals(char depth)
+test_locals: scope:[test_locals]  from
+  [24] test_locals::depth#0 = stackidx(char,test_locals::OFFSET_STACK_DEPTH)
+  [25] test_locals::a = test_locals::depth#0 + $a
+  [26] test_locals::b = test_locals::depth#0 + $14
+  [27] if(test_locals::depth#0<=0) goto test_locals::@1
+  to:test_locals::@2
+test_locals::@2: scope:[test_locals]  from test_locals
+  [28] test_locals::$6 = test_locals::depth#0 - 1
+  [29] stackpush(char) = test_locals::a
+  [30] stackpush(char) = test_locals::b
+  [31] stackpush(char) = test_locals::$6
+  [32] callexecute test_locals 
+  [33] test_locals::res#1 = stackpull(char)
+  [34] test_locals::b = stackpull(char)
+  [35] test_locals::a = stackpull(char)
+  to:test_locals::@1
+test_locals::@1: scope:[test_locals]  from test_locals test_locals::@2
+  [36] test_locals::res#2 = phi( test_locals/0, test_locals::@2/test_locals::res#1 )
+  [37] test_locals::$4 = test_locals::res#2 + test_locals::a
+  [38] test_locals::return#0 = test_locals::$4 + test_locals::b
+  to:test_locals::@return
+test_locals::@return: scope:[test_locals]  from test_locals::@1
+  [39] stackidx(char,test_locals::OFFSET_STACK_RETURN_0) = test_locals::return#0
+  [40] return 
+  to:@return
+
+__stackcall unsigned int sum_to(unsigned int n)
+sum_to: scope:[sum_to]  from
+  [41] sum_to::n = stackidx(unsigned int,sum_to::OFFSET_STACK_N)
+  [42] if(sum_to::n==0) goto sum_to::@return
+  to:sum_to::@1
+sum_to::@1: scope:[sum_to]  from sum_to
+  [43] sum_to::$1 = sum_to::n - 1
+  [44] stackpush(unsigned int) = sum_to::n
+  [45] stackpush(unsigned int) = sum_to::$1
+  [46] callexecute sum_to 
+  [47] sum_to::$2 = stackpull(unsigned int)
+  [48] sum_to::n = stackpull(unsigned int)
+  [49] sum_to::return#1 = sum_to::n + sum_to::$2
+  to:sum_to::@return
+sum_to::@return: scope:[sum_to]  from sum_to sum_to::@1
+  [50] sum_to::return#2 = phi( sum_to/0, sum_to::@1/sum_to::return#1 )
+  [51] stackidx(unsigned int,sum_to::OFFSET_STACK_RETURN_0) = sum_to::return#2
+  [52] return 
+  to:@return
+
+__stackcall char fib(char n)
+fib: scope:[fib]  from
+  [53] fib::n = stackidx(char,fib::OFFSET_STACK_N)
+  [54] if(fib::n==0) goto fib::@1
+  to:fib::@3
+fib::@3: scope:[fib]  from fib
+  [55] if(fib::n==1) goto fib::@1
+  to:fib::@2
+fib::@2: scope:[fib]  from fib::@3
+  [56] fib::$3 = fib::n - 1
+  [57] stackpush(char) = fib::n
+  [58] stackpush(char) = fib::$3
+  [59] callexecute fib 
+  [60] fib::$4 = stackpull(char)
+  [61] fib::n = stackpull(char)
+  [62] fib::$5 = fib::n - 2
+  [63] stackpush(char) = fib::$4
+  [64] stackpush(char) = fib::$5
+  [65] callexecute fib 
+  [66] fib::$6 = stackpull(char)
+  [67] fib::$4 = stackpull(char)
+  [68] fib::return#1 = fib::$4 + fib::$6
+  to:fib::@return
+fib::@return: scope:[fib]  from fib::@1 fib::@2
+  [69] fib::return#2 = phi( fib::@1/fib::return#0, fib::@2/fib::return#1 )
+  [70] stackidx(char,fib::OFFSET_STACK_RETURN_0) = fib::return#2
+  [71] return 
+  to:@return
+fib::@1: scope:[fib]  from fib fib::@3
+  [72] fib::return#0 = fib::n
+  to:fib::@return
+
+Initial phi equivalence classes
+[ test_locals::res#2 test_locals::res#1 ]
+[ sum_to::return#2 sum_to::return#1 ]
+[ fib::return#2 fib::return#0 fib::return#1 ]
+Added variable main::f5 to live range equivalence class [ main::f5 ]
+Added variable main::s5 to live range equivalence class [ main::s5 ]
+Added variable main::loc#0 to live range equivalence class [ main::loc#0 ]
+Added variable test_locals::depth#0 to live range equivalence class [ test_locals::depth#0 ]
+Added variable test_locals::a to live range equivalence class [ test_locals::a ]
+Added variable test_locals::b to live range equivalence class [ test_locals::b ]
+Added variable test_locals::$6 to live range equivalence class [ test_locals::$6 ]
+Added variable test_locals::$4 to live range equivalence class [ test_locals::$4 ]
+Added variable test_locals::return#0 to live range equivalence class [ test_locals::return#0 ]
+Added variable sum_to::n to live range equivalence class [ sum_to::n ]
+Added variable sum_to::$1 to live range equivalence class [ sum_to::$1 ]
+Added variable sum_to::$2 to live range equivalence class [ sum_to::$2 ]
+Added variable fib::n to live range equivalence class [ fib::n ]
+Added variable fib::$3 to live range equivalence class [ fib::$3 ]
+Added variable fib::$4 to live range equivalence class [ fib::$4 ]
+Added variable fib::$5 to live range equivalence class [ fib::$5 ]
+Added variable fib::$6 to live range equivalence class [ fib::$6 ]
+Complete equivalence classes
+[ test_locals::res#2 test_locals::res#1 ]
+[ sum_to::return#2 sum_to::return#1 ]
+[ fib::return#2 fib::return#0 fib::return#1 ]
+[ main::f5 ]
+[ main::s5 ]
+[ main::loc#0 ]
+[ test_locals::depth#0 ]
+[ test_locals::a ]
+[ test_locals::b ]
+[ test_locals::$6 ]
+[ test_locals::$4 ]
+[ test_locals::return#0 ]
+[ sum_to::n ]
+[ sum_to::$1 ]
+[ sum_to::$2 ]
+[ fib::n ]
+[ fib::$3 ]
+[ fib::$4 ]
+[ fib::$5 ]
+[ fib::$6 ]
+Allocated zp[1]:2 [ fib::return#2 fib::return#0 fib::return#1 ]
+Allocated zp[2]:3 [ sum_to::return#2 sum_to::return#1 ]
+Allocated zp[1]:5 [ test_locals::res#2 test_locals::res#1 ]
+Allocated zp[1]:6 [ test_locals::$4 ]
+Allocated zp[1]:7 [ test_locals::return#0 ]
+Allocated zp[1]:8 [ fib::n ]
+Allocated zp[2]:9 [ sum_to::n ]
+Allocated zp[1]:11 [ test_locals::depth#0 ]
+Allocated zp[2]:12 [ sum_to::$1 ]
+Allocated zp[2]:14 [ sum_to::$2 ]
+Allocated zp[1]:16 [ fib::$3 ]
+Allocated zp[1]:17 [ fib::$4 ]
+Allocated zp[1]:18 [ fib::$5 ]
+Allocated zp[1]:19 [ fib::$6 ]
+Allocated zp[1]:20 [ test_locals::a ]
+Allocated zp[1]:21 [ test_locals::$6 ]
+Allocated zp[1]:22 [ test_locals::b ]
+Allocated zp[1]:23 [ main::f5 ]
+Allocated zp[2]:24 [ main::s5 ]
+Allocated zp[1]:26 [ main::loc#0 ]
+REGISTER UPLIFT POTENTIAL REGISTERS
+Statement [0] stackpush(char) = 5 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [2] main::f5 = stackpull(char) [ main::f5 ] (  [ main::f5 ] { }  ) always clobbers reg byte a 
+Statement [3] stackpush(char) = main::f5 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [4] stackpush(unsigned int) = 5 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [6] main::s5 = stackpull(unsigned int) [ main::s5 ] (  [ main::s5 ] { }  ) always clobbers reg byte a 
+Statement [7] main::f5 = stackpull(char) [ main::f5 main::s5 ] (  [ main::f5 main::s5 ] { }  ) always clobbers reg byte a 
+Statement [8] stackpush(char) = main::f5 [ main::s5 ] (  [ main::s5 ] { }  ) always clobbers reg byte a 
+Statement [9] stackpush(unsigned int) = main::s5 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [10] stackpush(char) = 2 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [12] main::loc#0 = stackpull(char) [ main::loc#0 ] (  [ main::loc#0 ] { }  ) always clobbers reg byte a 
+Statement [13] main::s5 = stackpull(unsigned int) [ main::s5 main::loc#0 ] (  [ main::s5 main::loc#0 ] { }  ) always clobbers reg byte a 
+Removing always clobbered register reg byte a as potential for zp[1]:26 [ main::loc#0 ]
+Statement [14] main::f5 = stackpull(char) [ main::f5 main::s5 main::loc#0 ] (  [ main::f5 main::s5 main::loc#0 ] { }  ) always clobbers reg byte a 
+Statement [15] if(main::f5!=5) goto main::@2 [ main::s5 main::loc#0 ] (  [ main::s5 main::loc#0 ] { }  ) always clobbers reg byte a 
+Statement [16] if(main::s5!=$f) goto main::@2 [ main::loc#0 ] (  [ main::loc#0 ] { }  ) always clobbers reg byte a 
+Statement [18] *SCREEN = 'E' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [19] *(SCREEN+1) = 'R' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [20] *(SCREEN+2) = 'R' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [22] *SCREEN = 'O' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [23] *(SCREEN+1) = 'K' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [24] test_locals::depth#0 = stackidx(char,test_locals::OFFSET_STACK_DEPTH) [ test_locals::depth#0 ] ( test_locals:11 [ test_locals::depth#0 ] { }  ) always clobbers reg byte a reg byte x 
+Statement [25] test_locals::a = test_locals::depth#0 + $a [ test_locals::depth#0 test_locals::a ] ( test_locals:11 [ test_locals::depth#0 test_locals::a ] { }  ) always clobbers reg byte a 
+Removing always clobbered register reg byte a as potential for zp[1]:11 [ test_locals::depth#0 ]
+Statement [26] test_locals::b = test_locals::depth#0 + $14 [ test_locals::depth#0 test_locals::a test_locals::b ] ( test_locals:11 [ test_locals::depth#0 test_locals::a test_locals::b ] { }  ) always clobbers reg byte a 
+Statement [29] stackpush(char) = test_locals::a [ test_locals::b test_locals::$6 ] ( test_locals:11 [ test_locals::b test_locals::$6 ] { }  ) always clobbers reg byte a 
+Removing always clobbered register reg byte a as potential for zp[1]:21 [ test_locals::$6 ]
+Statement [30] stackpush(char) = test_locals::b [ test_locals::$6 ] ( test_locals:11 [ test_locals::$6 ] { }  ) always clobbers reg byte a 
+Statement [31] stackpush(char) = test_locals::$6 [ ] ( test_locals:11 [ ] { }  ) always clobbers reg byte a 
+Statement [33] test_locals::res#1 = stackpull(char) [ test_locals::res#1 ] ( test_locals:11 [ test_locals::res#1 ] { }  ) always clobbers reg byte a 
+Statement [34] test_locals::b = stackpull(char) [ test_locals::b test_locals::res#1 ] ( test_locals:11 [ test_locals::b test_locals::res#1 ] { }  ) always clobbers reg byte a 
+Removing always clobbered register reg byte a as potential for zp[1]:5 [ test_locals::res#2 test_locals::res#1 ]
+Statement [35] test_locals::a = stackpull(char) [ test_locals::a test_locals::b test_locals::res#1 ] ( test_locals:11 [ test_locals::a test_locals::b test_locals::res#1 ] { }  ) always clobbers reg byte a 
+Statement [37] test_locals::$4 = test_locals::res#2 + test_locals::a [ test_locals::b test_locals::$4 ] ( test_locals:11 [ test_locals::b test_locals::$4 ] { }  ) always clobbers reg byte a 
+Statement [38] test_locals::return#0 = test_locals::$4 + test_locals::b [ test_locals::return#0 ] ( test_locals:11 [ test_locals::return#0 ] { }  ) always clobbers reg byte a 
+Statement [39] stackidx(char,test_locals::OFFSET_STACK_RETURN_0) = test_locals::return#0 [ ] ( test_locals:11 [ ] { }  ) always clobbers reg byte x 
+Statement [41] sum_to::n = stackidx(unsigned int,sum_to::OFFSET_STACK_N) [ sum_to::n ] ( sum_to:5 [ sum_to::n ] { }  ) always clobbers reg byte a reg byte x 
+Statement [42] if(sum_to::n==0) goto sum_to::@return [ sum_to::n ] ( sum_to:5 [ sum_to::n ] { }  ) always clobbers reg byte a 
+Statement [43] sum_to::$1 = sum_to::n - 1 [ sum_to::n sum_to::$1 ] ( sum_to:5 [ sum_to::n sum_to::$1 ] { }  ) always clobbers reg byte a 
+Statement [44] stackpush(unsigned int) = sum_to::n [ sum_to::$1 ] ( sum_to:5 [ sum_to::$1 ] { }  ) always clobbers reg byte a 
+Statement [45] stackpush(unsigned int) = sum_to::$1 [ ] ( sum_to:5 [ ] { }  ) always clobbers reg byte a 
+Statement [47] sum_to::$2 = stackpull(unsigned int) [ sum_to::$2 ] ( sum_to:5 [ sum_to::$2 ] { }  ) always clobbers reg byte a 
+Statement [48] sum_to::n = stackpull(unsigned int) [ sum_to::n sum_to::$2 ] ( sum_to:5 [ sum_to::n sum_to::$2 ] { }  ) always clobbers reg byte a 
+Statement [49] sum_to::return#1 = sum_to::n + sum_to::$2 [ sum_to::return#1 ] ( sum_to:5 [ sum_to::return#1 ] { }  ) always clobbers reg byte a 
+Statement [51] stackidx(unsigned int,sum_to::OFFSET_STACK_RETURN_0) = sum_to::return#2 [ ] ( sum_to:5 [ ] { }  ) always clobbers reg byte a reg byte x 
+Statement [53] fib::n = stackidx(char,fib::OFFSET_STACK_N) [ fib::n ] ( fib:1 [ fib::n ] { }  ) always clobbers reg byte a reg byte x 
+Statement [54] if(fib::n==0) goto fib::@1 [ fib::n ] ( fib:1 [ fib::n ] { }  ) always clobbers reg byte a 
+Statement [55] if(fib::n==1) goto fib::@1 [ fib::n ] ( fib:1 [ fib::n ] { }  ) always clobbers reg byte a 
+Statement [57] stackpush(char) = fib::n [ fib::$3 ] ( fib:1 [ fib::$3 ] { }  ) always clobbers reg byte a 
+Removing always clobbered register reg byte a as potential for zp[1]:16 [ fib::$3 ]
+Statement [58] stackpush(char) = fib::$3 [ ] ( fib:1 [ ] { }  ) always clobbers reg byte a 
+Statement [60] fib::$4 = stackpull(char) [ fib::$4 ] ( fib:1 [ fib::$4 ] { }  ) always clobbers reg byte a 
+Statement [61] fib::n = stackpull(char) [ fib::n fib::$4 ] ( fib:1 [ fib::n fib::$4 ] { }  ) always clobbers reg byte a 
+Statement [63] stackpush(char) = fib::$4 [ fib::$5 ] ( fib:1 [ fib::$5 ] { }  ) always clobbers reg byte a 
+Removing always clobbered register reg byte a as potential for zp[1]:18 [ fib::$5 ]
+Statement [64] stackpush(char) = fib::$5 [ ] ( fib:1 [ ] { }  ) always clobbers reg byte a 
+Statement [66] fib::$6 = stackpull(char) [ fib::$6 ] ( fib:1 [ fib::$6 ] { }  ) always clobbers reg byte a 
+Statement [67] fib::$4 = stackpull(char) [ fib::$4 fib::$6 ] ( fib:1 [ fib::$4 fib::$6 ] { }  ) always clobbers reg byte a 
+Removing always clobbered register reg byte a as potential for zp[1]:19 [ fib::$6 ]
+Statement [68] fib::return#1 = fib::$4 + fib::$6 [ fib::return#1 ] ( fib:1 [ fib::return#1 ] { }  ) always clobbers reg byte a 
+Statement [70] stackidx(char,fib::OFFSET_STACK_RETURN_0) = fib::return#2 [ ] ( fib:1 [ ] { }  ) always clobbers reg byte x 
+Statement [0] stackpush(char) = 5 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [2] main::f5 = stackpull(char) [ main::f5 ] (  [ main::f5 ] { }  ) always clobbers reg byte a 
+Statement [3] stackpush(char) = main::f5 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [4] stackpush(unsigned int) = 5 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [6] main::s5 = stackpull(unsigned int) [ main::s5 ] (  [ main::s5 ] { }  ) always clobbers reg byte a 
+Statement [7] main::f5 = stackpull(char) [ main::f5 main::s5 ] (  [ main::f5 main::s5 ] { }  ) always clobbers reg byte a 
+Statement [8] stackpush(char) = main::f5 [ main::s5 ] (  [ main::s5 ] { }  ) always clobbers reg byte a 
+Statement [9] stackpush(unsigned int) = main::s5 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [10] stackpush(char) = 2 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [12] main::loc#0 = stackpull(char) [ main::loc#0 ] (  [ main::loc#0 ] { }  ) always clobbers reg byte a 
+Statement [13] main::s5 = stackpull(unsigned int) [ main::s5 main::loc#0 ] (  [ main::s5 main::loc#0 ] { }  ) always clobbers reg byte a 
+Statement [14] main::f5 = stackpull(char) [ main::f5 main::s5 main::loc#0 ] (  [ main::f5 main::s5 main::loc#0 ] { }  ) always clobbers reg byte a 
+Statement [15] if(main::f5!=5) goto main::@2 [ main::s5 main::loc#0 ] (  [ main::s5 main::loc#0 ] { }  ) always clobbers reg byte a 
+Statement [16] if(main::s5!=$f) goto main::@2 [ main::loc#0 ] (  [ main::loc#0 ] { }  ) always clobbers reg byte a 
+Statement [18] *SCREEN = 'E' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [19] *(SCREEN+1) = 'R' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [20] *(SCREEN+2) = 'R' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [22] *SCREEN = 'O' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [23] *(SCREEN+1) = 'K' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [24] test_locals::depth#0 = stackidx(char,test_locals::OFFSET_STACK_DEPTH) [ test_locals::depth#0 ] ( test_locals:11 [ test_locals::depth#0 ] { }  ) always clobbers reg byte a reg byte x 
+Statement [25] test_locals::a = test_locals::depth#0 + $a [ test_locals::depth#0 test_locals::a ] ( test_locals:11 [ test_locals::depth#0 test_locals::a ] { }  ) always clobbers reg byte a 
+Statement [26] test_locals::b = test_locals::depth#0 + $14 [ test_locals::depth#0 test_locals::a test_locals::b ] ( test_locals:11 [ test_locals::depth#0 test_locals::a test_locals::b ] { }  ) always clobbers reg byte a 
+Statement [29] stackpush(char) = test_locals::a [ test_locals::b test_locals::$6 ] ( test_locals:11 [ test_locals::b test_locals::$6 ] { }  ) always clobbers reg byte a 
+Statement [30] stackpush(char) = test_locals::b [ test_locals::$6 ] ( test_locals:11 [ test_locals::$6 ] { }  ) always clobbers reg byte a 
+Statement [31] stackpush(char) = test_locals::$6 [ ] ( test_locals:11 [ ] { }  ) always clobbers reg byte a 
+Statement [33] test_locals::res#1 = stackpull(char) [ test_locals::res#1 ] ( test_locals:11 [ test_locals::res#1 ] { }  ) always clobbers reg byte a 
+Statement [34] test_locals::b = stackpull(char) [ test_locals::b test_locals::res#1 ] ( test_locals:11 [ test_locals::b test_locals::res#1 ] { }  ) always clobbers reg byte a 
+Statement [35] test_locals::a = stackpull(char) [ test_locals::a test_locals::b test_locals::res#1 ] ( test_locals:11 [ test_locals::a test_locals::b test_locals::res#1 ] { }  ) always clobbers reg byte a 
+Statement [37] test_locals::$4 = test_locals::res#2 + test_locals::a [ test_locals::b test_locals::$4 ] ( test_locals:11 [ test_locals::b test_locals::$4 ] { }  ) always clobbers reg byte a 
+Statement [38] test_locals::return#0 = test_locals::$4 + test_locals::b [ test_locals::return#0 ] ( test_locals:11 [ test_locals::return#0 ] { }  ) always clobbers reg byte a 
+Statement [39] stackidx(char,test_locals::OFFSET_STACK_RETURN_0) = test_locals::return#0 [ ] ( test_locals:11 [ ] { }  ) always clobbers reg byte x 
+Statement [41] sum_to::n = stackidx(unsigned int,sum_to::OFFSET_STACK_N) [ sum_to::n ] ( sum_to:5 [ sum_to::n ] { }  ) always clobbers reg byte a reg byte x 
+Statement [42] if(sum_to::n==0) goto sum_to::@return [ sum_to::n ] ( sum_to:5 [ sum_to::n ] { }  ) always clobbers reg byte a 
+Statement [43] sum_to::$1 = sum_to::n - 1 [ sum_to::n sum_to::$1 ] ( sum_to:5 [ sum_to::n sum_to::$1 ] { }  ) always clobbers reg byte a 
+Statement [44] stackpush(unsigned int) = sum_to::n [ sum_to::$1 ] ( sum_to:5 [ sum_to::$1 ] { }  ) always clobbers reg byte a 
+Statement [45] stackpush(unsigned int) = sum_to::$1 [ ] ( sum_to:5 [ ] { }  ) always clobbers reg byte a 
+Statement [47] sum_to::$2 = stackpull(unsigned int) [ sum_to::$2 ] ( sum_to:5 [ sum_to::$2 ] { }  ) always clobbers reg byte a 
+Statement [48] sum_to::n = stackpull(unsigned int) [ sum_to::n sum_to::$2 ] ( sum_to:5 [ sum_to::n sum_to::$2 ] { }  ) always clobbers reg byte a 
+Statement [49] sum_to::return#1 = sum_to::n + sum_to::$2 [ sum_to::return#1 ] ( sum_to:5 [ sum_to::return#1 ] { }  ) always clobbers reg byte a 
+Statement [51] stackidx(unsigned int,sum_to::OFFSET_STACK_RETURN_0) = sum_to::return#2 [ ] ( sum_to:5 [ ] { }  ) always clobbers reg byte a reg byte x 
+Statement [53] fib::n = stackidx(char,fib::OFFSET_STACK_N) [ fib::n ] ( fib:1 [ fib::n ] { }  ) always clobbers reg byte a reg byte x 
+Statement [54] if(fib::n==0) goto fib::@1 [ fib::n ] ( fib:1 [ fib::n ] { }  ) always clobbers reg byte a 
+Statement [55] if(fib::n==1) goto fib::@1 [ fib::n ] ( fib:1 [ fib::n ] { }  ) always clobbers reg byte a 
+Statement [57] stackpush(char) = fib::n [ fib::$3 ] ( fib:1 [ fib::$3 ] { }  ) always clobbers reg byte a 
+Statement [58] stackpush(char) = fib::$3 [ ] ( fib:1 [ ] { }  ) always clobbers reg byte a 
+Statement [60] fib::$4 = stackpull(char) [ fib::$4 ] ( fib:1 [ fib::$4 ] { }  ) always clobbers reg byte a 
+Statement [61] fib::n = stackpull(char) [ fib::n fib::$4 ] ( fib:1 [ fib::n fib::$4 ] { }  ) always clobbers reg byte a 
+Statement [63] stackpush(char) = fib::$4 [ fib::$5 ] ( fib:1 [ fib::$5 ] { }  ) always clobbers reg byte a 
+Statement [64] stackpush(char) = fib::$5 [ ] ( fib:1 [ ] { }  ) always clobbers reg byte a 
+Statement [66] fib::$6 = stackpull(char) [ fib::$6 ] ( fib:1 [ fib::$6 ] { }  ) always clobbers reg byte a 
+Statement [67] fib::$4 = stackpull(char) [ fib::$4 fib::$6 ] ( fib:1 [ fib::$4 fib::$6 ] { }  ) always clobbers reg byte a 
+Statement [68] fib::return#1 = fib::$4 + fib::$6 [ fib::return#1 ] ( fib:1 [ fib::return#1 ] { }  ) always clobbers reg byte a 
+Statement [70] stackidx(char,fib::OFFSET_STACK_RETURN_0) = fib::return#2 [ ] ( fib:1 [ ] { }  ) always clobbers reg byte x 
+Potential registers zp[1]:5 [ test_locals::res#2 test_locals::res#1 ] : zp[1]:5 , reg byte x , reg byte y , 
+Potential registers zp[2]:3 [ sum_to::return#2 sum_to::return#1 ] : zp[2]:3 , 
+Potential registers zp[1]:2 [ fib::return#2 fib::return#0 fib::return#1 ] : zp[1]:2 , reg byte a , reg byte x , reg byte y , 
+Potential registers zp[1]:23 [ main::f5 ] : zp[1]:23 , 
+Potential registers zp[2]:24 [ main::s5 ] : zp[2]:24 , 
+Potential registers zp[1]:26 [ main::loc#0 ] : zp[1]:26 , reg byte x , reg byte y , 
+Potential registers zp[1]:11 [ test_locals::depth#0 ] : zp[1]:11 , reg byte x , reg byte y , 
+Potential registers zp[1]:20 [ test_locals::a ] : zp[1]:20 , 
+Potential registers zp[1]:22 [ test_locals::b ] : zp[1]:22 , 
+Potential registers zp[1]:21 [ test_locals::$6 ] : zp[1]:21 , reg byte x , reg byte y , 
+Potential registers zp[1]:6 [ test_locals::$4 ] : zp[1]:6 , reg byte a , reg byte x , reg byte y , 
+Potential registers zp[1]:7 [ test_locals::return#0 ] : zp[1]:7 , reg byte a , reg byte x , reg byte y , 
+Potential registers zp[2]:9 [ sum_to::n ] : zp[2]:9 , 
+Potential registers zp[2]:12 [ sum_to::$1 ] : zp[2]:12 , 
+Potential registers zp[2]:14 [ sum_to::$2 ] : zp[2]:14 , 
+Potential registers zp[1]:8 [ fib::n ] : zp[1]:8 , 
+Potential registers zp[1]:16 [ fib::$3 ] : zp[1]:16 , reg byte x , reg byte y , 
+Potential registers zp[1]:17 [ fib::$4 ] : zp[1]:17 , 
+Potential registers zp[1]:18 [ fib::$5 ] : zp[1]:18 , reg byte x , reg byte y , 
+Potential registers zp[1]:19 [ fib::$6 ] : zp[1]:19 , reg byte x , reg byte y , 
+
+REGISTER UPLIFT SCOPES
+Uplift Scope [fib] 77: zp[1]:2 [ fib::return#2 fib::return#0 fib::return#1 ] 17.6: zp[1]:8 [ fib::n ] 11: zp[1]:16 [ fib::$3 ] 11: zp[1]:17 [ fib::$4 ] 11: zp[1]:18 [ fib::$5 ] 11: zp[1]:19 [ fib::$6 ] 
+Uplift Scope [test_locals] 29.33: zp[1]:5 [ test_locals::res#2 test_locals::res#1 ] 22: zp[1]:6 [ test_locals::$4 ] 22: zp[1]:7 [ test_locals::return#0 ] 13.75: zp[1]:11 [ test_locals::depth#0 ] 7.33: zp[1]:20 [ test_locals::a ] 7.33: zp[1]:21 [ test_locals::$6 ] 5.5: zp[1]:22 [ test_locals::b ] 
+Uplift Scope [sum_to] 44: zp[2]:3 [ sum_to::return#2 sum_to::return#1 ] 16.5: zp[2]:9 [ sum_to::n ] 11: zp[2]:12 [ sum_to::$1 ] 11: zp[2]:14 [ sum_to::$2 ] 
+Uplift Scope [main] 4: zp[1]:23 [ main::f5 ] 1.33: zp[2]:24 [ main::s5 ] 0.8: zp[1]:26 [ main::loc#0 ] 
+Uplift Scope [] 
+
+Uplifting [fib] best 579 combination reg byte a [ fib::return#2 fib::return#0 fib::return#1 ] zp[1]:8 [ fib::n ] reg byte x [ fib::$3 ] zp[1]:17 [ fib::$4 ] reg byte x [ fib::$5 ] reg byte x [ fib::$6 ] 
+Limited combination testing to 100 combinations of 108 possible.
+Uplifting [test_locals] best 562 combination reg byte x [ test_locals::res#2 test_locals::res#1 ] reg byte a [ test_locals::$4 ] reg byte a [ test_locals::return#0 ] zp[1]:11 [ test_locals::depth#0 ] zp[1]:20 [ test_locals::a ] zp[1]:21 [ test_locals::$6 ] zp[1]:22 [ test_locals::b ] 
+Limited combination testing to 100 combinations of 432 possible.
+Uplifting [sum_to] best 562 combination zp[2]:3 [ sum_to::return#2 sum_to::return#1 ] zp[2]:9 [ sum_to::n ] zp[2]:12 [ sum_to::$1 ] zp[2]:14 [ sum_to::$2 ] 
+Uplifting [main] best 558 combination zp[1]:23 [ main::f5 ] zp[2]:24 [ main::s5 ] reg byte x [ main::loc#0 ] 
+Uplifting [] best 558 combination 
+Attempting to uplift remaining variables inzp[1]:11 [ test_locals::depth#0 ]
+Uplifting [test_locals] best 555 combination reg byte y [ test_locals::depth#0 ] 
+Attempting to uplift remaining variables inzp[1]:21 [ test_locals::$6 ]
+Uplifting [test_locals] best 551 combination reg byte y [ test_locals::$6 ] 
+Coalescing zero page register [ zp[2]:3 [ sum_to::return#2 sum_to::return#1 ] ] with [ zp[2]:9 [ sum_to::n ] ] - score: 1
+Coalescing zero page register [ zp[1]:8 [ fib::n ] ] with [ zp[1]:20 [ test_locals::a ] ]
+Coalescing zero page register [ zp[1]:17 [ fib::$4 ] ] with [ zp[1]:22 [ test_locals::b ] ]
+Allocated (was zp[2]:3) zp[2]:2 [ sum_to::return#2 sum_to::return#1 sum_to::n ]
+Allocated (was zp[1]:8) zp[1]:4 [ fib::n test_locals::a ]
+Allocated (was zp[1]:17) zp[1]:5 [ fib::$4 test_locals::b ]
+Allocated (was zp[2]:12) zp[2]:6 [ sum_to::$1 ]
+Allocated (was zp[2]:14) zp[2]:8 [ sum_to::$2 ]
+Allocated (was zp[1]:23) zp[1]:10 [ main::f5 ]
+Allocated (was zp[2]:24) zp[2]:11 [ main::s5 ]
+Removing instruction jmp __b4
+Removing instruction jmp __b3
+Removing instruction jmp __b2
+Removing instruction jmp __breturn
+Removing instruction jmp __b2
+Removing instruction jmp __b1
+Removing instruction jmp __breturn
+Removing instruction jmp __b1
+Removing instruction jmp __breturn
+Removing instruction jmp __b3
+Removing instruction jmp __b2
+Removing instruction jmp __breturn
+Removing instruction lda.z f5
+Removing instruction lda.z f5
+Removing instruction lda #'R'
+Removing instruction lda #>0
+Replacing instruction ldx.z n with TAX
+Eliminating redundant load lda.z n (A already contains 4)
+Eliminating redundant transfer tya after tay
+Replacing label __breturn_from___b1 with __breturn
+Removing instruction __breturn_from___b1:
+Removing instruction __breturn_from___b2:
+Removing instruction __b4:
+Removing instruction __b3:
+Removing instruction __b2:
+Removing instruction __b1_from___b2:
+Removing instruction __breturn:
+Removing instruction __b1:
+Removing instruction __breturn_from___b1:
+Removing instruction __b3:
+Removing instruction __b2:
+Replacing jump to rts with rts in jmp __breturn
+Relabelling long label __b1_from_test_locals to __b2
+Relabelling long label __breturn_from_sum_to to __b1
+Removing instruction __breturn:

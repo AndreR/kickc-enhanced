@@ -5358,4 +5358,10 @@ public class TestProgramsFast extends TestPrograms {
       compileAndCompare("qa23-charliteral-arithmetic.c");
    }
 
+   // QA-24: Automatic recursion support without explicit __stackcall keyword
+   @Test
+   public void testQa24Recursion() throws IOException {
+      compileAndCompare("qa24-recursion.c");
+   }
+
 }

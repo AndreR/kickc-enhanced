@@ -288,6 +288,7 @@ public class Compiler {
       new Pass1AddressOfHandling(program).execute();
       new Pass1AsmUsesHandling(program).execute();
       new Pass1AssertProcedureCallParameters(program).execute();
+      new Pass1RecursionIdentification(program).execute();
       new Pass1ModifiedVarsAnalysis(program).execute();
       new Pass1CallStackVarPrepare(program).execute();
 
