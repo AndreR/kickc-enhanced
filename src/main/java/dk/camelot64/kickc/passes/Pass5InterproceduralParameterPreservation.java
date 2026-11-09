@@ -195,6 +195,8 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                      if(writes != null) {
                         for(String w : writes) {
                            knownZp.remove(w);
+                           final String zpKey = "zp:" + w;
+                           knownZp.values().removeIf(val -> val.equals(zpKey));
                         }
                      }
                   } else {
@@ -217,14 +219,44 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                   }
                }
 
+               // Loads of zero-page variables into registers
+               if(mode == CpuAddressingMode.ZP && operand != null && !Pass5RedundantStoreAndReloadElimination.isHardwareAddress(operand)) {
+                  String src = operand.trim();
+                  if("lda".equals(mnem)) {
+                     currentValA = "zp:" + src;
+                     continue;
+                  } else if("ldx".equals(mnem)) {
+                     currentValX = "zp:" + src;
+                     continue;
+                  } else if("ldy".equals(mnem)) {
+                     currentValY = "zp:" + src;
+                     continue;
+                  }
+               }
+
+               // Register-to-register transfers
+               if("tax".equals(mnem)) {
+                  currentValX = currentValA;
+                  continue;
+               } else if("txa".equals(mnem)) {
+                  currentValA = currentValX;
+                  continue;
+               } else if("tay".equals(mnem)) {
+                  currentValY = currentValA;
+                  continue;
+               } else if("tya".equals(mnem)) {
+                  currentValA = currentValY;
+                  continue;
+               }
+
                // Register overwrites from memory or other sources
-               if("lda".equals(mnem) || "pla".equals(mnem) || "txa".equals(mnem) || "tya".equals(mnem) || "lax".equals(mnem)) {
+               if("lda".equals(mnem) || "pla".equals(mnem) || "lax".equals(mnem)) {
                   currentValA = null;
                }
-               if("ldx".equals(mnem) || "plx".equals(mnem) || "tax".equals(mnem) || "tsx".equals(mnem) || "lax".equals(mnem)) {
+               if("ldx".equals(mnem) || "plx".equals(mnem) || "tsx".equals(mnem) || "lax".equals(mnem)) {
                   currentValX = null;
                }
-               if("ldy".equals(mnem) || "ply".equals(mnem) || "tay".equals(mnem)) {
+               if("ldy".equals(mnem) || "ply".equals(mnem)) {
                   currentValY = null;
                }
                if("adc".equals(mnem) || "sbc".equals(mnem) || "and".equals(mnem) || "ora".equals(mnem) || "eor".equals(mnem) ||
@@ -245,21 +277,32 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                   else if("sty".equals(mnem)) storedVal = currentValY;
 
                   if(storedVal != null) {
-                     if(storedVal.equals(knownZp.get(target))) {
+                     if(storedVal.equals(knownZp.get(target)) || storedVal.equals("zp:" + target)) {
                         // REDUNDANT STORE IDENTIFIED!
                         getLog().append("Pass 5: Eliminating redundant store across JSR: " + inst.getAsm());
                         it.remove();
                         modified = true;
                         continue;
                      } else {
+                        // Invalidate any aliases depending on target
+                        final String zpTarget = "zp:" + target;
+                        knownZp.values().removeIf(val -> val.equals(zpTarget));
                         knownZp.put(target, storedVal);
                      }
                   } else {
                      knownZp.remove(target);
+                     final String zpTarget = "zp:" + target;
+                     knownZp.values().removeIf(val -> val.equals(zpTarget));
                   }
                } else if(ZP_MODIFY_MNEMONICS.contains(mnem) && operand != null) {
                   // Any other instruction that modifies ZP memory invalidates that ZP location
-                  knownZp.remove(operand.trim());
+                  String modifiedZp = operand.trim();
+                  knownZp.remove(modifiedZp);
+                  final String zpMod = "zp:" + modifiedZp;
+                  knownZp.values().removeIf(val -> val.equals(zpMod));
+                  if(zpMod.equals(currentValA)) currentValA = null;
+                  if(zpMod.equals(currentValX)) currentValX = null;
+                  if(zpMod.equals(currentValY)) currentValY = null;
                }
             }
          }

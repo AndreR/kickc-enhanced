@@ -71,9 +71,29 @@ public class Pass1PointerSizeofFix extends Pass1Base {
                   if(idx2VarRef == null) {
                      SymbolType type = SymbolTypeInference.inferType(getProgramScope(), deref.getIndex());
                      Scope scope = getProgramScope().getScope(currentBlock.getScope());
+                     RValue indexToMultiply = deref.getIndex();
+                     Long arrayTotalBytes = getArrayTotalBytes(deref.getPointer());
+                     if(arrayTotalBytes != null && arrayTotalBytes <= 256L && type.getSizeBytes() > 1) {
+                        // Target is a static array known to fit within 256 bytes total
+                        // Any valid index fits within a byte and the byte offset fits within a byte.
+                        Variable byteIdxVar = VariableBuilder.createIntermediate(scope, SymbolType.BYTE, getProgram());
+                        StatementAssignment castStmt = new StatementAssignment(
+                           (LValue) byteIdxVar.getRef(),
+                           Operators.getCastUnary(SymbolType.BYTE),
+                           deref.getIndex(),
+                           true,
+                           currentStmt.getSource(),
+                           Comment.NO_COMMENTS
+                        );
+                        stmtIt.previous();
+                        stmtIt.add(castStmt);
+                        stmtIt.next();
+                        indexToMultiply = byteIdxVar.getRef();
+                        type = SymbolType.BYTE;
+                     }
                      Variable idx2Var = VariableBuilder.createIntermediate(scope, type, getProgram());
                      ConstantRef sizeOfTargetType = SizeOfConstants.getSizeOfConstantVar(getProgram().getScope(), pointerType.getElementType());
-                     StatementAssignment idx2 = new StatementAssignment((LValue) idx2Var.getRef(), deref.getIndex(), Operators.MULTIPLY, sizeOfTargetType, true, currentStmt.getSource(), Comment.NO_COMMENTS);
+                     StatementAssignment idx2 = new StatementAssignment((LValue) idx2Var.getRef(), indexToMultiply, Operators.MULTIPLY, sizeOfTargetType, true, currentStmt.getSource(), Comment.NO_COMMENTS);
                      stmtIt.previous();
                      stmtIt.add(idx2);
                      stmtIt.next();
@@ -213,6 +233,57 @@ public class Pass1PointerSizeofFix extends Pass1Base {
          final SymbolType toType = ((ConstantCastValue) pointer).getToType();
          if(toType instanceof SymbolTypePointer) {
             return (SymbolTypePointer) toType;
+         }
+      }
+      return null;
+   }
+
+   private Long getArrayTotalBytes(RValue pointer) {
+      SymbolVariableRef symbolRef = null;
+      if(pointer instanceof SymbolVariableRef) {
+         symbolRef = (SymbolVariableRef) pointer;
+      } else if(pointer instanceof ConstantSymbolPointer) {
+         SymbolRef sym = ((ConstantSymbolPointer) pointer).getToSymbol();
+         if(sym instanceof SymbolVariableRef) {
+            symbolRef = (SymbolVariableRef) sym;
+         }
+      } else if(pointer instanceof ConstantCastValue) {
+         return getArrayTotalBytes(((ConstantCastValue) pointer).getValue());
+      } else if(pointer instanceof CastValue) {
+         return getArrayTotalBytes(((CastValue) pointer).getValue());
+      }
+      if(symbolRef != null) {
+         Variable var = getProgramScope().getVariable(symbolRef);
+         if(var != null && var.isArray()) {
+            SymbolType type = var.getType();
+            if(type instanceof SymbolTypePointer) {
+               SymbolType elemType = ((SymbolTypePointer) type).getElementType();
+               int elemBytes = elemType.getSizeBytes();
+               if(var.getArraySize() != null) {
+                  try {
+                     ConstantLiteral lit = var.getArraySize().calculateLiteral(getProgramScope());
+                     if(lit instanceof ConstantInteger) {
+                        return ((ConstantInteger) lit).getInteger() * elemBytes;
+                     }
+                  } catch(Exception e) {
+                     // ignore
+                  }
+               }
+               ConstantValue initValue = var.getInitValue();
+               if(initValue instanceof ConstantArrayList) {
+                  return (long) ((ConstantArrayList) initValue).getElements().size() * elemBytes;
+               }
+               if(initValue instanceof ConstantArrayFilled) {
+                  try {
+                     ConstantLiteral lit = ((ConstantArrayFilled) initValue).getSize().calculateLiteral(getProgramScope());
+                     if(lit instanceof ConstantInteger) {
+                        return ((ConstantInteger) lit).getInteger() * elemBytes;
+                     }
+                  } catch(Exception e) {
+                     // ignore
+                  }
+               }
+            }
          }
       }
       return null;

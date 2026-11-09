@@ -567,7 +567,7 @@ public class Pass4CodeGeneration {
                 // Add any comments
                 generateComments(asm, constantVar.getComments());
                 // Add any alignment
-                Integer declaredAlignment = constantVar.getMemoryAlignment();
+                Integer declaredAlignment = getEffectiveAlignment(constantVar);
                 if (declaredAlignment != null) {
                     String alignment = AsmFormat.getAsmNumber(declaredAlignment);
                     asm.addDataAlignment(alignment);
@@ -612,7 +612,7 @@ public class Pass4CodeGeneration {
                 // Add any comments
                 generateComments(asm, constantVar.getComments());
                 // Add any alignment
-                Integer declaredAlignment = constantVar.getMemoryAlignment();
+                Integer declaredAlignment = getEffectiveAlignment(constantVar);
                 if (declaredAlignment != null) {
                     String alignment = AsmFormat.getAsmNumber(declaredAlignment);
                     asm.addDataAlignment(alignment);
@@ -652,7 +652,7 @@ public class Pass4CodeGeneration {
                             asm.addLabelDecl(asmSymbolName, mainAsmName);
                         } else {
                             // Add any alignment
-                            Integer declaredAlignment = variable.getMemoryAlignment();
+                            Integer declaredAlignment = getEffectiveAlignment(variable);
                             if (declaredAlignment != null) {
                                 String alignment = AsmFormat.getAsmNumber(declaredAlignment);
                                 asm.addDataAlignment(alignment);
@@ -1259,6 +1259,52 @@ public class Pass4CodeGeneration {
 
     private boolean isRegisterCopy(LValue lValue, RValue rValue) {
         return getRegister(lValue) != null && getRegister(rValue) != null && getRegister(lValue).equals(getRegister(rValue));
+    }
+
+    private Integer getEffectiveAlignment(Variable var) {
+        if(var.getMemoryAlignment() != null) {
+            return var.getMemoryAlignment();
+        }
+        if(var.isArray() && var.getMemoryAddress() == null) {
+            Long totalBytes = getArrayTotalBytes(var);
+            if(totalBytes != null && totalBytes >= 64L && totalBytes <= 256L) {
+                return 256;
+            }
+        }
+        return null;
+    }
+
+    private Long getArrayTotalBytes(Variable var) {
+        SymbolType type = var.getType();
+        if(type instanceof SymbolTypePointer) {
+            SymbolType elemType = ((SymbolTypePointer) type).getElementType();
+            int elemBytes = elemType.getSizeBytes();
+            if(var.getArraySize() != null) {
+                try {
+                    ConstantLiteral lit = var.getArraySize().calculateLiteral(program.getScope());
+                    if(lit instanceof ConstantInteger) {
+                        return ((ConstantInteger) lit).getInteger() * elemBytes;
+                    }
+                } catch(Exception e) {
+                    // ignore
+                }
+            }
+            ConstantValue initValue = var.getInitValue();
+            if(initValue instanceof ConstantArrayList) {
+                return (long) ((ConstantArrayList) initValue).getElements().size() * elemBytes;
+            }
+            if(initValue instanceof ConstantArrayFilled) {
+                try {
+                    ConstantLiteral lit = ((ConstantArrayFilled) initValue).getSize().calculateLiteral(program.getScope());
+                    if(lit instanceof ConstantInteger) {
+                        return ((ConstantInteger) lit).getInteger() * elemBytes;
+                    }
+                } catch(Exception e) {
+                    // ignore
+                }
+            }
+        }
+        return null;
     }
 
 }
