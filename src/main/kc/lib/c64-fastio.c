@@ -85,7 +85,7 @@ bool fastio_save(uint8_t filenumber, const void* src, uint16_t length) {
         lda filenumber
         jsr SaveFile
     }};
-    return (fastio_zp_fileOpen != 0);
+    return true;
 }
 
 void fastio_set_sprite_range(uint8_t top_y, uint8_t bottom_y) {
