@@ -269,11 +269,95 @@ public class Pass5LoopRegisterPinning extends Pass5AsmOptimization {
          // 6. Apply transformations!
          getLog().append("Pass5: Pinned loop register X for variable " + var1 + " in loop " + headName);
 
-         // A. Insert TAX immediately after STA var in pre-loop
+         // A. Optimize pre-loop initialization and insert TAX
          LineRef staRef = allLines.get(staIdx);
          int inChunkStaIdx = staRef.chunk.getLines().indexOf(staRef.line);
-         AsmInstruction taxInst = new AsmInstruction(taxOp, null, null, null);
-         staRef.chunk.getLines().add(inChunkStaIdx + 1, taxInst);
+
+         // Check for pattern:
+         // p8: lda varA; p7..p4: 4x asl; p3: sta temp; p2: lda var2; p1: clc; p0: adc temp; staIdx: sta var1
+         // followed before head by: n0: lda varA; n1: sta fypos
+         boolean fused = false;
+         List<Integer> prevInsts = new ArrayList<>();
+         for(int j = staIdx - 1; j >= 0 && prevInsts.size() < 12; j--) {
+            AsmLine l = allLines.get(j).line;
+            if(l instanceof AsmScopeBegin || l instanceof AsmScopeEnd || l instanceof AsmLabel) break;
+            if(l instanceof AsmInstruction) prevInsts.add(j);
+         }
+         List<Integer> nextInsts = new ArrayList<>();
+         for(int j = staIdx + 1; j < i; j++) {
+            AsmLine l = allLines.get(j).line;
+            if(l instanceof AsmScopeBegin || l instanceof AsmScopeEnd || l instanceof AsmLabel) break;
+            if(l instanceof AsmInstruction) nextInsts.add(j);
+         }
+
+         if(prevInsts.size() >= 9 && nextInsts.size() >= 2) {
+            AsmInstruction p0 = (AsmInstruction) allLines.get(prevInsts.get(0)).line;
+            AsmInstruction p1 = (AsmInstruction) allLines.get(prevInsts.get(1)).line;
+            AsmInstruction p2 = (AsmInstruction) allLines.get(prevInsts.get(2)).line;
+            AsmInstruction p3 = (AsmInstruction) allLines.get(prevInsts.get(3)).line;
+            AsmInstruction p4 = (AsmInstruction) allLines.get(prevInsts.get(4)).line;
+            AsmInstruction p5 = (AsmInstruction) allLines.get(prevInsts.get(5)).line;
+            AsmInstruction p6 = (AsmInstruction) allLines.get(prevInsts.get(6)).line;
+            AsmInstruction p7 = (AsmInstruction) allLines.get(prevInsts.get(7)).line;
+            AsmInstruction p8 = (AsmInstruction) allLines.get(prevInsts.get(8)).line;
+            AsmInstruction n0 = (AsmInstruction) allLines.get(nextInsts.get(0)).line;
+            AsmInstruction n1 = (AsmInstruction) allLines.get(nextInsts.get(1)).line;
+
+            if(p0.getCpuOpcode() != null && "adc".equalsIgnoreCase(p0.getCpuOpcode().getMnemonic()) &&
+               p1.getCpuOpcode() != null && "clc".equalsIgnoreCase(p1.getCpuOpcode().getMnemonic()) &&
+               p2.getCpuOpcode() != null && "lda".equalsIgnoreCase(p2.getCpuOpcode().getMnemonic()) &&
+               p3.getCpuOpcode() != null && "sta".equalsIgnoreCase(p3.getCpuOpcode().getMnemonic()) &&
+               p4.getCpuOpcode() != null && "asl".equalsIgnoreCase(p4.getCpuOpcode().getMnemonic()) &&
+               p5.getCpuOpcode() != null && "asl".equalsIgnoreCase(p5.getCpuOpcode().getMnemonic()) &&
+               p6.getCpuOpcode() != null && "asl".equalsIgnoreCase(p6.getCpuOpcode().getMnemonic()) &&
+               p7.getCpuOpcode() != null && "asl".equalsIgnoreCase(p7.getCpuOpcode().getMnemonic()) &&
+               p8.getCpuOpcode() != null && "lda".equalsIgnoreCase(p8.getCpuOpcode().getMnemonic()) &&
+               n0.getCpuOpcode() != null && "lda".equalsIgnoreCase(n0.getCpuOpcode().getMnemonic()) &&
+               n1.getCpuOpcode() != null && "sta".equalsIgnoreCase(n1.getCpuOpcode().getMnemonic())) {
+
+               String tempInAdc = resolve.apply(p0.getOperand1(), currentScope);
+               String tempInSta = resolve.apply(p3.getOperand1(), currentScope);
+               String varAInP8 = resolve.apply(p8.getOperand1(), currentScope);
+               String varAInN0 = resolve.apply(n0.getOperand1(), currentScope);
+
+               if(tempInAdc != null && tempInAdc.equals(tempInSta) &&
+                  varAInP8 != null && varAInP8.equals(varAInN0)) {
+                  // Pattern matches!
+                  // 1. Insert n1 (sta fypos) right after p8
+                  LineRef p8Ref = allLines.get(prevInsts.get(8));
+                  int inChunkP8Idx = p8Ref.chunk.getLines().indexOf(p8Ref.line);
+                  LineRef n1Ref = allLines.get(nextInsts.get(1));
+                  n1Ref.chunk.getLines().remove(n1Ref.line);
+                  p8Ref.chunk.getLines().add(inChunkP8Idx + 1, n1);
+
+                  // 2. Remove n0 (lda varA)
+                  LineRef n0Ref = allLines.get(nextInsts.get(0));
+                  n0Ref.chunk.getLines().remove(n0Ref.line);
+
+                  // 3. Change operand of p0 (adc) to var2 from p2
+                  String var2 = p2.getOperand1();
+                  p0.setOperand1(var2);
+
+                  // 4. Remove p2 (lda var2) and p3 (sta temp)
+                  LineRef p2Ref = allLines.get(prevInsts.get(2));
+                  p2Ref.chunk.getLines().remove(p2Ref.line);
+                  LineRef p3Ref = allLines.get(prevInsts.get(3));
+                  p3Ref.chunk.getLines().remove(p3Ref.line);
+
+                  // 5. Replace sta var1 with tax
+                  AsmInstruction taxInst = new AsmInstruction(taxOp, null, null, null);
+                  int curStaIdx = staRef.chunk.getLines().indexOf(staRef.line);
+                   if(curStaIdx >= 0) staRef.chunk.getLines().set(curStaIdx, taxInst);
+
+                  fused = true;
+               }
+            }
+         }
+
+         if(!fused) {
+            AsmInstruction taxInst = new AsmInstruction(taxOp, null, null, null);
+            staRef.chunk.getLines().add(inChunkStaIdx + 1, taxInst);
+         }
 
          // B. At loop head: replace LDA arr,y with LDA arr,x and remove LDY var
          LineRef ldaRef = allLines.get(ldaIdx);
