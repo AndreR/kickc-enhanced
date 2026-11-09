@@ -894,6 +894,7 @@ public class Compiler {
       pass5Optimizations.add(new Pass5PointerToSmcOptimization(program));
       pass5Optimizations.add(new Pass5SmallMemcpyUnrollingOptimization(program));
       pass5Optimizations.add(new Pass5PointerReloadElimination(program));
+      pass5Optimizations.add(new Pass5LoopRegisterPinning(program));
       pass5Optimizations.add(new Pass5PageAlignedPointerAdditionElimination(program));
       pass5Optimizations.add(new Pass5TailCallOptimization(program));
       pass5Optimizations.add(new Pass5DuplicateBlockElimination(program));
