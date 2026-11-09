@@ -1,0 +1,11 @@
+lda {m3}
+sta $fe
+lda {m3}+1
+sta $ff
+lda ($fe),y
+ldy {m1}
+sty $fe
+ldy {m1}+1
+sty $ff
+ldy {z2}
+sta ($fe),y

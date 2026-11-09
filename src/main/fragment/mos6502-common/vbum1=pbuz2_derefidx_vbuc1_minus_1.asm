@@ -1,0 +1,5 @@
+ldy #{c1}
+lda ({z2}),y
+sec
+sbc #1
+sta {m1}
