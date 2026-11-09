@@ -389,10 +389,14 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
             if(ref.line instanceof AsmInstruction inst && "rts".equalsIgnoreCase(inst.getCpuOpcode().getMnemonic())) {
                rtsCount++;
                int prevIdx = i - 1;
+               boolean hasLabel = false;
                while(prevIdx >= 0 && !(allLines.get(prevIdx).line instanceof AsmInstruction)) {
+                  if(allLines.get(prevIdx).line instanceof AsmLabel) {
+                     hasLabel = true;
+                  }
                   prevIdx--;
                }
-               if(prevIdx < 0 || !(allLines.get(prevIdx).line instanceof AsmInstruction)) {
+               if(hasLabel || prevIdx < 0 || !(allLines.get(prevIdx).line instanceof AsmInstruction)) {
                   return false;
                }
                AsmInstruction prevInst = (AsmInstruction) allLines.get(prevIdx).line;
