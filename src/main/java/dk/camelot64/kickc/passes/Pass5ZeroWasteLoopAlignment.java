@@ -49,6 +49,24 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
          return false;
       }
 
+      // Collect segments that have a fixed start address (where PC '*' can evaluate during KickAss pass 1)
+      Set<String> fixedSegments = new HashSet<>();
+      try {
+         String linkScript = getProgram().getTargetPlatform().getLinkScriptBody();
+         if(linkScript != null) {
+            java.util.regex.Pattern p = java.util.regex.Pattern.compile("\\.segmentdef\\s+([A-Za-z0-9_]+)\\s*\\[([^\\]]*)\\]");
+            java.util.regex.Matcher m = p.matcher(linkScript);
+            while(m.find()) {
+               String segName = m.group(1);
+               String params = m.group(2);
+               if(params.contains("start=") && !params.contains("startAfter=")) {
+                  fixedSegments.add(segName);
+               }
+            }
+         }
+      } catch(Exception ignored) {
+      }
+
       // Collect all lines with scope, segment, and linear byte offset
       List<LineRef> allLines = new ArrayList<>();
       String currentScope = null;
@@ -114,6 +132,10 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
                   if(targetRef != null && targetRef.offset < branchRef.offset) {
                      // Check segment compatibility
                      if(targetRef.segment != null && targetRef.segment.equals(branchRef.segment)) {
+                        // Only align loops in segments with a fixed start address where PC '*' can be evaluated at first parse
+                        if(!fixedSegments.isEmpty() && !fixedSegments.contains(targetRef.segment)) {
+                           continue;
+                        }
                         // Verify that all lines within the loop are contiguous in the same segment without data chunks
                         boolean validLoop = true;
                         for(int k = targetRef.index; k <= branchRef.index; k++) {
