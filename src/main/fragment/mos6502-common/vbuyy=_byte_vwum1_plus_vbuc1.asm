@@ -1,4 +1,4 @@
-lda {m1}
 clc
+lda {m1}
 adc #{c1}
 tay
