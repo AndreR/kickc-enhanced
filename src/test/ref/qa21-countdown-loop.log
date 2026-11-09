@@ -1,0 +1,502 @@
+
+CONTROL FLOW GRAPH SSA
+
+void test_simple_countdown()
+test_simple_countdown: scope:[test_simple_countdown]  from main
+  test_simple_countdown::i#0 = $27
+  to:test_simple_countdown::@1
+test_simple_countdown::@1: scope:[test_simple_countdown]  from test_simple_countdown test_simple_countdown::@1
+  test_simple_countdown::i#2 = phi( test_simple_countdown/test_simple_countdown::i#0, test_simple_countdown::@1/test_simple_countdown::i#1 )
+  screen[test_simple_countdown::i#2] = $20
+  test_simple_countdown::i#1 = test_simple_countdown::i#2 - 1
+  test_simple_countdown::$0 = test_simple_countdown::i#1 >= 0
+  if(test_simple_countdown::$0) goto test_simple_countdown::@1
+  to:test_simple_countdown::@return
+test_simple_countdown::@return: scope:[test_simple_countdown]  from test_simple_countdown::@1
+  return 
+  to:@return
+
+void test_array_countdown()
+test_array_countdown: scope:[test_array_countdown]  from main::@7
+  test_array_countdown::i#0 = 9
+  to:test_array_countdown::@1
+test_array_countdown::@1: scope:[test_array_countdown]  from test_array_countdown test_array_countdown::@1
+  test_array_countdown::i#2 = phi( test_array_countdown/test_array_countdown::i#0, test_array_countdown::@1/test_array_countdown::i#1 )
+  test_array_countdown::$0 = test_array_countdown::i#2 + 1
+  buffer[test_array_countdown::i#2] = (char)test_array_countdown::$0
+  test_array_countdown::i#1 = test_array_countdown::i#2 - 1
+  test_array_countdown::$1 = test_array_countdown::i#1 >= 0
+  if(test_array_countdown::$1) goto test_array_countdown::@1
+  to:test_array_countdown::@return
+test_array_countdown::@return: scope:[test_array_countdown]  from test_array_countdown::@1
+  return 
+  to:@return
+
+void main()
+main: scope:[main]  from __start
+  call test_simple_countdown
+  to:main::@7
+main::@7: scope:[main]  from main
+  call test_array_countdown
+  to:main::@8
+main::@8: scope:[main]  from main::@7
+  main::pass#0 = 1
+  main::$2 = screen[0] != $20
+  main::$3 = screen[$27] != $20
+  main::$4 = main::$2 || main::$3
+  main::$5 = ! main::$4
+  if(main::$5) goto main::@1
+  to:main::@4
+main::@1: scope:[main]  from main::@4 main::@8
+  main::pass#4 = phi( main::@4/main::pass#1, main::@8/main::pass#0 )
+  main::$6 = buffer[0] != 1
+  main::$7 = buffer[9] != $a
+  main::$8 = main::$6 || main::$7
+  main::$9 = ! main::$8
+  if(main::$9) goto main::@2
+  to:main::@5
+main::@4: scope:[main]  from main::@8
+  main::pass#1 = 0
+  to:main::@1
+main::@2: scope:[main]  from main::@1 main::@5
+  main::pass#3 = phi( main::@1/main::pass#4, main::@5/main::pass#2 )
+  main::$10 = 0 != main::pass#3
+  if(main::$10) goto main::@3
+  to:main::@6
+main::@5: scope:[main]  from main::@1
+  main::pass#2 = 0
+  to:main::@2
+main::@3: scope:[main]  from main::@2
+  *((char *)$d020) = 5
+  screen[0] = 'P'
+  screen[1] = 'A'
+  screen[2] = 'S'
+  screen[3] = 'S'
+  to:main::@return
+main::@6: scope:[main]  from main::@2
+  *((char *)$d020) = 2
+  screen[0] = 'F'
+  screen[1] = 'A'
+  screen[2] = 'I'
+  screen[3] = 'L'
+  to:main::@return
+main::@return: scope:[main]  from main::@3 main::@6
+  return 
+  to:@return
+
+void __start()
+__start: scope:[__start]  from
+  call main
+  to:__start::@1
+__start::@1: scope:[__start]  from __start
+  to:__start::@return
+__start::@return: scope:[__start]  from __start::@1
+  return 
+  to:@return
+
+SYMBOL TABLE SSA
+void __start()
+__constant char buffer[$10] = { fill( $10, 0) }
+void main()
+bool main::$10
+bool main::$2
+bool main::$3
+bool main::$4
+bool main::$5
+bool main::$6
+bool main::$7
+bool main::$8
+bool main::$9
+char main::pass
+char main::pass#0
+char main::pass#1
+char main::pass#2
+char main::pass#3
+char main::pass#4
+__constant volatile char * const screen = (char *)$400
+void test_array_countdown()
+number test_array_countdown::$0
+bool test_array_countdown::$1
+signed char test_array_countdown::i
+signed char test_array_countdown::i#0
+signed char test_array_countdown::i#1
+signed char test_array_countdown::i#2
+void test_simple_countdown()
+bool test_simple_countdown::$0
+signed char test_simple_countdown::i
+signed char test_simple_countdown::i#0
+signed char test_simple_countdown::i#1
+signed char test_simple_countdown::i#2
+
+Adding number conversion cast (unumber) $20 in screen[test_simple_countdown::i#2] = $20
+Adding number conversion cast (snumber) 1 in test_array_countdown::$0 = test_array_countdown::i#2 + 1
+Adding number conversion cast (snumber) test_array_countdown::$0 in test_array_countdown::$0 = test_array_countdown::i#2 + (snumber)1
+Adding number conversion cast (unumber) $20 in main::$2 = screen[0] != $20
+Adding number conversion cast (unumber) 0 in main::$2 = screen[0] != (unumber)$20
+Adding number conversion cast (unumber) $20 in main::$3 = screen[$27] != $20
+Adding number conversion cast (unumber) $27 in main::$3 = screen[$27] != (unumber)$20
+Adding number conversion cast (unumber) 1 in main::$6 = buffer[0] != 1
+Adding number conversion cast (unumber) 0 in main::$6 = buffer[0] != (unumber)1
+Adding number conversion cast (unumber) $a in main::$7 = buffer[9] != $a
+Adding number conversion cast (unumber) 9 in main::$7 = buffer[9] != (unumber)$a
+Adding number conversion cast (unumber) 0 in main::pass#1 = 0
+Adding number conversion cast (unumber) 0 in main::$10 = 0 != main::pass#3
+Adding number conversion cast (unumber) 0 in main::pass#2 = 0
+Adding number conversion cast (unumber) 5 in *((char *)$d020) = 5
+Adding number conversion cast (unumber) 0 in screen[0] = 'P'
+Adding number conversion cast (unumber) 1 in screen[1] = 'A'
+Adding number conversion cast (unumber) 2 in screen[2] = 'S'
+Adding number conversion cast (unumber) 3 in screen[3] = 'S'
+Adding number conversion cast (unumber) 2 in *((char *)$d020) = 2
+Adding number conversion cast (unumber) 0 in screen[0] = 'F'
+Adding number conversion cast (unumber) 1 in screen[1] = 'A'
+Adding number conversion cast (unumber) 2 in screen[2] = 'I'
+Adding number conversion cast (unumber) 3 in screen[3] = 'L'
+Successful SSA optimization PassNAddNumberTypeConversions
+Inlining cast screen[test_simple_countdown::i#2] = (unumber)$20
+Inlining cast main::pass#1 = (unumber)0
+Inlining cast main::pass#2 = (unumber)0
+Inlining cast *((char *)$d020) = (unumber)5
+Inlining cast *((char *)$d020) = (unumber)2
+Successful SSA optimization Pass2InlineCast
+Simplifying constant pointer cast (char *) 1024
+Simplifying constant integer cast $20
+Simplifying constant integer cast 1
+Simplifying constant integer cast 0
+Simplifying constant integer cast $20
+Simplifying constant integer cast $27
+Simplifying constant integer cast $20
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 9
+Simplifying constant integer cast $a
+Simplifying constant integer cast 0
+Simplifying constant integer cast 0
+Simplifying constant integer cast 0
+Simplifying constant integer cast 5
+Simplifying constant pointer cast (char *) 53280
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 2
+Simplifying constant integer cast 3
+Simplifying constant integer cast 2
+Simplifying constant pointer cast (char *) 53280
+Simplifying constant integer cast 0
+Simplifying constant integer cast 1
+Simplifying constant integer cast 2
+Simplifying constant integer cast 3
+Successful SSA optimization PassNCastSimplification
+Finalized unsigned number type (char) $20
+Finalized signed number type (signed char) 1
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (char) $20
+Finalized unsigned number type (char) $27
+Finalized unsigned number type (char) $20
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 9
+Finalized unsigned number type (uint4_t) $a
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 5
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 2
+Finalized unsigned number type (uint4_t) 3
+Finalized unsigned number type (uint4_t) 2
+Finalized unsigned number type (uint4_t) 0
+Finalized unsigned number type (uint4_t) 1
+Finalized unsigned number type (uint4_t) 2
+Finalized unsigned number type (uint4_t) 3
+Successful SSA optimization PassNFinalizeNumberTypeConversions
+Inferred type updated to signed char in test_array_countdown::$0 = test_array_countdown::i#2 + 1
+Simple Condition test_simple_countdown::$0 [5] if(test_simple_countdown::i#1>=0) goto test_simple_countdown::@1
+Simple Condition test_array_countdown::$1 [13] if(test_array_countdown::i#1>=0) goto test_array_countdown::@1
+Simple Condition main::$10 [32] if(0!=main::pass#3) goto main::@3
+Successful SSA optimization Pass2ConditionalJumpSimplification
+Rewriting ! if()-condition to reversed if() [21] main::$5 = ! main::$4
+Rewriting || if()-condition to two if()s [20] main::$4 = main::$2 || main::$3
+Rewriting ! if()-condition to reversed if() [27] main::$9 = ! main::$8
+Rewriting || if()-condition to two if()s [26] main::$8 = main::$6 || main::$7
+Successful SSA optimization Pass2ConditionalAndOrRewriting
+Constant test_simple_countdown::i#0 = $27
+Constant test_array_countdown::i#0 = 9
+Constant main::pass#0 = 1
+Constant main::pass#1 = 0
+Constant main::pass#2 = 0
+Successful SSA optimization Pass2ConstantIdentification
+Simplifying expression containing zero screen in [18] main::$2 = screen[0] != $20
+Simplifying expression containing zero buffer in [24] main::$6 = buffer[0] != 1
+Simplifying expression containing zero screen in [35] screen[0] = 'P'
+Simplifying expression containing zero screen in [40] screen[0] = 'F'
+Successful SSA optimization PassNSimplifyExpressionWithZero
+Removing unused procedure __start
+Removing unused procedure block __start
+Removing unused procedure block __start::@1
+Removing unused procedure block __start::@return
+Successful SSA optimization PassNEliminateEmptyStart
+Simple Condition main::$2 [15] if(*screen!=$20) goto main::@4
+Simple Condition main::$6 [19] if(*buffer!=1) goto main::@5
+Simple Condition main::$3 [33] if(screen[$27]!=$20) goto main::@4
+Simple Condition main::$7 [34] if(buffer[9]!=$a) goto main::@5
+Successful SSA optimization Pass2ConditionalJumpSimplification
+Negating conditional jump and destination [33] if(screen[$27]==$20) goto main::@1
+Negating conditional jump and destination [34] if(buffer[9]==$a) goto main::@2
+Successful SSA optimization Pass2ConditionalJumpSequenceImprovement
+Inlining constant with var siblings test_simple_countdown::i#0
+Inlining constant with var siblings test_array_countdown::i#0
+Inlining constant with var siblings main::pass#0
+Inlining constant with var siblings main::pass#1
+Inlining constant with var siblings main::pass#2
+Constant inlined test_simple_countdown::i#0 = $27
+Constant inlined main::pass#2 = 0
+Constant inlined main::pass#1 = 0
+Constant inlined main::pass#0 = 1
+Constant inlined test_array_countdown::i#0 = 9
+Successful SSA optimization Pass2ConstantInlining
+Consolidated array index constant in *(screen+1)
+Consolidated array index constant in *(screen+2)
+Consolidated array index constant in *(screen+3)
+Consolidated array index constant in *(screen+1)
+Consolidated array index constant in *(screen+2)
+Consolidated array index constant in *(screen+3)
+Consolidated array index constant in *(screen+$27)
+Consolidated array index constant in *(buffer+9)
+Successful SSA optimization Pass2ConstantAdditionElimination
+Finalized unsigned number type (char) $10
+Finalized unsigned number type (char) $10
+Successful SSA optimization PassNFinalizeNumberTypeConversions
+Added new block during phi lifting test_simple_countdown::@2(between test_simple_countdown::@1 and test_simple_countdown::@1)
+Added new block during phi lifting test_array_countdown::@2(between test_array_countdown::@1 and test_array_countdown::@1)
+Added new block during phi lifting main::@11(between main::@10 and main::@2)
+Adding NOP phi() at start of main
+Adding NOP phi() at start of main::@7
+Adding NOP phi() at start of main::@4
+Adding NOP phi() at start of main::@5
+Adding NOP phi() at start of test_simple_countdown
+Adding NOP phi() at start of test_array_countdown
+CALL GRAPH
+Calls in [main] to test_simple_countdown:1 test_array_countdown:3 
+
+Created 4 initial phi equivalence classes
+Coalesced [24] main::pass#5 = main::pass#4
+Coalesced [31] test_simple_countdown::i#3 = test_simple_countdown::i#1
+Coalesced [39] test_array_countdown::i#3 = test_array_countdown::i#1
+Coalesced down to 3 phi equivalence classes
+Culled Empty Block label main::@5
+Culled Empty Block label test_simple_countdown::@2
+Culled Empty Block label test_array_countdown::@2
+Renumbering block main::@6 to main::@5
+Renumbering block main::@7 to main::@6
+Renumbering block main::@8 to main::@7
+Renumbering block main::@9 to main::@8
+Renumbering block main::@10 to main::@9
+Renumbering block main::@11 to main::@10
+Adding NOP phi() at start of main
+Adding NOP phi() at start of main::@6
+Adding NOP phi() at start of main::@4
+Adding NOP phi() at start of main::@10
+Adding NOP phi() at start of test_simple_countdown
+Adding NOP phi() at start of test_array_countdown
+
+FINAL CONTROL FLOW GRAPH
+
+void main()
+main: scope:[main]  from
+  [0] phi()
+  [1] call test_simple_countdown
+  to:main::@6
+main::@6: scope:[main]  from main
+  [2] phi()
+  [3] call test_array_countdown
+  to:main::@7
+main::@7: scope:[main]  from main::@6
+  [4] if(*screen!=$20) goto main::@4
+  to:main::@8
+main::@8: scope:[main]  from main::@7
+  [5] if(*(screen+$27)==$20) goto main::@1
+  to:main::@4
+main::@4: scope:[main]  from main::@7 main::@8
+  [6] phi()
+  to:main::@1
+main::@1: scope:[main]  from main::@4 main::@8
+  [7] main::pass#4 = phi( main::@4/0, main::@8/1 )
+  [8] if(*buffer!=1) goto main::@2
+  to:main::@9
+main::@9: scope:[main]  from main::@1
+  [9] if(*(buffer+9)==$a) goto main::@10
+  to:main::@2
+main::@10: scope:[main]  from main::@9
+  [10] phi()
+  to:main::@2
+main::@2: scope:[main]  from main::@1 main::@10 main::@9
+  [11] main::pass#3 = phi( main::@10/main::pass#4, main::@1/0, main::@9/0 )
+  [12] if(0!=main::pass#3) goto main::@3
+  to:main::@5
+main::@5: scope:[main]  from main::@2
+  [13] *((char *) 53280) = 2
+  [14] *screen = 'F'
+  [15] *(screen+1) = 'A'
+  [16] *(screen+2) = 'I'
+  [17] *(screen+3) = 'L'
+  to:main::@return
+main::@return: scope:[main]  from main::@3 main::@5
+  [18] return 
+  to:@return
+main::@3: scope:[main]  from main::@2
+  [19] *((char *) 53280) = 5
+  [20] *screen = 'P'
+  [21] *(screen+1) = 'A'
+  [22] *(screen+2) = 'S'
+  [23] *(screen+3) = 'S'
+  to:main::@return
+
+void test_simple_countdown()
+test_simple_countdown: scope:[test_simple_countdown]  from main
+  [24] phi()
+  to:test_simple_countdown::@1
+test_simple_countdown::@1: scope:[test_simple_countdown]  from test_simple_countdown test_simple_countdown::@1
+  [25] test_simple_countdown::i#2 = phi( test_simple_countdown/$27, test_simple_countdown::@1/test_simple_countdown::i#1 )
+  [26] screen[test_simple_countdown::i#2] = $20
+  [27] test_simple_countdown::i#1 = test_simple_countdown::i#2 - 1
+  [28] if(test_simple_countdown::i#1>=0) goto test_simple_countdown::@1
+  to:test_simple_countdown::@return
+test_simple_countdown::@return: scope:[test_simple_countdown]  from test_simple_countdown::@1
+  [29] return 
+  to:@return
+
+void test_array_countdown()
+test_array_countdown: scope:[test_array_countdown]  from main::@6
+  [30] phi()
+  to:test_array_countdown::@1
+test_array_countdown::@1: scope:[test_array_countdown]  from test_array_countdown test_array_countdown::@1
+  [31] test_array_countdown::i#2 = phi( test_array_countdown/9, test_array_countdown::@1/test_array_countdown::i#1 )
+  [32] test_array_countdown::$0 = test_array_countdown::i#2 + 1
+  [33] buffer[test_array_countdown::i#2] = (char)test_array_countdown::$0
+  [34] test_array_countdown::i#1 = test_array_countdown::i#2 - 1
+  [35] if(test_array_countdown::i#1>=0) goto test_array_countdown::@1
+  to:test_array_countdown::@return
+test_array_countdown::@return: scope:[test_array_countdown]  from test_array_countdown::@1
+  [36] return 
+  to:@return
+
+Initial phi equivalence classes
+[ main::pass#3 main::pass#4 ]
+[ test_simple_countdown::i#2 test_simple_countdown::i#1 ]
+[ test_array_countdown::i#2 test_array_countdown::i#1 ]
+Added variable test_array_countdown::$0 to live range equivalence class [ test_array_countdown::$0 ]
+Complete equivalence classes
+[ main::pass#3 main::pass#4 ]
+[ test_simple_countdown::i#2 test_simple_countdown::i#1 ]
+[ test_array_countdown::i#2 test_array_countdown::i#1 ]
+[ test_array_countdown::$0 ]
+Allocated zp[1]:2 [ test_simple_countdown::i#2 test_simple_countdown::i#1 ]
+Allocated zp[1]:3 [ test_array_countdown::i#2 test_array_countdown::i#1 ]
+Allocated zp[1]:4 [ test_array_countdown::$0 ]
+Allocated zp[1]:5 [ main::pass#3 main::pass#4 ]
+REGISTER UPLIFT POTENTIAL REGISTERS
+Statement [4] if(*screen!=$20) goto main::@4 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [5] if(*(screen+$27)==$20) goto main::@1 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [8] if(*buffer!=1) goto main::@2 [ main::pass#4 ] (  [ main::pass#4 ] { }  ) always clobbers reg byte a 
+Removing always clobbered register reg byte a as potential for zp[1]:5 [ main::pass#3 main::pass#4 ]
+Statement [9] if(*(buffer+9)==$a) goto main::@10 [ main::pass#4 ] (  [ main::pass#4 ] { }  ) always clobbers reg byte a 
+Statement [13] *((char *) 53280) = 2 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [14] *screen = 'F' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [15] *(screen+1) = 'A' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [16] *(screen+2) = 'I' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [17] *(screen+3) = 'L' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [19] *((char *) 53280) = 5 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [20] *screen = 'P' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [21] *(screen+1) = 'A' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [22] *(screen+2) = 'S' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [23] *(screen+3) = 'S' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [26] screen[test_simple_countdown::i#2] = $20 [ test_simple_countdown::i#2 ] ( test_simple_countdown:1 [ test_simple_countdown::i#2 ] { }  ) always clobbers reg byte a 
+Removing always clobbered register reg byte a as potential for zp[1]:2 [ test_simple_countdown::i#2 test_simple_countdown::i#1 ]
+Statement [32] test_array_countdown::$0 = test_array_countdown::i#2 + 1 [ test_array_countdown::i#2 test_array_countdown::$0 ] ( test_array_countdown:3 [ test_array_countdown::i#2 test_array_countdown::$0 ] { }  ) always clobbers reg byte a 
+Removing always clobbered register reg byte a as potential for zp[1]:3 [ test_array_countdown::i#2 test_array_countdown::i#1 ]
+Statement [4] if(*screen!=$20) goto main::@4 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [5] if(*(screen+$27)==$20) goto main::@1 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [8] if(*buffer!=1) goto main::@2 [ main::pass#4 ] (  [ main::pass#4 ] { }  ) always clobbers reg byte a 
+Statement [9] if(*(buffer+9)==$a) goto main::@10 [ main::pass#4 ] (  [ main::pass#4 ] { }  ) always clobbers reg byte a 
+Statement [13] *((char *) 53280) = 2 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [14] *screen = 'F' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [15] *(screen+1) = 'A' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [16] *(screen+2) = 'I' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [17] *(screen+3) = 'L' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [19] *((char *) 53280) = 5 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [20] *screen = 'P' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [21] *(screen+1) = 'A' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [22] *(screen+2) = 'S' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [23] *(screen+3) = 'S' [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [26] screen[test_simple_countdown::i#2] = $20 [ test_simple_countdown::i#2 ] ( test_simple_countdown:1 [ test_simple_countdown::i#2 ] { }  ) always clobbers reg byte a 
+Statement [32] test_array_countdown::$0 = test_array_countdown::i#2 + 1 [ test_array_countdown::i#2 test_array_countdown::$0 ] ( test_array_countdown:3 [ test_array_countdown::i#2 test_array_countdown::$0 ] { }  ) always clobbers reg byte a 
+Potential registers zp[1]:5 [ main::pass#3 main::pass#4 ] : zp[1]:5 , reg byte x , reg byte y , 
+Potential registers zp[1]:2 [ test_simple_countdown::i#2 test_simple_countdown::i#1 ] : zp[1]:2 , reg byte x , reg byte y , 
+Potential registers zp[1]:3 [ test_array_countdown::i#2 test_array_countdown::i#1 ] : zp[1]:3 , reg byte x , reg byte y , 
+Potential registers zp[1]:4 [ test_array_countdown::$0 ] : zp[1]:4 , reg byte a , reg byte x , reg byte y , 
+
+REGISTER UPLIFT SCOPES
+Uplift Scope [test_array_countdown] 286.17: zp[1]:3 [ test_array_countdown::i#2 test_array_countdown::i#1 ] 101: zp[1]:4 [ test_array_countdown::$0 ] 
+Uplift Scope [test_simple_countdown] 303: zp[1]:2 [ test_simple_countdown::i#2 test_simple_countdown::i#1 ] 
+Uplift Scope [main] 4.5: zp[1]:5 [ main::pass#3 main::pass#4 ] 
+Uplift Scope [] 
+
+Uplifting [test_array_countdown] best 592 combination reg byte x [ test_array_countdown::i#2 test_array_countdown::i#1 ] reg byte a [ test_array_countdown::$0 ] 
+Uplifting [test_simple_countdown] best 492 combination reg byte x [ test_simple_countdown::i#2 test_simple_countdown::i#1 ] 
+Uplifting [main] best 482 combination reg byte x [ main::pass#3 main::pass#4 ] 
+Uplifting [] best 482 combination 
+Removing instruction jmp __b6
+Removing instruction jmp __b7
+Removing instruction jmp __b8
+Removing instruction jmp __b4
+Removing instruction jmp __b1
+Removing instruction jmp __b9
+Removing instruction jmp __b10
+Removing instruction jmp __b2
+Removing instruction jmp __b5
+Removing instruction jmp __breturn
+Removing instruction jmp __b1
+Removing instruction jmp __breturn
+Removing instruction jmp __b1
+Removing instruction jmp __breturn
+Removing instruction lda #'S'
+Eliminating redundant zero comparison cpx #0 before bpl __b1_from___b1
+Eliminating redundant zero comparison cpx #0 before bpl __b1_from___b1
+Optimizing JMP __b1 to .byte $2c (BIT $xxxx byte-skipper over ldx #1)
+Replacing label __b4_from___b7 with __b4
+Replacing label __b2_from___b1 with __b2_from___b9
+Replacing label __b10_from___b9 with __b2
+Replacing label __b1_from___b1 with __b1
+Replacing label __b1_from___b1 with __b1
+Removing instruction __b6_from_main:
+Removing instruction test_array_countdown_from___b6:
+Removing instruction __b4_from___b7:
+Removing instruction __b4_from___b8:
+Removing instruction __b1_from___b4:
+Removing instruction __b2_from___b1:
+Removing instruction __b10_from___b9:
+Removing instruction __b10:
+Removing instruction __b2_from___b10:
+Removing instruction __b1_from___b1:
+Removing instruction __b1_from___b1:
+Removing instruction test_simple_countdown_from_main:
+Removing instruction __b6:
+Removing instruction __b7:
+Removing instruction __b8:
+Removing instruction __b1:
+Removing instruction __b9:
+Removing instruction __b5:
+Removing instruction __b1_from_test_simple_countdown:
+Removing instruction __breturn:
+Removing instruction __b1_from_test_array_countdown:
+Removing instruction __breturn:
+Replacing jump to rts with rts in jmp __breturn
+Relabelling long label __b1_from___b8 to __b1
+Relabelling long label __b2_from___b9 to __b5
+Removing instruction jmp __b2
+Removing instruction jmp __b1
+Removing instruction jmp __b1
+Removing instruction lda #$20
+Replacing instruction lda #1 with TXA
+Removing instruction __breturn:

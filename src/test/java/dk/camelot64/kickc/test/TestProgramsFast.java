@@ -5340,4 +5340,10 @@ public class TestProgramsFast extends TestPrograms {
       assertError("qa19-multidim-array-err.c", "Multidimensional arrays are not supported");
    }
 
+   // QA-21: Countdown loop ASM optimization
+   @Test
+   public void testQa21CountdownLoop() throws IOException {
+      compileAndCompare("qa21-countdown-loop.c");
+   }
+
 }

@@ -1,0 +1,20 @@
+__constant char buffer[$10] = { fill( $10, 0) }
+void main()
+char main::pass
+char main::pass#3 // reg byte x 4.0
+char main::pass#4 // reg byte x 0.5
+__constant volatile char * const screen = (char *) 1024
+void test_array_countdown()
+signed char test_array_countdown::$0 // reg byte a 101.0
+signed char test_array_countdown::i
+signed char test_array_countdown::i#1 // reg byte x 151.5
+signed char test_array_countdown::i#2 // reg byte x 134.66666666666666
+void test_simple_countdown()
+signed char test_simple_countdown::i
+signed char test_simple_countdown::i#1 // reg byte x 151.5
+signed char test_simple_countdown::i#2 // reg byte x 151.5
+
+reg byte x [ main::pass#3 main::pass#4 ]
+reg byte x [ test_simple_countdown::i#2 test_simple_countdown::i#1 ]
+reg byte x [ test_array_countdown::i#2 test_array_countdown::i#1 ]
+reg byte a [ test_array_countdown::$0 ]
