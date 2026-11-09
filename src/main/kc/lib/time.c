@@ -5,6 +5,7 @@
 #include <c64.h>
 #include <division.h>
 #include <multiply.h>
+#include <bcd.h>
 
 static_assert(sizeof(struct tm) == 11, "struct tm layout changed");
 
@@ -43,7 +44,7 @@ const uint8_t MONTH_DAYS[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 
 static_assert(countof(MONTH_DAYS) == 12);
 
 // Days from January 1 to the first of each month in a non-leap year
-const uint16_t DAYS_BEFORE_MONTH[12] = { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
+__lohi const uint16_t DAYS_BEFORE_MONTH[12] = { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
 static_assert(countof(DAYS_BEFORE_MONTH) == countof(MONTH_DAYS));
 
 // 3-letter abbreviations, concatenated: entry i starts at i*3
@@ -93,17 +94,6 @@ static time_t time_day_base = 0;
 // Seconds since midnight at the last time() call; used to detect midnight rollover
 static uint32_t time_last_sod = 0;
 
-// Converts a packed BCD byte to binary
-static uint8_t bcd2bin(uint8_t b) {
-    return (b >> 4) * 10 + (b & 0x0f);
-}
-
-// Converts a binary number 0..99 to packed BCD
-static uint8_t bin2bcd(uint8_t v) {
-    uint8_t tens = v / 10;
-    return (tens << 4) | (v - tens * 10);
-}
-
 // Returns the current calendar time as seconds since the epoch, read from the CIA#1 TOD clock.
 time_t time(time_t* timer) {
     // Reading the hours latches the clock, reading the tenths releases the latch again
@@ -111,12 +101,12 @@ time_t time(time_t* timer) {
     uint8_t m = CIA1->TOD_MIN;
     uint8_t s = CIA1->TOD_SEC;
     asm(clobbers "A") { lda $dc08 }
-    uint8_t hr = bcd2bin(h & 0x1f);
+    uint8_t hr = bcd8_to_bin(h & 0x1f);
     if (hr == 12) hr = 0;
     if (h & 0x80) hr += 12;
     uint32_t sod = mul16u(hr, SECS_PER_HOUR);
-    sod += (uint16_t)bcd2bin(m) * SECS_PER_MINUTE;
-    sod += bcd2bin(s);
+    sod += (uint16_t)bcd8_to_bin(m) * SECS_PER_MINUTE;
+    sod += bcd8_to_bin(s);
     if (sod < time_last_sod) time_day_base += SECS_PER_DAY;
     time_last_sod = sod;
     time_t now = time_day_base + sod;
@@ -137,14 +127,14 @@ void set_time(time_t t) {
     // The TOD registers are 12-hour BCD with the PM flag in bit 7
     uint8_t h12 = h % 12;
     if (h12 == 0) h12 = 12;
-    uint8_t hb = bin2bcd(h12);
+    uint8_t hb = bin_to_bcd8(h12);
     if (h >= 12) hb |= 0x80;
     // Make sure the TOD registers (not the alarm) are written
     CIA1->TIMER_B_CONTROL &= 0x7f;
     // Writing the hours stops the clock, writing the tenths starts it
     CIA1->TOD_HOURS = hb;
-    CIA1->TOD_MIN = bin2bcd(m);
-    CIA1->TOD_SEC = bin2bcd(s);
+    CIA1->TOD_MIN = bin_to_bcd8(m);
+    CIA1->TOD_SEC = bin_to_bcd8(s);
     CIA1->TOD_10THS = 0;
 }
 
@@ -292,20 +282,32 @@ time_t timegm(struct tm* tp) {
 // Text formatting
 // ---------------------------------------------------------------------------------------------
 
+// Converts a number to 4-digit BCD (values above 9999 are clamped). Needs a single division.
+static bcd16_t bin_to_bcd16(uint16_t v) {
+    if (v > 9999) v = 9999;
+    uint8_t hi = (uint8_t)div16u(v, 100);
+    uint8_t lo = (uint8_t)rem16u;
+    return ((bcd16_t)bin_to_bcd8(hi) << 8) | bin_to_bcd8(lo);
+}
+
+// Writes a 2-digit BCD number with exactly two characters. The leading zero is replaced by pad.
+static char* put_bcd8(char* p, bcd8_t b, char pad) {
+    uint8_t tens = b >> 4;
+    *p++ = (tens == 0) ? pad : (char)('0' + tens);
+    *p++ = (char)('0' + (b & 0x0f));
+    return p;
+}
+
 // Writes a number 0..99 with exactly two characters. The leading zero is replaced by pad.
 static char* put2(char* p, uint8_t v, char pad) {
-    uint8_t tens = v / 10;
-    *p++ = (tens == 0) ? pad : (char)('0' + tens);
-    *p++ = (char)('0' + (v - tens * 10));
-    return p;
+    return put_bcd8(p, bin_to_bcd8(v), pad);
 }
 
 // Writes a year 0..9999 with four digits
 static char* put4(char* p, uint16_t v) {
-    if (v > 9999) v = 9999;
-    uint8_t hi = (uint8_t)div16u(v, 100);
-    p = put2(p, hi, '0');
-    return put2(p, (uint8_t)rem16u, '0');
+    bcd16_t b = bin_to_bcd16(v);
+    p = put_bcd8(p, (bcd8_t)(b >> 8), '0');
+    return put_bcd8(p, (bcd8_t)b, '0');
 }
 
 // Writes an abbreviation from a table of 3-letter entries
@@ -378,14 +380,17 @@ static void sf_str(const char* s) {
 
 // Appends the number v right-aligned to at least width characters, filled with pad
 static void sf_num(uint16_t v, uint8_t width, char pad) {
-    char digits[5];
-    uint8_t n = 0;
-    do {
-        v = div16u(v, 10);
-        digits[n++] = (char)('0' + (uint8_t)rem16u);
-    } while (v != 0);
-    for (uint8_t i = n; i < width; i++) sf_char(pad);
-    while (n != 0) sf_char(digits[--n]);
+    // Convert to BCD (a single division) and print the digits by nibble, skipping leading zeros
+    bcd16_t b = bin_to_bcd16(v);
+    uint8_t d[4];
+    d[0] = (uint8_t)(b >> 12);
+    d[1] = (uint8_t)((b >> 8) & 0x0f);
+    d[2] = (uint8_t)((b >> 4) & 0x0f);
+    d[3] = (uint8_t)(b & 0x0f);
+    uint8_t first = 0;
+    while (first < 3 && d[first] == 0) first++;
+    for (uint8_t i = 4 - first; i < width; i++) sf_char(pad);
+    for (uint8_t i = first; i < 4; i++) sf_char((char)('0' + d[i]));
 }
 
 // Appends a 3-letter abbreviation from a table of 3-letter entries

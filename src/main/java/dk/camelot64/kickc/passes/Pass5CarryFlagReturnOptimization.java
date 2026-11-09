@@ -154,7 +154,14 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
                            overallModified = true;
                            break;
                         }
-                     } else if("rol".equals(mn)) {
+                     } else if("eor".equals(mn) && isImmVal(prevInst.getOperand1(), 1)) {
+                         // A contains inverted boolean 0 or 1: insert LSR before RTS to shift bit 0 into Carry!
+                         CpuOpcode lsrOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lsr", CpuAddressingMode.NON, false);
+                         ref.chunk.addLineBefore(inst, new AsmInstruction(lsrOp, null, null, null));
+                         passModified = true;
+                         overallModified = true;
+                         break;
+                      } else if("rol".equals(mn)) {
                         int prevLdaIdx = prevIdx - 1;
                         while(prevLdaIdx >= 0 && !(allLines.get(prevLdaIdx).line instanceof AsmInstruction)) {
                            prevLdaIdx--;
@@ -301,7 +308,7 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
                            passModified = true;
                            overallModified = true;
                            break;
-                        } else if(mn.startsWith("sta") && (ref.scope == null || !carryProcs.contains(ref.scope))) {
+                        } else if((mn.startsWith("sta") || "tay".equals(mn) || "tax".equals(mn) || "pha".equals(mn)) && (ref.scope == null || !carryProcs.contains(ref.scope))) {
                            // Call site stores the boolean result: normalize Carry to Register A: LDA #0 ; ROL
                            CpuOpcode ldaImm = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lda", CpuAddressingMode.IMM, false);
                            CpuOpcode rolOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("rol", CpuAddressingMode.NON, false);
