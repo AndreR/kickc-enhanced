@@ -1196,9 +1196,12 @@ Binds a global variable or buffer to a specific physical memory address:
 ```c
 __address(0xd020) volatile uint8_t BORDER_COLOR;
 __address(0x2000) uint8_t SPRITE_BITMAPS[64 * 8];
+__address(0x20) __zp volatile uint8_t DRIVER_STATUS;
 ```
 
 Only global variables and arrays can be placed at specific addresses. `__address()` is not supported for local arrays. For graphics data, inline KickAssembler can initialize an array directly from an image file (see Section 2.9.9).
+
+When combined with `__zp`, the variable is bound to a hardcoded Zero-Page location. The compiler automatically reserves the occupied bytes against register allocation and memory coalescing. Variables declared with a hardcoded address are preserved in the assembly output as labels even if they are not referenced within C expressions (for example, communication buffers accessed only by external assembly routines).
 
 ### 2.8.5 Zero-Page Allocation (`__zp`)
 
@@ -1599,11 +1602,19 @@ Specifies the program start address via `#pragma start_address(address)` (e.g. `
 
 ### 2.10.13 Zeropage Address Reservations
 
-Reserves Zero-Page addresses to prevent the compiler's register allocation from using them, e.g. when they are used by the Kernal, BASIC, or external assembly routines. Ranges are written as `from..to`:
+Reserves Zero-Page addresses to prevent the compiler's register allocator from allocating variables or temporaries to those locations. This is required when address ranges are utilized by the Kernal, BASIC, or external assembly routines that do not correspond to C variable declarations.
 
-```c
-#pragma zp_reserve(0x02..0x03, 0x14..0x15, 0x90)
-```
+Supported pragmas:
+- `#pragma reserve_zp(...)` (alias `#pragma zp_reserve(...)`): Takes a comma-separated list of individual addresses or ranges formatted as `start..end`:
+  ```c
+  #pragma reserve_zp(0x02..0x03, 0x14..0x15, 0x90)
+  ```
+- `#pragma reserve_zp_range(start, end)` (alias `#pragma zp_reserve_range(...)`): Takes start and end addresses as two comma-separated arguments:
+  ```c
+  #pragma reserve_zp_range(0xe0, 0xeb)
+  ```
+
+Note: If a variable is declared with a fixed Zero-Page address using `__address(...) __zp`, the compiler automatically marks its address range as reserved and protects it from dynamic register allocation and memory coalescing. Explicit pragmas are therefore only necessary for address ranges accessed exclusively by external assembly code without corresponding C variable declarations.
 
 ### 2.10.14 Struct Memory Model (`#pragma struct_model`)
 
