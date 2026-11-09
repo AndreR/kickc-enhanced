@@ -93,7 +93,7 @@ The compiler applies the following optimization techniques to produce readable 6
   - **Static register and flag tracking:** Interprocedural and intra-block tracking of accumulator, index registers, and processor status flags (Carry, Zero, Negative).
   - **NMOS-6510 Undocumented Opcodes (`mos6502x` / `rom6502x`):** Automatic synthesis of stable, deterministic green opcodes (`LAX`, `SAX`, `ALR`, `DCP`, `ISC`).
   - **Tail Call Optimization (TCO):** Automatically converts tail `JSR <proc>; RTS` sequences into direct `JMP <proc>` instructions, and relaxes long-branch return trampolines.
-  - **Switch Jump Tables:** Dense `switch` statements ($\ge 4$ cases) compile to split 12-cycle RTS dispatch tables rather than linear comparison chains.
+  - **Switch Jump Tables:** Dense `switch` statements are compiled to a split Lo/Hi RTS dispatch table instead of a linear comparison chain (see Section 2.4.3 for the conditions).
   - **Pointer-to-SMC Optimization:** Replaces sequential Zero-Page pointer dereferences in writable RAM segments with direct absolute self-modifying code operands.
   - **Dead Store & Dead Load-Store Elimination:** Uses recursive `CanonicalResolver` symbol tracking to eliminate dead SSA temporaries and unused register loads.
   - **Page Boundary Loop Alignment:** Aligns small inner loops to avoid the 1-cycle penalty for branches that cross a 256-byte page boundary.
@@ -248,7 +248,7 @@ Variables are declared by **type name** and can include an optional **initializa
 
 ### 2.2.1 Integers & Digit Separators
 
-KickC supports standard ISO C integer types as well as fixed-size 6502-friendly aliases and the standard `<stdint.h>` exact-width types:
+KickC supports standard ISO C integer types as well as fixed-size 6502-friendly aliases and the `<stdint.h>` exact-width types:
 
 | Type Name | Standard Header Type | Size (Bytes) | Representation / Range |
 | :--- | :--- | :---: | :--- |
@@ -256,8 +256,8 @@ KickC supports standard ISO C integer types as well as fixed-size 6502-friendly 
 | `signed char`, `signed byte` | `int8_t` | 1 | Signed 8-bit integer (two's complement): [-128; 127] |
 | `unsigned short`, `unsigned int`, `unsigned`, `word`, `unsigned word` | `uint16_t` | 2 | Unsigned 16-bit integer: [0; 65,535] |
 | `short`, `signed short`, `int`, `signed int`, `signed`, `signed word` | `int16_t` | 2 | Signed 16-bit integer (two's complement): [−32,768; +32,767] |
-| `__uint24`, `uint24_t` | `uint24_t` | 3 | Unsigned 24-bit integer: [0; 16,777,215] |
-| `__int24`, `int24_t` | `int24_t` | 3 | Signed 24-bit integer (two's complement): [−8,388,608; +8,388,607] |
+| `uint24_t` | `uint24_t` | 3 | Struct `{ uint16_t lo; uint8_t hi; }` defined in `<stdint.h>`; value range [0; 16,777,215] |
+| `int24_t` | `int24_t` | 3 | Struct `{ uint16_t lo; int8_t hi; }` defined in `<stdint.h>`; value range [-8,388,608; +8,388,607] |
 | `unsigned long`, `dword`, `unsigned dword` | `uint32_t` | 4 | Unsigned 32-bit integer: [0; 4,294,967,295] |
 | `long`, `signed long`, `signed dword` | `int32_t` | 4 | Signed 32-bit integer (two's complement): [−2,147,483,648; +2,147,483,647] |
 
@@ -265,7 +265,7 @@ Key behavioral rules:
 - Unadorned 8-bit integer types (`char`, `byte`) default to **`unsigned`**.
 - Unadorned 16-bit and 32-bit types (`short`, `int`, `long`) default to **`signed`**.
 - The 6502-friendly types `word` and `dword` default to **`unsigned`**.
-- 24-bit integer types (`uint24_t`, `int24_t`) take exactly 3 bytes in memory, which makes them suitable for 24-bit addresses, coordinates on large scrolling maps, and wide accumulators.
+- `uint24_t` and `int24_t` are structs of exactly 3 bytes. The bytes are accessed via the members `lo` and `hi`; they are not built-in arithmetic types.
 
 #### Integer Literals & Digit Separators (C23)
 
@@ -295,11 +295,9 @@ Character encoding is determined by the active `#pragma encoding(...)` or litera
 
 ### 2.2.2 Packed 4-Bit Nibbles (`uint4_t` / `__nibble`)
 
-KickC supports 4-bit unsigned integers via `uint4_t` (defined in `<stdint.h>`) and the `__nibble` storage modifier:
+KickC supports 4-bit unsigned integers via the built-in type `uint4_t` (aliases: `nibble`, `__nibble`; no header required):
 
 ```c
-#include <stdint.h>
-
 uint4_t color_cache[1000]; // Allocates (1000 + 1) / 2 = 500 bytes in memory
 ```
 
@@ -325,19 +323,21 @@ Fixed-point arithmetic is a common approach for physics, subpixel motion, and tr
 
 Literals can be suffixed directly in source code:
 - `f8`: 8.8 fixed-point (e.g. `fixed8_8 pos = 10.5f8;`)
-- `f16`: 16.16 or 8.16 fixed-point (e.g. `fixed16_16 m = 1.5f16;`)
-- `f24`: 24-bit fractional fixed-point (e.g. `fixed8_24 ratio = 0.7071f24;`)
+- `f16`: 16.16 fixed-point (e.g. `fixed16_16 m = 1.5f16;`)
+- `f24`: 8.24 fixed-point (e.g. `fixed8_24 ratio = 0.7071f24;`)
+
+There are no literal suffixes for the 16.8, 8.16, and 24.8 types.
 
 #### Transparent Member Access & Fixed-Point Math
 
-24-bit and 32-bit fixed-point types are transparent unions, allowing direct access to the raw value, the integer part, the fractional subpixel byte, or raw bytes:
+`fixed8_8` and `ufixed8_8` are plain 16-bit integer typedefs; use the macros `fixed_int(f)` and `fixed_frac(f)` to access the integer and fractional part. The wider types (16.8, 8.16, 16.16, 24.8, 8.24) are unions whose members `.integer` and `.frac` give direct access to the integer part and the fraction:
 
 ```c
 #include <fixedpoint.h>
 
-fixed16_8 player_x = 100.5f8; // Integer 100, fraction 128
-player_x.integer += 5;        // Modify integer part directly without shifting
-uint8_t sub = player_x.frac;  // Read subpixel fraction
+fixed16_16 player_x = 100.5f16; // Integer 100, fraction 0x8000
+player_x.integer += 5;          // Modify integer part directly without shifting
+uint16_t sub = player_x.frac;   // Read fraction
 
 // Fixed-point math operations:
 fixed8_8 pos = 12.5f8;
@@ -407,7 +407,7 @@ bool flags[8];                         // Boolean array
 ```
 
 > [!NOTE]
-> Multidimensional arrays of arrays (`type arr[M][N]`) are not supported directly on 6502 architectures to avoid costly 2D pointer dereferencing and multiplication overhead. Instead, flat 1D arrays with precomputed index lookup tables, parallel split arrays (`__lohi`), or arrays of structs (`__soa`) should be used.
+> Multidimensional arrays (`type arr[M][N]`) are not supported. The compiler does not reject the declaration, but treats `char baa[4][4]` as an array of 4 pointers and allocates no storage for the rows, so accesses go through uninitialized pointers. Use flat 1D arrays with index calculations, split arrays (`__lohi`), or arrays of structs (`__soa`) instead.
 
 #### Split Low/High Word Arrays (`__lohi`)
 
@@ -435,14 +435,14 @@ const uint8_t font[] = {
 };
 
 const uint8_t sprite_header[] = {
-    #embed "assets/sprites.bin" limit(64) prefix(0x00, ) suffix(, 0xff)
+    #embed "assets/sprites.bin" limit(64) prefix(0x00) suffix(0xff)
 };
 ```
 
 Parameters supported:
 - `limit(N)`: Embed at most $N$ bytes.
-- `prefix(...)`: Prepend constant tokens before the embedded bytes.
-- `suffix(...)`: Append constant tokens after the embedded bytes.
+- `prefix(...)`: Prepend constant tokens before the embedded bytes. The separating comma is added by the compiler; a trailing comma inside the parameter (`prefix(0x00, )`) causes a parse error.
+- `suffix(...)`: Append constant tokens after the embedded bytes (same rule: write `suffix(0xff)`, not `suffix(, 0xff)`).
 - `if_empty(...)`: Tokens emitted if the file is 0 bytes.
 - `__has_embed("file.bin")`: Preprocessor conditional operator to query asset availability.
 
@@ -463,10 +463,10 @@ struct Particle {
 __soa struct Particle particles[32];
 ```
 
-Accessing `particles[i].x` or updating `particles[i].vy += 1;` compiles to a single absolute indexed instruction (4 cycles):
+Accessing `particles[i].x` compiles to a single absolute indexed instruction (4 cycles); each member is stored in its own table of 32 bytes (e.g. `.vy` at `particles+96`):
 ```asm
-lda particles, x        // Accesses .x
-inc particles+96, x     // Updates .vy
+lda particles, x        // Reads .x
+lda particles+96, x     // Reads .vy
 ```
 This avoids Zero-Page pointer arithmetic and runtime multiplication. `sizeof(particles)` (128 bytes) and `countof(particles)` (32) keep their usual values.
 
@@ -511,6 +511,8 @@ The compiler packs adjacent bitfields into container integer units and generates
 Standard C enums promote to 16-bit integers. KickC supports standard enums and C23 typed enumerations, which use 1-byte storage:
 
 ```c
+#include <stdint.h>
+
 enum GameState : uint8_t {
     STATE_TITLE   = 0,
     STATE_INGAME  = 1,
@@ -563,13 +565,16 @@ The arithmetic operators support numeric calculations:
 - `a / b`: Division
 - `a % b`: Modulo / Remainder
 
+> [!NOTE]
+> Write the modulo operator with surrounding spaces. `a%10` is lexed as `a` followed by the binary literal `%10` and causes a parse error.
+
 #### 6502 Arithmetic Optimizations
 
 The MOS 6502 has no multiplication or division instructions, so runtime support for these operators is limited. Calculations on constants are always allowed. KickC applies the following optimizations and provides library routines:
 - **Compile-time Constant Evaluation:** All calculations on constants (e.g. `40 * 25`, `1024 / 64`) are evaluated during compilation at no runtime cost.
 - **Factored Shift-Add Multiplication:** Multiplications with constant factors (e.g. `x * 24`, `x * 40`, `x * 320`) are rewritten into sequences of shifts and additions without 16-bit zero-extension.
 - **Reciprocal Constant Division & Modulo:** Constant divisions and modulo operations on 8-bit integers (such as `/ 10`, `% 10`) are optimized via reciprocal multiplication and bit shifts in Pass 2 SSA.
-- **Quarter-Square Multiplication (`<multiply.h>`):** Table-based 8-bit multiplication `fast_mul8u(a, b)` computes products in ~24 cycles using ROM tables, compared to ~150 cycles for loop-based software multiplication.
+- **Quarter-Square Multiplication (`<multiply.h>`):** Table-based multiplication (`fast_mul8u`, `fast_mul16u`, `fast_mul16s`) with constant execution time, using squares tables.
 - **Carry-Chain 16-Bit Division (`<math.h>` / `<division.h>`):** Unrolled 6502 carry-chain routines (`div16u`, `rem16u`, `div8u`, `rem8u`).
 
 General multiplication, division, and modulo of two variables are not generated inline and require a library function call. Multiplication of a variable by an unsigned constant is converted to shifts and additions.
@@ -899,7 +904,7 @@ switch (uint8_t cmd = fetch_command(); cmd) {
 
 #### Switch Jump Tables via RTS Dispatch
 
-For dense switch statements ($\ge 4$ contiguous cases), KickC's Pass 5 automatically synthesizes a split Lo/Hi jump table dispatched via the 6502 `RTS` trick:
+Pass 5 replaces a linear `CMP`/`BEQ` chain with a split Lo/Hi jump table dispatched via the 6502 `RTS` trick. The transformation is applied when the chain has at least 4 comparisons, the cases have at least 3 distinct targets, all case values are in the range 0..255, the value range (max - min + 1) is at most 32, and at least half of the values in that range are used:
 ```asm
 tax
 lda jump_table_hi, x
@@ -908,7 +913,7 @@ lda jump_table_lo, x
 pha
 rts
 ```
-This results in constant-time dispatch of **12–14 cycles** and replaces long chains of linear `CMP`/`BEQ` comparisons.
+The dispatch takes a constant time of about 20 cycles (plus the range check), independent of the case value. Switches that do not meet the conditions above keep the linear comparison chain.
 
 ### 2.4.4 While
 
@@ -955,7 +960,7 @@ This is equivalent to `for(char i = 0; i <= 127; i++)` and can loop forward or b
 
 #### Countdown Loops & the `__countdown` Directive
 
-Counting down to zero on the 6502 allows branching on the Zero or Negative flags (`BNE`, `BPL`) without an explicit comparison instruction (`CPX`/`CPY`).
+Counting down to zero on the 6502 can allow branching on the Zero or Negative flags (`BNE`, `BPL`) without an explicit comparison instruction (`CPX`/`CPY`).
 
 The `__countdown` directive can be prefixed to a loop to instruct the compiler to invert iteration order:
 
@@ -965,7 +970,7 @@ __countdown for (uint8_t i = 0; i < 40; i++) {
 }
 ```
 
-The compiler transforms this into a downward-counting loop ($39 \dots 0$) terminating with `DEX; BPL`, saving 2 CPU cycles and 2 bytes per iteration.
+The compiler transforms this into a loop that counts down from 39 to 0 and branches with `BPL`. Whether the compiler can drop the explicit comparison depends on the surrounding code.
 
 ### 2.4.7 Break, Continue, and Named Loops (C2Y N3355)
 
@@ -1053,7 +1058,7 @@ KickC supports multiple calling conventions to balance speed, memory, and hardwa
       return coord + 0x0400;
   }
   ```
-- **`__stackcall`:** Parameters are passed on the 6502 hardware stack (`PHA`/`PLA`). Useful when interfacing with re-entrant routines or external code.
+- **`__stackcall`:** Parameters are passed on the 6502 hardware stack (`PHA`/`PLA`).
 - **`__varcall`:** Parameters are passed through static global variables in main memory.
 
 ### 2.5.4 Auto Carry-Flag Boolean Returns (`__carry`)
@@ -1076,18 +1081,18 @@ void test(uint8_t x) {
 
 The function exits with `SEC; RTS` (true) or `CLC; RTS` (false), and the caller branches directly with `BCS` or `BCC` without using the accumulator.
 
-### 2.5.5 Banked Functions & Far Calls (`__far`)
+### 2.5.5 Banked Functions (`__bank`)
 
-For systems utilizing banking (e.g. cartridge ROMs or RAM expansions), functions located in swapped banks can be declared with `__far` or assigned to banked segments with `#pragma far_seg`:
+For systems with banked memory (e.g. cartridge ROMs or RAM expansions), a function can be assigned to a bank with the `__bank(area, number)` directive. The function is placed in the segment selected by `#pragma code_seg`:
 
 ```c
-#pragma far_seg(Bank1, 1)
-__far void render_title_screen() {
-    // Executes inside Bank 1
+#pragma code_seg(RAM_Bank1)
+__bank(cx16_ram, 1) char plus(char a, char b) {
+    return a + b;
 }
 ```
 
-KickC generates the required bank-switch preparation, execution, and bank-restoration trampolines.
+Depending on the banks of caller and callee, the compiler classifies each call as *near* (same bank or unbanked), *close* (unbanked to banked), or *far* (different bank in the same bank area), and generates the corresponding bank-switching code. The bank areas and segments must be defined in the linker script. The compiler includes call fragments for the bank areas `cx16_ram` and `cx16_rom`; other bank area names fail with a missing fragment error (e.g. `call_phi_close_<area>`) unless a matching fragment is provided. See the `call-banked-*` programs in the compiler test suite for examples.
 
 ### 2.5.6 The main() Function
 
@@ -1164,7 +1169,7 @@ Variable directives control memory placement, alignment, and optimization.
 Declares variables that cannot be modified by the program. The declaration must include an initializer, and the compiler reports an error if the variable is assigned elsewhere. For pointers, the position of `const` relative to `*` selects between a constant pointer and a pointer to constant data:
 - `const uint8_t MAX_PLAYERS = 4;`
 - `char* const SCREEN = (char*)0x0400;` (constant pointer to mutable data)
-- `const char* ROM = (const char*)0xa000;` (mutable pointer to constant data)
+- `const char* ROM = (char*)0xa000;` (mutable pointer to constant data)
 
 ### 2.8.2 Register
 
@@ -1226,10 +1231,10 @@ volatile uint8_t raster_line;
 
 For pointers, the position of `volatile` relative to `*` distinguishes a volatile pointer from a pointer to volatile data (see `const`). Variables shared between interrupt handlers and the main program must be declared `volatile`.
 
-### 2.8.8 Extern and Export
+### 2.8.8 Extern and Export (`__export`)
 
 - `extern`: Declares a variable that is defined elsewhere. Typically used in header files for variables defined in a C file.
-- `export`: Prevents the optimizer from removing a global data variable (typically an array) that is never referenced, e.g. binary tables intended for external tools.
+- `__export`: Prevents the optimizer from removing a global data variable (typically an array) that is never referenced, e.g. binary tables intended for external tools.
 
 ### 2.8.9 Split Word Arrays (`__lohi`)
 
@@ -1344,12 +1349,12 @@ Instructs the compiler to invert loop counting to count down toward zero, allowi
 __countdown for (uint8_t i = 0; i < 40; i++) { ... }
 ```
 
-### 2.9.6 Banked Far Calls (`__far`)
+### 2.9.6 Banked Functions (`__bank`)
 
-Declares functions residing in banked memory requiring trampoline banking switches:
+Assigns a function to a bank: `__bank(area, number)` (see Section 2.5.5).
 
 ```c
-__far void load_world_map();
+__bank(cx16_ram, 1) char plus(char a, char b);
 ```
 
 ### 2.9.7 Inline Assembler Code (`asm`)
@@ -1368,7 +1373,6 @@ Features:
 - Supports all standard addressing modes (immediate, absolute, zero page, indexed, indirect, relative).
 - Supports NMOS-6510 illegal opcodes (`LAX`, `SAX`, `ALR`, `DCP`, `ISC`) when compiling with target CPU `mos6502x` or `rom6502x`.
 - References C constant symbols directly: `sta SCREEN+40`.
-- Scratchpad Zero-Page registers **`$fe` and `$ff`** are available for temporary storage.
 - The `clobbers` clause specifies the modified registers: `asm(clobbers "AX") { jsr $1000 }`. If the inline assembler contains a `JSR` and no `clobbers` clause is given, the compiler assumes that all registers are clobbered.
 - Labels declared in inline assembler of other functions can be referenced with the `.` operator (e.g. `clearscreen.fillchar`). This allows assembler in one function to modify assembler code in another scope.
 - The compiler analyzes the inline assembler and includes it in its optimizations. It determines the clobbered registers and may modify the assembler code if this is faster, e.g. by removing an immediate load of a value that the register is already known to contain.
@@ -1498,7 +1502,7 @@ Enforced compiler protections:
 
 ### 2.10.5 Predefined Scratchpad Segment: `StackRam` (`$0100-$01AF`)
 
-The MOS 6502 hardware stack resides in page 1 (`$0100-$01FF`). Most programs only consume the top 60–80 bytes of this page. KickC's linker scripts predefine the lower 176 bytes (`$0100-$01AF`) as the `StackRam` segment.
+The MOS 6502 hardware stack resides in page 1 (`$0100-$01FF`). Programs typically use only part of this page. KickC's linker scripts predefine the lower 176 bytes (`$0100-$01AF`) as the `StackRam` segment.
 
 Scratchpad buffers or decompression workspaces can be placed directly into `StackRam` to save resident main RAM:
 
@@ -1508,38 +1512,9 @@ uint8_t fast_decomp_buffer[128];
 #pragma data_seg(Data)
 ```
 
-### 2.10.6 Banked Far Segments and Functions (`#pragma bank`, `#pragma nobank`, `#pragma far_seg`)
+### 2.10.6 Banking (`#pragma bank`, `#pragma nobank`)
 
-For banked cartridges (such as Magic Desk, EasyFlash, or GMod2) and banked memory expansions, KickC provides explicit banking directives:
-
-#### Procedural Banking via `#pragma bank` and `#pragma nobank`
-
-```c
-// Assign subsequent functions to bank window "BankCartridge" at bank index 6:
-#pragma bank(BankCartridge, 6)
-#pragma code_seg(Bank6Code)
-
-void handle_bank6_event() {
-    // Compiled as a banked procedure belonging to bank 6
-}
-
-// Reset banking calculation to common resident memory:
-#pragma nobank()
-#pragma code_seg(Code)
-```
-
-#### Trampoline Far Segments via `#pragma far_seg` / `#pragma near_seg`
-
-```c
-// Define Bank 6 with bank index 6:
-#pragma far_seg(WorldMapSeg, 6)
-
-// Or specify custom banking entry/exit trampolines:
-#pragma far_seg(BankMusic, 5, bank_switch_prep, bank_switch_exec, bank_switch_restore)
-
-// Switch back to near execution:
-#pragma near_seg()
-```
+`#pragma bank(area, number)` assigns the functions and variables that follow to the given bank; `#pragma nobank` returns to the common (unbanked) memory. Individual functions can be assigned with the `__bank(area, number)` directive (see Section 2.5.5). The segment of the code is selected separately with `#pragma code_seg`. Bank areas are defined by the linker script and require matching call fragments (see Section 2.5.5).
 
 ### 2.10.7 Loop Alignment (`#pragma loop_align`)
 
@@ -1592,8 +1567,8 @@ Individual string or character literals can also specify an explicit encoding su
 ```c
 const char greeting[] = "Grüße"german;
 const char screen_str[] = "HELLO"screencode_upper;
-const char raw_str[] = "NON-ZERO"ascii_z; // Unterminated string without trailing '\0'
-const char unterminated[] = "World"german_z; // Suffix "_z" after the encoding name: no terminating zero
+const char raw_str[] = "NON-ZERO"asciiz; // "z" appended to the encoding name: no terminating '\0'
+const char unterminated[] = "World"germanz;  // Same for custom encodings
 char c = 'ä'german;                       // Character literal with encoding suffix
 ```
 
@@ -1620,7 +1595,7 @@ Sets the interrupt type used by `__interrupt` functions that do not specify a ty
 
 ### 2.10.12 Program Start Address
 
-Specifies the program start address via `#pragma start_address(address)` (e.g. `#pragma start_address(0x0801)`). The address is passed to the linker script, which uses it to place the program. The default start address of each platform is defined in its `.tgt` file.
+Specifies the program start address via `#pragma start_address(address)` (e.g. `#pragma start_address(0x0900)`; on targets with a BASIC upstart stub the address must not overlap the stub at `$0801`). The address is passed to the linker script, which uses it to place the program. The default start address of each platform is defined in its `.tgt` file.
 
 ### 2.10.13 Zeropage Address Reservations
 
@@ -1650,7 +1625,7 @@ Sets the default calling convention for subsequent functions within the compilat
 
 ```c
 #pragma calling(__phicall)   // Fast static variable/register calling convention (default)
-#pragma calling(__stackcall)  // Reentrant stack-based calling convention
+#pragma calling(__stackcall)  // Parameters passed on the hardware stack
 #pragma calling(__varcall)    // Static variable calling convention
 ```
 
@@ -1695,30 +1670,30 @@ KickC includes a runtime library for 8-bit systems:
 
 ### Standard ISO C Headers
 
-- **`<stdint.h>`:** Standard exact-width integer types (`uint8_t`, `int8_t`, `uint16_t`, `int16_t`, `uint24_t`, `int24_t`, `uint32_t`, `int32_t`, `uint4_t`).
+- **`<stdint.h>`:** Standard exact-width integer types (`uint8_t`, `int8_t`, `uint16_t`, `int16_t`, `uint24_t`, `int24_t`, `uint32_t`, `int32_t`).
 - **`<stdbool.h>`:** Boolean type `bool`, `true` (1), and `false` (0).
 - **`<limits.h>`:** Standard limits macros (`UCHAR_MAX`, `SCHAR_MIN`, `SCHAR_MAX`, `USHRT_MAX`, `SHRT_MIN`, `SHRT_MAX`, `UINT_MAX`, `INT_MIN`, `INT_MAX`, `ULONG_MAX`, `LONG_MIN`, `LONG_MAX`).
 - **`<ctype.h>`:** Character classification and conversion routines (`isalpha`, `isdigit`, `isspace`, `isupper`, `islower`, `toupper`, `tolower`).
 - **`<string.h>`:** String and memory routines (`memcpy`, `memcpy_fast`, `memset`, `memset_fast`, `strlen`, `strcpy`, `strcat`, `strcmp`, `strncmp`, `strchr`, `strrchr`).
-- **`<stdlib.h>`:** General utilities (`abs` polymorphic via `_Generic`, `rand`, `srand`, `exit`, `utoa`, `itoa`).
-- **`<stdio.h>`:** Formatted output (`printf`, `sprintf`, `sputc`, `sprintf_init`) with specialized 8-bit and 16-bit code paths.
-- **`<math.h>`:** Math routines (`sqrt16`, `sin`, `cos`, `div16u`, `M_PI`, `PI`).
+- **`<stdlib.h>`:** General utilities (`abs` polymorphic via `_Generic`, `abs8`, `abs16`, `labs`, `rand`, `srand`, `rand8`, `srand8`, `rand32`, `srand32`, `uctoa`, `utoa`, `ultoa`, `atoi`, `malloc`, `calloc`, `free`, `bsearch16u`).
+- **`<stdio.h>`:** Formatted output (`printf`, `sprintf`) with specialized 8-bit and 16-bit code paths. `<sprintf.h>` provides `sprintf_init` and `sputc`.
+- **`<math.h>`:** Math utilities (`PI`, `M_PI`, `min`, `max`, `clamp`, `lerp8`, `popcount8`). Related headers: `<sqr.h>` (`sqr`, `sqrt16`, `sqrt`), `<division.h>` (`div8u`, `div16u`, ...), `<sine.h>` (sine table generators), `<atan2.h>`.
 
 ### Platform and Utility Headers
 
 - **`<6502.h>`:** Hardware intrinsics (`SEC`, `CLC`, `CLD`, `SED`, `NOP`, `__builtin_bit7`, `__builtin_bit6`, `delay_cycles(N)`).
 - **`<multiply.h>`:** Multiplication routines:
-  - `fast_mul8u(a, b)`: Quarter-square table multiplication in ~24 cycles.
+  - `fast_mul8u(a, b)`: Quarter-square table multiplication.
   - `fast_mul16u(a, b)`: 16-bit unsigned multiplication.
   - `fast_mul16s(a, b)`: 16-bit signed multiplication.
-- **`<fixedpoint.h>`:** Fixed-point math (`fixed8_8`, `fixed16_8`, `fixed16_16`, math, trig, lerp, and vector operations).
+- **`<fixedpoint.h>`:** Fixed-point types, constants, and math functions (`fixed_add`, `fixed_mul`, `fixed_lerp`, `fixed_sin`, `fixed_cos`, ...).
 - **`<bcd.h>`:** Hardware Binary Coded Decimal math (`bcd8_t`, `bcd16_t`, `bcd8_add`, `bcd8_sub`, `bcd16_add`, `bcd16_sub`).
 - **`<rle.h>`:** PackBits RLE compression and decompression.
 - **`<zx02.h>`:** ZX02 decompression.
-- **`<fade.h>`:** Color palette fading based on luminance.
-- **`<diskio.h>`:** Disk I/O for 1541/1571/1581 drives with drive probing and Kernal fallback.
-- **`<prng.h>`:** Deterministic 8-bit and 32-bit pseudo-random number generators (`rand8()`, `rand32()`).
-- **`<mouse1351.h>`:** Commodore 1351 mouse driver (proportional mode).
+- **`<c64-fade.h>`:** Color palette fading based on luminance.
+- **`<c64-disk.h>`:** KERNAL disk and IEC bus I/O (`disk_probe`, `disk_load`, `disk_save`, `disk_send_command`, `disk_read_status`).
+- **`<c64-fastio.h>`:** Fast disk I/O based on the Covert Bitops loader system (`fastio_init`, `fastio_open`, `fastio_load`, `fastio_save`, ...).
+- **`<c64-mouse.h>`:** Commodore 1351 mouse driver with joystick fallback (`mouse_init`, `mouse_poll`).
 - **`<reu.h>`:** Commodore 17xx RAM Expansion Unit DMA transfer routines.
 
 ## 2.12 Comparison with Standard C
@@ -1749,7 +1724,7 @@ KickC is designed for 8-bit code generation. The language includes modern C synt
 - **Dynamic re-entrant call stack:** KickC uses a static call graph with whole-program SSA register allocation. Recursive functions are not supported.
 - **Variable-length arrays (VLAs):** All array memory is statically allocated or allocated to fixed buffers.
 - **Runtime multiplication, division, and modulo of variables:** Not generated inline by the 6502 code generator; use the library routines in `<multiply.h>` and `<division.h>`. Calculations on constants and multiplication of a variable by a constant are supported (see Section 2.3.1).
-- **Arrays of arrays (`char baa[4][4];`):** Use flat arrays with index calculations, `__lohi`, or `__soa` instead.
+- **Arrays of arrays (`char baa[4][4];`):** Not supported. The declaration is accepted but treated as an array of pointers without row storage (see Section 2.2.6).
 - **`alignof` operator.**
 - **Variadic functions** (`sum(int i1, ...)`), except `printf`.
 
@@ -1758,7 +1733,6 @@ KickC is designed for 8-bit code generation. The language includes modern C synt
 - Low/high byte operators (`<w`, `>w`, `<ptr = val`).
 - Forward referencing of variables in the outer scope.
 - Interval ranged for-loops: `for (char i : 0..10) { }`.
-- Word operator: `unsigned int w = { hi, lo };`.
 - Split Low/High word arrays (`__lohi`).
 - Struct-of-Arrays flattening (`__soa`).
 - Packed 4-bit nibbles (`uint4_t` / `__nibble`).
@@ -1930,10 +1904,10 @@ Applies assembler optimizations by repeatedly running micro-passes until none of
 - **Generic peephole optimizations:** Removal of redundant register loads (e.g. `LDA #0` when `A` is already zero), replacement of jumps to jumps by direct jumps, and removal of unused labels.
 - **NMOS-6510 Undocumented Opcodes:** Folds instructions into `LAX`, `SAX`, `ALR`, `DCP`, and `ISC` when targeting `mos6502x`/`rom6502x`.
 - **Tail Call Optimization (TCO):** Converts trailing `JSR <proc>; RTS` into direct `JMP <proc>`, and relaxes long-branch return trampolines.
-- **Switch Jump Tables:** Synthesizes split 12-cycle RTS dispatch tables for dense `switch` statements.
+- **Switch Jump Tables:** Replaces linear `CMP`/`BEQ` chains of dense `switch` statements with a split Lo/Hi RTS dispatch table.
 - **Pointer-to-SMC in RAM:** Converts Zero-Page pointer dereferences into direct self-modifying code operands in writable RAM.
 - **Multi-Entry Byte-Skipping:** Employs `.byte $2c` (`BIT $xxxx`) opcode skipping for shared procedure return paths.
-- **Dead Store Elimination with `CanonicalResolver`:** Resolves label aliases and offsets to eliminate redundant stores and unused loads in linear $O(1)$ time while preserving CPU flags.
+- **Dead Store Elimination with `CanonicalResolver`:** Resolves label aliases and offsets to eliminate redundant stores and unused loads while preserving CPU flags.
 - **Page Boundary Loop Alignment:** Inserts conditional `.align $100` padding to prevent inner loops from crossing 256-byte page boundaries.
 
 # 5 Assembler Fragment Subsystem
@@ -1974,7 +1948,7 @@ Example: `vwuz1_gt_vbsc1_then_la1.asm` implements:
 
 ## 5.2 Fragment Synthesis & Adding Missing Fragments
 
-KickC includes more than 900 fragment templates and a synthesis engine. When the compiler encounters an SSA statement without an exact matching fragment file, the synthesizer derives it by combining simpler fragments.
+KickC includes more than 2,000 fragment templates and a synthesis engine. When the compiler encounters an SSA statement without an exact matching fragment file, the synthesizer derives it by combining simpler fragments.
 
 For example, matching an SSA statement like:
 ```asm
