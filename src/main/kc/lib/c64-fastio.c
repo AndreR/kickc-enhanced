@@ -3,7 +3,8 @@
 
 #include <c64-fastio.h>
 
-__address(0xe0) __zp uint8_t fastio_zp_fileOpen;
+__address(0xba) __zp volatile uint8_t fastio_zp_fa;
+__address(0xe0) __zp volatile uint8_t fastio_zp_fileOpen;
 __address(0xe5) __zp uint16_t fastio_zp_src;
 __address(0xe7) __zp uint16_t fastio_zp_bits;
 __address(0xea) __zp uint16_t fastio_zp_dest;
@@ -26,6 +27,10 @@ FastIOMode fastio_init(bool force_safe_mode) {
         sta mode
     }};
     return (FastIOMode)mode;
+}
+
+void fastio_set_device(uint8_t device) {
+    fastio_zp_fa = device;
 }
 
 bool fastio_open(uint8_t filenumber) {
@@ -78,14 +83,13 @@ bool fastio_load_raw(uint8_t filenumber, void* dest) {
     return success;
 }
 
-bool fastio_save(uint8_t filenumber, const void* src, uint16_t length) {
+void fastio_save(uint8_t filenumber, const void* src, uint16_t length) {
     fastio_zp_src = (uint16_t)src;
     fastio_zp_bits = length;
     kickasm(uses filenumber) {{
         lda filenumber
         jsr SaveFile
     }};
-    return true;
 }
 
 void fastio_set_sprite_range(uint8_t top_y, uint8_t bottom_y) {

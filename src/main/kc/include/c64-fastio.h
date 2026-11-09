@@ -15,6 +15,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+// Reserve Zero-Page block $E0..$EB used by Covert Bitops Loadersystem runtime
+#pragma reserve_zp_range(0xe0, 0xeb)
+
 /// Loader operation mode set by fastio_init()
 typedef enum : uint8_t {
     FASTIO_MODE_KERNAL   = 0x00, ///< Stock Kernal protocol (no IRQs allowed)
@@ -28,13 +31,18 @@ typedef enum : uint8_t {
 /// @return Active loader mode (FASTIO_MODE_FASTLOAD, FASTIO_MODE_IDE64, FASTIO_MODE_KERNAL).
 FastIOMode fastio_init(bool force_safe_mode);
 
+/// Sets the IEC device number for disk operations (defaults to Kernal device $ba / 8).
+/// @param device Device bus address (e.g. 8, 9, 10, 11).
+void fastio_set_device(uint8_t device);
+
 /// Opens a file by file number (0x00..0xFF, corresponding to disk filenames "00".."FF").
 /// @param filenumber Hexadecimal file number (e.g. 0x00 for file "00").
 /// @return true if opened successfully, false on error.
 bool fastio_open(uint8_t filenumber);
 
 /// Reads a byte from the currently open file.
-/// @return Read byte, or 0 if EOF.
+/// Note: Check fastio_is_open() to determine EOF. Do not call after EOF.
+/// @return Read byte from disk stream.
 uint8_t fastio_get_byte(void);
 
 /// Checks whether a file is currently open.
@@ -53,11 +61,11 @@ bool fastio_load(uint8_t filenumber);
 bool fastio_load_raw(uint8_t filenumber, void* dest);
 
 /// Saves a memory block to a preallocated file on disk using fast drivecode.
+/// Note: Covert Bitops save protocol is a unidirectional streaming transfer without drive-side ACK.
 /// @param filenumber Hexadecimal file number (0x00..0xFF).
 /// @param src Start address in RAM.
 /// @param length Number of bytes to save.
-/// @return true on success, false on error.
-bool fastio_save(uint8_t filenumber, const void* src, uint16_t length);
+void fastio_save(uint8_t filenumber, const void* src, uint16_t length);
 
 /// Sets the safe raster range for 2-bit fastloading when sprites are active.
 /// @param top_y Y-coordinate of topmost sprite.
