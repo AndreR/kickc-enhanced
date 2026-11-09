@@ -407,7 +407,7 @@ bool flags[8];                         // Boolean array
 ```
 
 > [!NOTE]
-> Multidimensional arrays (`type arr[M][N]`) are not supported. The compiler does not reject the declaration, but treats `char baa[4][4]` as an array of 4 pointers and allocates no storage for the rows, so accesses go through uninitialized pointers. Use flat 1D arrays with index calculations, split arrays (`__lohi`), or arrays of structs (`__soa`) instead.
+> Multidimensional arrays (`type arr[M][N]`) are not supported and are rejected with a `CompileError`. With `-Warraytype` the declaration is accepted with a warning but is treated as an array of pointers without row storage, so it must not be used. Use flat 1D arrays with index calculations, split arrays (`__lohi`), or arrays of structs (`__soa`) instead.
 
 #### Split Low/High Word Arrays (`__lohi`)
 
@@ -1724,7 +1724,7 @@ KickC is designed for 8-bit code generation. The language includes modern C synt
 - **Dynamic re-entrant call stack:** KickC uses a static call graph with whole-program SSA register allocation. Recursive functions are not supported.
 - **Variable-length arrays (VLAs):** All array memory is statically allocated or allocated to fixed buffers.
 - **Runtime multiplication, division, and modulo of variables:** Not generated inline by the 6502 code generator; use the library routines in `<multiply.h>` and `<division.h>`. Calculations on constants and multiplication of a variable by a constant are supported (see Section 2.3.1).
-- **Arrays of arrays (`char baa[4][4];`):** Not supported. The declaration is accepted but treated as an array of pointers without row storage (see Section 2.2.6).
+- **Arrays of arrays (`char baa[4][4];`):** Not supported; the compiler reports a `CompileError` (see Section 2.2.6).
 - **`alignof` operator.**
 - **Variadic functions** (`sum(int i1, ...)`), except `printf`.
 
