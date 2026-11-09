@@ -1081,7 +1081,41 @@ void test(uint8_t x) {
 
 The function exits with `SEC; RTS` (true) or `CLC; RTS` (false), and the caller branches directly with `BCS` or `BCC` without using the accumulator.
 
-### 2.5.5 Banked Functions (`__bank`)
+### 2.5.5 Recursive Functions & Automatic Stack Spilling
+
+KickC supports recursive functions without requiring specialized keywords or manual stack management. Both direct recursion (a function calling itself) and mutual/cyclic recursion (functions calling each other in a call cycle) are supported.
+
+#### Automatic Detection and Calling Convention Inference
+During Pass 1, the compiler inspects the whole-program CallGraph for cycles (`Pass1RecursionIdentification`). When a recursive cycle is identified:
+- The function is automatically configured with the re-entrant `__stackcall` calling convention. Explicit declaration of `__stackcall` remains permitted but is not required.
+- Recursive functions cannot be declared `inline` or configured as interrupt handlers (`__interrupt`).
+
+#### Stack Variable Spilling and Invariant Argument Offsets
+Standard non-recursive functions in KickC use static SSA storage in registers or Zero-Page memory. For recursive functions, re-entrant invocations would overwrite the caller's local variables.
+
+KickC resolves this by performing whole-function Control Flow Graph (CFG) liveness analysis (`Pass1CallStackVarConvert`):
+1. **Liveness Detection:** At each recursive call site, the compiler identifies all local variables of the calling function that are defined prior to the call and remain live (read) along any execution path after the call without being overwritten first.
+2. **Hardware Stack Spilling:** Every live variable is pushed to the 6502 hardware stack (`$0100..$01FF`) immediately before argument setup (`StatementCallPrepare`).
+3. **Offset Invariance:** Because spilled local variables are pushed onto the stack before the call arguments, the callee's parameter offsets relative to the stack pointer register `X` (`STACK_BASE = $103`) remain invariant and unaffected by the caller's frame size.
+4. **LIFO Restoration:** Following the call and the retrieval of return values (`StatementCallFinalize`), all spilled variables are restored from the stack in reverse (LIFO) order using `PLA` instructions.
+
+```c
+// Direct recursion without explicit keywords
+unsigned int fib(unsigned int n) {
+    if (n <= 1) {
+        return n;
+    }
+    // 'n' and intermediate results are automatically spilled to the stack
+    return fib(n - 1) + fib(n - 2);
+}
+```
+
+#### Stack Limits and Safety Bounds
+Because the 6502 architecture limits the hardware stack to 256 bytes (`$0100..$01FF`), recursive stack consumption must be bounded:
+- **Maximum Frame Limit:** The total recursive stack frame per invocation (spilled variables + parameters + return value + 2-byte return address) must not exceed 128 bytes. Exceeding this limit causes a `CompileError`.
+- **Spill Threshold Warning:** If spilled local variables at a recursive call site exceed 64 bytes, a compiler warning is emitted.
+
+### 2.5.6 Banked Functions (`__bank`)
 
 For systems with banked memory (e.g. cartridge ROMs or RAM expansions), a function can be assigned to a bank with the `__bank(area, number)` directive. The function is placed in the segment selected by `#pragma code_seg`:
 
@@ -1094,7 +1128,7 @@ __bank(cx16_ram, 1) char plus(char a, char b) {
 
 Depending on the banks of caller and callee, the compiler classifies each call as *near* (same bank or unbanked), *close* (unbanked to banked), or *far* (different bank in the same bank area), and generates the corresponding bank-switching code. The bank areas and segments must be defined in the linker script. The compiler includes call fragments for the bank areas `cx16_ram` and `cx16_rom`; other bank area names fail with a missing fragment error (e.g. `call_phi_close_<area>`) unless a matching fragment is provided. See the `call-banked-*` programs in the compiler test suite for examples.
 
-### 2.5.6 The main() Function
+### 2.5.7 The main() Function
 
 Every KickC program must define exactly one `void main()` function as the entry point:
 
@@ -1703,7 +1737,15 @@ KickC includes a runtime library for 8-bit systems:
 - **`<zx02.h>`:** ZX02 decompression.
 - **`<c64-fade.h>`:** Color palette fading based on luminance.
 - **`<c64-disk.h>`:** KERNAL disk and IEC bus I/O (`disk_probe`, `disk_load`, `disk_save`, `disk_send_command`, `disk_read_status`).
-- **`<c64-fastio.h>`:** Fast disk I/O based on the Covert Bitops loader system (`fastio_init`, `fastio_open`, `fastio_load`, `fastio_save`, ...).
+- **`<c64-fastio.h>`:** Hardware-accelerated disk I/O for the Commodore 1541 drive based on the Covert Bitops 2-bit serial protocol, streaming directly across CIA lines:
+  - `void fastio_init()`: Initializes the drive and loader routines.
+  - `void fastio_set_device(uint8_t device)`: Sets the target drive bus address (defaults to Kernal device `$BA`).
+  - `uint8_t fastio_open(const char* filename)`: Performs directory lookup and prepares streaming transfer. Returns non-zero on success, or 0 if the file was not found.
+  - `uint16_t fastio_read(void* dest, uint16_t max_bytes)`: Reads up to `max_bytes` from the open stream into memory.
+  - `uint8_t fastio_is_open()`: Returns non-zero while data remains in the stream; returns 0 on EOF or error.
+  - `void fastio_close()`: Concludes transfer and resets drive bus communication.
+  - `void fastio_save(const char* filename, const void* data, uint16_t size)`: Streams data directly into pre-allocated disk sectors. The save operation is a unidirectional stream (`void`); target files must exist on the disk.
+  - **Memory Footprint:** The loader driver uses Zero-Page addresses `$E0..$EB` for internal buffer and communication pointers. These are protected against compiler register allocation via `#pragma reserve_zp_range(0xe0, 0xeb)`.
 - **`<c64-mouse.h>`:** Commodore 1351 mouse driver with joystick fallback (`mouse_init`, `mouse_poll`).
 - **`<reu.h>`:** Commodore 17xx RAM Expansion Unit DMA transfer routines.
 
@@ -1732,7 +1774,7 @@ KickC is designed for 8-bit code generation. The language includes modern C synt
 ### 2.12.2 Features Omitted by Design
 
 - **Floating-point types (`float`, `double`):** Software emulation is prohibitive on 1 MHz 8-bit CPUs. Use `<fixedpoint.h>` instead.
-- **Dynamic re-entrant call stack:** KickC uses a static call graph with whole-program SSA register allocation. Recursive functions are not supported.
+- **Dynamic re-entrant call stack for non-recursive functions:** To minimize execution overhead on 6502 processors, standard functions use static whole-program SSA register allocation (`__phicall`). Functions with recursive call cycles are automatically promoted to re-entrant stack calling with live variable spilling (see Section 2.5.5).
 - **Variable-length arrays (VLAs):** All array memory is statically allocated or allocated to fixed buffers.
 - **Runtime multiplication, division, and modulo of variables:** Not generated inline by the 6502 code generator; use the library routines in `<multiply.h>` and `<division.h>`. Calculations on constants and multiplication of a variable by a constant are supported (see Section 2.3.1).
 - **Arrays of arrays (`char baa[4][4];`):** Not supported; the compiler reports a `CompileError` (see Section 2.2.6).
@@ -1889,7 +1931,7 @@ The KickC compilation pipeline consists of the following passes:
 Loads source files and recursive `#include` dependencies. The Antlr4 lexer and parser construct the Abstract Syntax Tree (AST), expanding `#embed`, string literal encoding suffixes, and evaluating constant expressions.
 
 ## 4.2 SSA Control Flow Graph & Symbol Table Generation (Pass 1)
-Translates the AST into a Control Flow Graph (CFG) in Static Single Assignment (SSA) form. Every variable assignment creates a unique SSA version, complex expressions are broken into atomic single-operator statements, and branch convergence points are unified via $\phi$-functions. Verifies ROM segment types and cross-bank calls.
+Translates the AST into a Control Flow Graph (CFG) in Static Single Assignment (SSA) form. Every variable assignment creates a unique SSA version, complex expressions are broken into atomic single-operator statements, and branch convergence points are unified via $\phi$-functions. Identifies recursion cycles in the CallGraph and configures re-entrant stack calling (`Pass1RecursionIdentification`), performs CFG liveness analysis, and inserts stack spills for live variables across recursive calls (`Pass1CallStackVarConvert`). Verifies ROM segment types and cross-bank calls.
 
 ## 4.3 SSA Optimization Micro-Passes (Pass 2)
 Applies iterative optimization micro-passes until convergence:
