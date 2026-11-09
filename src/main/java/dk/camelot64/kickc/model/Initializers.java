@@ -96,6 +96,16 @@ public class Initializers {
          Collection<Variable> memberDefinitions = structDefinition.getAllVars(false);
          if(!memberDefinitions.isEmpty()) {
             Variable firstMember = memberDefinitions.iterator().next();
+            int unionSize = firstMember.getType().getSizeBytes();
+            if(initValue instanceof ConstantInteger ci && ci.getFixedPointSuffix() != null) {
+               String sfx = ci.getFixedPointSuffix();
+               if("f8".equals(sfx) || unionSize == 3 || ("f16".equals(sfx) && unionSize != 4) || ("f24".equals(sfx) && unionSize != 4)) {
+                  throw new CompileError("Cannot initialize union with fixed-point literal: suffix 'f8' is 8.8, 'f16' is 16.16, 'f24' is 8.24; target type does not match", source);
+               }
+            }
+            if(unionSize == 3) {
+               throw new CompileError("Cannot initialize 24-bit union directly with scalar. Use F16_8() macro or compound literal.", source);
+            }
             UnionDesignator autoDesignator = new UnionDesignator(firstMember.getLocalName(), initValue);
             initValue = constantifyUnion(autoDesignator, (SymbolTypeStruct) typeSpec.getType(), program, source);
          }

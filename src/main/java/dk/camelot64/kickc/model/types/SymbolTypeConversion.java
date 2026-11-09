@@ -247,12 +247,12 @@ public class SymbolTypeConversion {
          return true;
       }
       if(lValueType instanceof SymbolTypeStruct && ((SymbolTypeStruct) lValueType).isUnion()) {
-         if(SymbolType.isInteger(rValueType) && rValueType.getSizeBytes() <= lValueType.getSizeBytes()) {
+         if(lValueType.getSizeBytes() != 3 && SymbolType.isInteger(rValueType) && rValueType.getSizeBytes() <= lValueType.getSizeBytes()) {
             return true;
          }
       }
       if(rValueType instanceof SymbolTypeStruct && ((SymbolTypeStruct) rValueType).isUnion()) {
-         if(SymbolType.isInteger(lValueType) && lValueType.getSizeBytes() <= rValueType.getSizeBytes()) {
+         if(rValueType.getSizeBytes() != 3 && SymbolType.isInteger(lValueType) && lValueType.getSizeBytes() <= rValueType.getSizeBytes()) {
             return true;
          }
       }

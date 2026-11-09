@@ -14,6 +14,7 @@ public class ConstantInteger implements ConstantEnumerable<Long> {
 
    /** The type of the number. (Either fixed size og the "number" type) */
    private SymbolType type;
+   private String fixedPointSuffix;
 
    public ConstantInteger(Long number) {
       this.number = number;
@@ -48,6 +49,14 @@ public class ConstantInteger implements ConstantEnumerable<Long> {
 
    public void setType(SymbolType type) {
       this.type = type;
+   }
+
+   public String getFixedPointSuffix() {
+      return fixedPointSuffix;
+   }
+
+   public void setFixedPointSuffix(String fixedPointSuffix) {
+      this.fixedPointSuffix = fixedPointSuffix;
    }
 
    @Override

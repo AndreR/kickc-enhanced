@@ -90,9 +90,9 @@ public class PassNCalcVariableRegisterWeight extends PassNCalcBase<VariableRegis
          if(params != null && !params.isEmpty() && params.size() <= 3) {
             for(int i = 0; i < params.size(); i++) {
                dk.camelot64.kickc.model.symbols.Variable param = params.get(i);
-               if(param.getType() != null && param.getType().getSizeBytes() == 1) {
+               if(param.getRef() instanceof VariableRef varRef && param.getType() != null && param.getType().getSizeBytes() == 1) {
                   double boost = 100000.0 - (i * 1000.0);
-                  variableRegisterWeights.addWeight((VariableRef) param.getRef(), boost);
+                  variableRegisterWeights.addWeight(varRef, boost);
                }
             }
          }

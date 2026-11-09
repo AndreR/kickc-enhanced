@@ -5328,4 +5328,16 @@ public class TestProgramsFast extends TestPrograms {
       assertError("qa03-cross-bank-err.c", "Illegal direct cross-bank call", false);
    }
 
+   // QA-18: Fixed-point literal target type mismatch
+   @Test
+   public void testQa18FixedpointLiteralErr() throws IOException {
+      assertError("qa18-fixedpoint-literal-err.c", "suffix 'f8' is 8.8, 'f16' is 16.16, 'f24' is 8.24; target type does not match");
+   }
+
+   // QA-19: Multidimensional arrays error
+   @Test
+   public void testQa19MultidimArrayErr() throws IOException {
+      assertError("qa19-multidim-array-err.c", "Multidimensional arrays are not supported");
+   }
+
 }

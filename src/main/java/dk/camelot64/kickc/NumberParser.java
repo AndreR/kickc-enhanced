@@ -12,18 +12,23 @@ public class NumberParser {
       literal = literal.toLowerCase().replace("_", "").replace("'", "");
       boolean isHex = literal.startsWith("0x") || literal.startsWith("$");
       double scale = -1.0;
+      String fixedPointSuffix = null;
       if(!isHex || literal.contains(".")) {
          if(literal.endsWith("f24")) {
             scale = 16777216.0;
+            fixedPointSuffix = "f24";
             literal = literal.substring(0, literal.length() - 3);
          } else if(literal.endsWith("f16")) {
             scale = 65536.0;
+            fixedPointSuffix = "f16";
             literal = literal.substring(0, literal.length() - 3);
          } else if(literal.endsWith("f8")) {
             scale = 256.0;
+            fixedPointSuffix = "f8";
             literal = literal.substring(0, literal.length() - 2);
          } else if(literal.endsWith("f") && literal.contains(".")) {
             scale = 256.0;
+            fixedPointSuffix = "f8";
             literal = literal.substring(0, literal.length() - 1);
          } else if(literal.contains(".")) {
             scale = 256.0;
@@ -40,7 +45,9 @@ public class NumberParser {
             d = Double.parseDouble(literal);
          }
          long fixedVal = Math.round(d * scale);
-         return new ConstantInteger(fixedVal, SymbolType.NUMBER);
+         ConstantInteger ci = new ConstantInteger(fixedVal, SymbolType.NUMBER);
+         ci.setFixedPointSuffix(fixedPointSuffix);
+         return ci;
       }
       SymbolType type = SymbolType.NUMBER;
       if(literal.endsWith("ub") || literal.endsWith("uc")) {

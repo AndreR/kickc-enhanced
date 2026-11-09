@@ -364,7 +364,10 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             this.pragmaConstructorFors.add(ctx);
             return null;
          }
-         default -> program.getLog().append("Warning! Unknown #pragma " + pragmaName);
+         default -> {
+            program.getLog().append("Warning! Unknown #pragma " + pragmaName);
+            System.out.println("Warning: Unknown pragma '" + pragmaName + "'");
+         }
       }
       return null;
    }
@@ -2880,6 +2883,14 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          arraySpec = new ArraySpec();
       }
       final SymbolType elementDeclType = varDecl.getEffectiveType();
+      if(elementDeclType instanceof SymbolTypePointer arrayElem && arrayElem.getArraySpec() != null) {
+         if(!program.isWarnArrayType()) {
+            throw new CompileError("Multidimensional arrays are not supported. Use flat 1D arrays or specify -Warraytype.", new StatementSource(ctx));
+         } else {
+            program.getLog().append("Warning! Multidimensional arrays are not supported. Declaring array of pointers without row allocation.");
+            System.out.println("Warning: Multidimensional arrays are not supported. Declaring array of pointers without row allocation.");
+         }
+      }
       SymbolType arrayDeclType = new SymbolTypePointer(elementDeclType, arraySpec, false, false);
       varDecl.setVarDeclType(arrayDeclType);
       return null;
@@ -2901,6 +2912,14 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          arraySpec = new ArraySpec();
       }
       final SymbolType elementDeclType = varDecl.getEffectiveType();
+      if(elementDeclType instanceof SymbolTypePointer arrayElem && arrayElem.getArraySpec() != null) {
+         if(!program.isWarnArrayType()) {
+            throw new CompileError("Multidimensional arrays are not supported. Use flat 1D arrays or specify -Warraytype.", new StatementSource(ctx));
+         } else {
+            program.getLog().append("Warning! Multidimensional arrays are not supported. Declaring array of pointers without row allocation.");
+            System.out.println("Warning: Multidimensional arrays are not supported. Declaring array of pointers without row allocation.");
+         }
+      }
       SymbolType arrayDeclType = new SymbolTypePointer(elementDeclType, arraySpec, false, false);
       varDecl.setVarDeclType(arrayDeclType);
       return varDecl.getEffectiveType();
@@ -3630,9 +3649,19 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       RValue rValue = (RValue) this.visit(ctx.expr(1));
       SymbolType lType = inferExprType(ctx.expr(0));
       if(lType instanceof SymbolTypeStruct && ((SymbolTypeStruct) lType).isUnion()) {
+         StructDefinition sDef = ((SymbolTypeStruct) lType).getStructDefinition(program.getScope());
+         int unionSize = (sDef != null && !sDef.getAllVars(false).isEmpty()) ? sDef.getAllVars(false).iterator().next().getType().getSizeBytes() : 0;
+         if(rValue instanceof ConstantInteger ci && ci.getFixedPointSuffix() != null) {
+            String sfx = ci.getFixedPointSuffix();
+            if("f8".equals(sfx) || unionSize == 3 || ("f16".equals(sfx) && unionSize != 4) || ("f24".equals(sfx) && unionSize != 4)) {
+               throw new CompileError("Cannot assign fixed-point literal to union: suffix 'f8' is 8.8, 'f16' is 16.16, 'f24' is 8.24; target type does not match", new StatementSource(ctx));
+            }
+         }
+         if(unionSize == 3 && !(rValue instanceof StructMemberRef) && !lType.equals(inferExprType(ctx.expr(1)))) {
+            throw new CompileError("Cannot assign scalar directly to 24-bit union. Use F16_8() macro or compound literal.", new StatementSource(ctx));
+         }
          SymbolType rType = inferExprType(ctx.expr(1));
          if(rType == null || !lType.equals(rType)) {
-            StructDefinition sDef = ((SymbolTypeStruct) lType).getStructDefinition(program.getScope());
             if(sDef != null && !sDef.getAllVars(false).isEmpty()) {
                Variable firstMember = sDef.getAllVars(false).iterator().next();
                lValue = new StructMemberRef(lValue, firstMember.getLocalName());
