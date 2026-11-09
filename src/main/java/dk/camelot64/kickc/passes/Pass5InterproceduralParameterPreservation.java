@@ -250,23 +250,23 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                }
 
                // Register overwrites from memory or other sources
-               if("lda".equals(mnem) || "pla".equals(mnem) || "lax".equals(mnem)) {
+               if("lda".equals(mnem) || "pla".equals(mnem) || "lax".equals(mnem) ||
+                  "adc".equals(mnem) || "sbc".equals(mnem) || "and".equals(mnem) || "ora".equals(mnem) || "eor".equals(mnem) ||
+                  "alr".equals(mnem) || "arr".equals(mnem) || "anc".equals(mnem)) {
                   currentValA = null;
                }
-               if("ldx".equals(mnem) || "plx".equals(mnem) || "tsx".equals(mnem) || "lax".equals(mnem)) {
-                  currentValX = null;
-               }
-               if("ldy".equals(mnem) || "ply".equals(mnem)) {
-                  currentValY = null;
-               }
-               if("adc".equals(mnem) || "sbc".equals(mnem) || "and".equals(mnem) || "ora".equals(mnem) || "eor".equals(mnem) ||
-                  "asl".equals(mnem) || "lsr".equals(mnem) || "rol".equals(mnem) || "ror".equals(mnem)) {
-                  if(mode != CpuAddressingMode.ZP && mode != CpuAddressingMode.ABS) {
+               if("asl".equals(mnem) || "lsr".equals(mnem) || "rol".equals(mnem) || "ror".equals(mnem)) {
+                  if(mode == CpuAddressingMode.NON || operand == null || "a".equalsIgnoreCase(operand.trim())) {
                      currentValA = null;
                   }
                }
-               if("inx".equals(mnem) || "dex".equals(mnem)) currentValX = null;
-               if("iny".equals(mnem) || "dey".equals(mnem)) currentValY = null;
+               if("ldx".equals(mnem) || "plx".equals(mnem) || "tsx".equals(mnem) || "lax".equals(mnem) ||
+                  "inx".equals(mnem) || "dex".equals(mnem) || "axs".equals(mnem)) {
+                  currentValX = null;
+               }
+               if("ldy".equals(mnem) || "ply".equals(mnem) || "iny".equals(mnem) || "dey".equals(mnem)) {
+                  currentValY = null;
+               }
 
                // Stores into Zero-Page
                if(mode == CpuAddressingMode.ZP && operand != null && !Pass5RedundantStoreAndReloadElimination.isHardwareAddress(operand)) {

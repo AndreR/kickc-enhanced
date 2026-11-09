@@ -290,6 +290,35 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
                if(ptrVariable != null && ptrVariable.getMemoryAddress() != null) {
                   continue;
                }
+               // Safety: Never apply Pointer-to-SMC to variables with global/file scope (must be strictly procedure-local)
+               if(ptrVariable != null && !(ptrVariable.getScope() instanceof Procedure)) {
+                  continue;
+               }
+
+               // Safety: Never apply Pointer-to-SMC to variables referenced outside the current procedure scope!
+               boolean referencedOutsideScope = false;
+               for(LineRef outsideRef : allLines) {
+                  if(outsideRef.scope == null || !outsideRef.scope.equals(scopeName)) {
+                     if(outsideRef.line instanceof AsmInstruction outsideInst) {
+                        String op = outsideInst.getOperand1();
+                        if(op != null) {
+                           String indPtr = (CpuAddressingMode.IZY.equals(outsideInst.getCpuOpcode() != null ? outsideInst.getCpuOpcode().getAddressingMode() : null)) ? extractPtrFromIndY(op) : null;
+                           if(matchesVarLo(op, ptrVar, ptrAddr, aliases) || matchesVarHi(op, ptrVar, ptrAddr, aliases) || (indPtr != null && matchesVarLo(indPtr, ptrVar, ptrAddr, aliases))) {
+                              referencedOutsideScope = true;
+                              break;
+                           }
+                        }
+                     } else if(outsideRef.line instanceof AsmInlineKickAsm inlineAsm) {
+                        if(inlineAsm.getAsm().contains(ptrVar) || (ptrAddr != null && inlineAsm.getAsm().contains(ptrAddr))) {
+                           referencedOutsideScope = true;
+                           break;
+                        }
+                     }
+                  }
+               }
+               if(referencedOutsideScope) {
+                  continue;
+               }
 
                // Analyze all references to this pointer in the scope:
                // All references must be strictly:
