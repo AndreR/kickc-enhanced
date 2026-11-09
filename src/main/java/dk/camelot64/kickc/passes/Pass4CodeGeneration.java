@@ -731,9 +731,8 @@ public class Pass4CodeGeneration {
                 }
             } else if (value instanceof StructZero) {
                 final SymbolTypeStruct typeStruct = ((StructZero) value).getTypeStruct();
-                final ConstantRef structSize = SizeOfConstants.getSizeOfConstantVar(getScope(), typeStruct);
-                String totalSizeBytesAsm = AsmFormat.getAsmConstant(program, structSize, 99, scopeRef);
                 int totalSizeBytes = typeStruct.getSizeBytes();
+                String totalSizeBytesAsm = String.valueOf(totalSizeBytes);
                 dataChunk.addDataZeroFilled(AsmDataNumeric.Type.BYTE, totalSizeBytesAsm, totalSizeBytes, null);
             }
         } else if (valueType instanceof SymbolTypePointer && valueArraySpec != null) {
