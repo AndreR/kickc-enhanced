@@ -1,5 +1,5 @@
-.const drv1581DirSct = $06ca
-.const drv1541DirSct = $06cc
+.const drv1581DirSct = $06c8
+.const drv1541DirSct = $06ca
 
 //-------------------------------------------------------------------------------
 // Covert Bitops Loadersystem V3.x, configuration
