@@ -548,6 +548,12 @@ public class Program {
       }
    }
 
+   public void addReservedZp(int zp) {
+      if(!this.reservedZps.contains(zp)) {
+         this.reservedZps.add(zp);
+      }
+   }
+
    public List<Integer> getReservedZps() {
       return reservedZps;
    }

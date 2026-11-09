@@ -356,8 +356,12 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          }
          case CParser.PRAGMA_CALLING -> currentCallingConvention = pragmaParamCallingConvention(pragmaParamSingle(ctx));
          case CParser.PRAGMA_INTERRUPT -> this.currentInterruptType = pragmaParamName(pragmaParamSingle(ctx));
-         case CParser.PRAGMA_ZP_RESERVE -> {
+         case CParser.PRAGMA_ZP_RESERVE, CParser.PRAGMA_RESERVE_ZP -> {
             List<Integer> reservedZps = pragmaParamRanges(ctx.pragmaParam());
+            program.addReservedZps(reservedZps);
+         }
+         case CParser.PRAGMA_ZP_RESERVE_RANGE, CParser.PRAGMA_RESERVE_ZP_RANGE -> {
+            List<Integer> reservedZps = pragmaParamRangeStartEnd(ctx.pragmaParam(), pragmaName, new StatementSource(ctx));
             program.addReservedZps(reservedZps);
          }
          case CParser.PRAGMA_CONSTRUCTOR_FOR -> {
@@ -609,6 +613,26 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
     * @param reserveParams The params
     * @return The list of reserved zeropage addresses
     */
+   private List<Integer> pragmaParamRangeStartEnd(List<KickCParser.PragmaParamContext> params, String pragmaName, StatementSource source) {
+      List<Integer> reservedZps = new ArrayList<>();
+      if(params.size() == 2 && params.get(0) instanceof KickCParser.PragmaParamNumberContext && params.get(1) instanceof KickCParser.PragmaParamNumberContext) {
+         Number start = NumberParser.parseLiteral(((KickCParser.PragmaParamNumberContext) params.get(0)).NUMBER().getText());
+         Number end = NumberParser.parseLiteral(((KickCParser.PragmaParamNumberContext) params.get(1)).NUMBER().getText());
+         if(start != null && end != null) {
+            int zp = start.intValue();
+            int endZp = end.intValue();
+            while(zp <= endZp) {
+               reservedZps.add(zp);
+               zp++;
+            }
+            return reservedZps;
+         }
+      } else if(params.size() == 1 && params.get(0) instanceof KickCParser.PragmaParamRangeContext) {
+         return pragmaParamRanges(params);
+      }
+      throw new CompileError("Expected range parameters (start, end) or (start..end) in #pragma " + pragmaName + ". Found '" + params.toString() + "'.", source);
+   }
+
    private List<Integer> pragmaParamRanges(List<KickCParser.PragmaParamContext> reserveParams) {
       List<Integer> reservedZps = new ArrayList<>();
       for(KickCParser.PragmaParamContext reserveCtx : reserveParams) {

@@ -102,6 +102,9 @@ public class CParser {
      * compiler from allocating variables to those addresses.
      */
     public static final String PRAGMA_ZP_RESERVE = "zp_reserve";
+    public static final String PRAGMA_RESERVE_ZP = "reserve_zp";
+    public static final String PRAGMA_ZP_RESERVE_RANGE = "zp_reserve_range";
+    public static final String PRAGMA_RESERVE_ZP_RANGE = "reserve_zp_range";
     /**
      * #pragma constructor_for(...) specifies that a certain function is an
      * initializer for a library and must be called before main().

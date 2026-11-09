@@ -62,7 +62,9 @@ public class Pass4LiveRangeEquivalenceClassesFinalize extends Pass2Base {
       for(Variable variable : getSymbols().getAllVariables(true)) {
          if(variable.getScope() instanceof StructDefinition)
             continue;
-         if(variable.isKindLoadStore() && variable.getInitValue()!=null)
+         if(variable.getRegister() != null && variable.getRegister().isAddressHardcoded())
+            addToEquivalenceClassSet(variable.getVariableRef(), new ArrayList<>(), liveRangeEquivalenceClassSet);
+         else if(variable.isKindLoadStore() && variable.getInitValue()!=null)
             addToEquivalenceClassSet(variable.getVariableRef(), new ArrayList<>(), liveRangeEquivalenceClassSet);
          else if(variable.isStructClassic())
             addToEquivalenceClassSet(variable.getVariableRef(), new ArrayList<>(), liveRangeEquivalenceClassSet);

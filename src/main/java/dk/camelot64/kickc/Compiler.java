@@ -720,6 +720,16 @@ public class Compiler {
 
    private void pass4RegisterAllocation() {
 
+      for(dk.camelot64.kickc.model.symbols.Variable variable : program.getScope().getAllVariables(true)) {
+         if(variable.getRegister() instanceof dk.camelot64.kickc.model.Registers.RegisterZpMem) {
+            int zp = ((dk.camelot64.kickc.model.Registers.RegisterZpMem) variable.getRegister()).getZp();
+            int sizeBytes = variable.getType().getSizeBytes();
+            for(int i = 0; i < sizeBytes; i++) {
+               program.addReservedZp(zp + i);
+            }
+         }
+      }
+
       if(getLog().isVerboseSizeInfo()) {
          getLog().append(program.getSizeInfo());
       }

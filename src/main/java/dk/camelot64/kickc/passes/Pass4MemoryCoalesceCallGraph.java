@@ -57,6 +57,8 @@ public class Pass4MemoryCoalesceCallGraph extends Pass2Base {
          Registers.Register thisReg = thisEC.getRegister();
          if(Registers.RegisterType.MAIN_MEM.equals(thisReg.getType()) || !thisReg.isMem())
             continue;
+         if(thisReg.isAddressHardcoded())
+            continue;
          if(thisReg instanceof Registers.RegisterZpMem && getProgram().getReservedZps().contains(((Registers.RegisterZpMem) thisReg).getZp()))
             continue;
 

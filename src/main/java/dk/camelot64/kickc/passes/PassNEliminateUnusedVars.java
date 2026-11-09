@@ -168,6 +168,14 @@ public class PassNEliminateUnusedVars extends Pass2SsaOptimization {
          // Do not eliminate parameters
          return false;
       }
+      if(variable.getMemoryAddress() != null) {
+         // Do not eliminate variables with hardcoded memory address
+         return false;
+      }
+      if(variable.getRegister() != null && variable.getRegister().isAddressHardcoded()) {
+         // Do not eliminate variables with hardcoded register / address
+         return false;
+      }
       final boolean unused = referenceInfos.isUnused(variable.getRef());
       if(!unused)
          // Do not eliminate is not unused

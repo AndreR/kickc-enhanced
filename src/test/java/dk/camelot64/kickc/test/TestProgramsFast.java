@@ -5346,4 +5346,10 @@ public class TestProgramsFast extends TestPrograms {
       compileAndCompare("qa21-countdown-loop.c");
    }
 
+   // QA-22: Reserve ZP range pragmas and unreferenced hardcoded ZP variables
+   @Test
+   public void testQa22ReserveZp() throws IOException {
+      compileAndCompare("qa22-reserve-zp.c");
+   }
+
 }

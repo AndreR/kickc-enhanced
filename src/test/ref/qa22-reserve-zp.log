@@ -1,0 +1,173 @@
+Inlined call call __init
+Eliminating unused variable with no statement main::$0
+
+CONTROL FLOW GRAPH SSA
+
+void test_sub(char val)
+test_sub: scope:[test_sub]  from main
+  test_sub::val#1 = phi( main/test_sub::val#0 )
+  screen[0] = test_sub::val#1
+  to:test_sub::@return
+test_sub::@return: scope:[test_sub]  from test_sub
+  return 
+  to:@return
+
+void main()
+main: scope:[main]  from __start::@1
+  main::c#0 = main::a + main::b
+  test_sub::val#0 = main::c#0
+  call test_sub
+  to:main::@1
+main::@1: scope:[main]  from main
+  to:main::@return
+main::@return: scope:[main]  from main::@1
+  return 
+  to:@return
+
+void __start()
+__start: scope:[__start]  from
+  to:__start::__init1
+__start::__init1: scope:[__start]  from __start
+  unused_driver_zp1 = 0
+  unused_driver_zp2 = 0
+  to:__start::@1
+__start::@1: scope:[__start]  from __start::__init1
+  call main
+  to:__start::@2
+__start::@2: scope:[__start]  from __start::@1
+  to:__start::@return
+__start::@return: scope:[__start]  from __start::@2
+  return 
+  to:@return
+
+SYMBOL TABLE SSA
+void __start()
+void main()
+__constant char main::a = $a
+__constant char main::b = $14
+char main::c
+char main::c#0
+__constant volatile char * const screen = (char *)$400
+void test_sub(char val)
+char test_sub::val
+char test_sub::val#0
+char test_sub::val#1
+__loadstore volatile char unused_driver_zp1 // !zp[-1]:32
+__loadstore volatile char unused_driver_zp2 // !zp[-1]:33
+
+Adding number conversion cast (unumber) 0 in screen[0] = test_sub::val#1
+Successful SSA optimization PassNAddNumberTypeConversions
+Simplifying constant pointer cast (char *) 1024
+Simplifying constant integer cast 0
+Successful SSA optimization PassNCastSimplification
+Finalized unsigned number type (uint4_t) 0
+Successful SSA optimization PassNFinalizeNumberTypeConversions
+Identical Phi Values test_sub::val#1 test_sub::val#0
+Successful SSA optimization Pass2IdenticalPhiElimination
+Constant right-side identified [3] main::c#0 = main::a + main::b
+Successful SSA optimization Pass2ConstantRValueConsolidation
+Constant main::c#0 = main::a+main::b
+Successful SSA optimization Pass2ConstantIdentification
+Constant test_sub::val#0 = main::c#0
+Successful SSA optimization Pass2ConstantIdentification
+Simplifying expression containing zero screen in [1] screen[0] = test_sub::val#0
+Successful SSA optimization PassNSimplifyExpressionWithZero
+Constant inlined test_sub::val#0 = main::c#0
+Successful SSA optimization Pass2ConstantInlining
+Adding NOP phi() at start of __start
+Adding NOP phi() at start of __start::@1
+Adding NOP phi() at start of __start::@2
+Adding NOP phi() at start of main
+Adding NOP phi() at start of main::@1
+CALL GRAPH
+Calls in [__start] to main:4 
+Calls in [main] to test_sub:8 
+
+Created 0 initial phi equivalence classes
+Coalesced down to 0 phi equivalence classes
+
+FINAL CONTROL FLOW GRAPH
+
+void __start()
+__start: scope:[__start]  from
+  [0] phi()
+  to:__start::__init1
+__start::__init1: scope:[__start]  from __start
+  [1] unused_driver_zp1 = 0
+  [2] unused_driver_zp2 = 0
+  to:__start::@1
+__start::@1: scope:[__start]  from __start::__init1
+  [3] phi()
+  [4] call main
+  to:__start::@2
+__start::@2: scope:[__start]  from __start::@1
+  [5] phi()
+  to:__start::@return
+__start::@return: scope:[__start]  from __start::@2
+  [6] return 
+  to:@return
+
+void main()
+main: scope:[main]  from __start::@1
+  [7] phi()
+  [8] call test_sub
+  to:main::@1
+main::@1: scope:[main]  from main
+  [9] phi()
+  to:main::@return
+main::@return: scope:[main]  from main::@1
+  [10] return 
+  to:@return
+
+void test_sub(char val)
+test_sub: scope:[test_sub]  from main
+  [11] *screen = main::c#0
+  to:test_sub::@return
+test_sub::@return: scope:[test_sub]  from test_sub
+  [12] return 
+  to:@return
+
+Initial phi equivalence classes
+Added variable unused_driver_zp1 to live range equivalence class [ unused_driver_zp1 ]
+Added variable unused_driver_zp2 to live range equivalence class [ unused_driver_zp2 ]
+Complete equivalence classes
+[ unused_driver_zp1 ]
+[ unused_driver_zp2 ]
+REGISTER UPLIFT POTENTIAL REGISTERS
+Statement [1] unused_driver_zp1 = 0 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [2] unused_driver_zp2 = 0 [ ] (  [ ] { }  ) always clobbers reg byte a 
+Statement [11] *screen = main::c#0 [ ] ( main:4::test_sub:8 [ ] { }  ) always clobbers reg byte a 
+Potential registers zp[1]:32 [ unused_driver_zp1 ] : zp[1]:32 , 
+Potential registers zp[1]:33 [ unused_driver_zp2 ] : zp[1]:33 , 
+
+REGISTER UPLIFT SCOPES
+Uplift Scope [] 20: zp[1]:32 [ unused_driver_zp1 ] 20: zp[1]:33 [ unused_driver_zp2 ] 
+Uplift Scope [test_sub] 
+Uplift Scope [main] 
+Uplift Scope [__start] 
+
+Uplifting [] best 46 combination zp[1]:32 [ unused_driver_zp1 ] zp[1]:33 [ unused_driver_zp2 ] 
+Uplifting [test_sub] best 46 combination 
+Uplifting [main] best 46 combination 
+Uplifting [__start] best 46 combination 
+Removing instruction jmp __init1
+Removing instruction jmp __b1
+Removing instruction jmp __b2
+Removing instruction jmp __breturn
+Removing instruction jmp __b1
+Removing instruction jmp __breturn
+Removing instruction jmp __breturn
+Removing instruction lda #0
+Tail Call Optimization: Replacing jsr test_sub; rts with jmp test_sub
+Removing instruction __b1_from___init1:
+Removing instruction main_from___b1:
+Removing instruction __b2_from___b1:
+Removing instruction __breturn:
+Removing instruction __b1_from_main:
+Removing instruction __breturn:
+Removing instruction __init1:
+Removing instruction __b1:
+Removing instruction __b2:
+Removing instruction __b1:
+Removing instruction __breturn:
+Removing unreachable instruction rts

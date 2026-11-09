@@ -487,6 +487,9 @@ public class Pass4CodeGeneration {
         Collection<Variable> scopeVars = scope.getAllVariables(false);
         for (Variable scopeVar : scopeVars) {
             Registers.Register register = scopeVar.getAllocation();
+            if (register == null && scopeVar.getRegister() != null && scopeVar.getRegister().isAddressHardcoded()) {
+                register = scopeVar.getRegister();
+            }
             if (register != null) {
                 if (Registers.RegisterType.ZP_MEM.equals(register.getType())) {
                     Registers.RegisterZpMem registerZp = (Registers.RegisterZpMem) register;

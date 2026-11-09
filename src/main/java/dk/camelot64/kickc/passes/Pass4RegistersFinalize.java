@@ -43,6 +43,7 @@ public class Pass4RegistersFinalize extends Pass2Base {
             for(int i=0;i<sizeBytes; i++) {
                if(!reservedZp.contains(zp+i))
                   this.reservedZp.add(zp+i);
+               getProgram().addReservedZp(zp+i);
             }
          }
       }
