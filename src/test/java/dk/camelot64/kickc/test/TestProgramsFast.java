@@ -2134,6 +2134,11 @@ public class TestProgramsFast extends TestPrograms {
    }
 
    @Test
+   public void testTimeH() throws IOException {
+      compileAndCompare("time.c");
+   }
+
+   @Test
    public void testArraysInitKasm0() throws IOException {
       compileAndCompare("arrays-init-kasm-0.c");
    }

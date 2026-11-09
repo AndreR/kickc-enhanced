@@ -1,0 +1,1099 @@
+__constant char $10[7] = "Friday"
+__constant char $11[9] = "Saturday"
+__constant char $12[8] = "January"
+__constant char $13[9] = "February"
+__constant char $14[6] = "March"
+__constant char $15[6] = "April"
+__constant char $16[4] = "May"
+__constant char $17[5] = "June"
+__constant char $18[5] = "July"
+__constant char $19[7] = "August"
+__constant char $20[$a] = "September"
+__constant char $21[8] = "October"
+__constant char $22[9] = "November"
+__constant char $23[9] = "December"
+__constant char $5[7] = "Sunday"
+__constant char $6[7] = "Monday"
+__constant char $7[8] = "Tuesday"
+__constant char $8[$a] = "Wednesday"
+__constant char $9[9] = "Thursday"
+__constant struct MOS6526_CIA * const CIA1 = (struct MOS6526_CIA *) 56320
+__constant const char CIA_TIMER_CONTROL_A_TOD_50HZ = $80
+__constant char * const COLORRAM = (char *) 55296
+__constant const unsigned int DAYS_BEFORE_MONTH[$c] = { 0, $1f, $3b, $5a, $78, $97, $b5, $d4, $f3, $111, $130, $14e }
+__constant char * const DEFAULT_SCREEN = (char *) 1024
+__constant const char LIGHT_BLUE = $e
+__constant const char MONTH_DAYS[$c] = { $1f, $1c, $1f, $1e, $1f, $1e, $1f, $1f, $1e, $1f, $1e, $1f }
+__constant const char MON_ABBR[] = "JanFebMarAprMayJunJulAugSepOctNovDec"
+__constant const char * const MON_NAMES[$c] = { $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23 }
+__constant char OFFSET_STRUCT_MOS6526_CIA_TIMER_A_CONTROL = $e
+__constant char OFFSET_STRUCT_MOS6526_CIA_TIMER_B_CONTROL = $f
+__constant char OFFSET_STRUCT_MOS6526_CIA_TOD_10THS = 8
+__constant char OFFSET_STRUCT_MOS6526_CIA_TOD_HOURS = $b
+__constant char OFFSET_STRUCT_MOS6526_CIA_TOD_MIN = $a
+__constant char OFFSET_STRUCT_MOS6526_CIA_TOD_SEC = 9
+__constant char OFFSET_STRUCT_TM_TM_HOUR = 2
+__constant char OFFSET_STRUCT_TM_TM_ISDST = 6
+__constant char OFFSET_STRUCT_TM_TM_MDAY = 3
+__constant char OFFSET_STRUCT_TM_TM_MIN = 1
+__constant char OFFSET_STRUCT_TM_TM_MON = 4
+__constant char OFFSET_STRUCT_TM_TM_WDAY = 5
+__constant char OFFSET_STRUCT_TM_TM_YDAY = 9
+__constant char OFFSET_STRUCT_TM_TM_YEAR = 7
+__constant char SIZEOF_CHAR = 1
+__constant char SIZEOF_STRUCT_$4 = 5
+__constant char SIZEOF_STRUCT_TM = $b
+__constant char TM_FEBRUARY = 1
+__constant char TM_JANUARY = 0
+__constant char TM_MARCH = 2
+__constant char TM_TUESDAY = 2
+__constant const char WDAY_ABBR[] = "SunMonTueWedThuFriSat"
+__constant const char * const WDAY_NAMES[7] = { $5, $6, $7, $8, $9, $10, $11 }
+void __start()
+char * asctime_r(const struct tm *tp , char *buf)
+char *asctime_r::buf
+char asctime_r::mn
+char asctime_r::mn#0 // mn zp[1]:70 500.5
+char asctime_r::mn#3 // mn zp[1]:70 250.25
+char *asctime_r::p
+char *asctime_r::p#0 // p zp[2]:28 1501.5
+char *asctime_r::p#1 // p zp[2]:28 2002.0
+char *asctime_r::p#10 // p zp[2]:28 1501.5
+char *asctime_r::p#11 // p zp[2]:28 1001.0
+char *asctime_r::p#12 // p zp[2]:28 1501.5
+char *asctime_r::p#13 // p zp[2]:28 2002.0
+char *asctime_r::p#2 // p zp[2]:28 1501.5
+char *asctime_r::p#3 // p zp[2]:28 2002.0
+char *asctime_r::p#4 // p zp[2]:28 1501.5
+char *asctime_r::p#5 // p zp[2]:28 2002.0
+char *asctime_r::p#6 // p zp[2]:28 1501.5
+char *asctime_r::p#7 // p zp[2]:28 2002.0
+char *asctime_r::p#8 // p zp[2]:28 1501.5
+char *asctime_r::p#9 // p zp[2]:28 2002.0
+char *asctime_r::return
+const struct tm *asctime_r::tp
+const struct tm *asctime_r::tp#0 // tp zp[2]:26 2.02
+char asctime_r::wd
+char asctime_r::wd#0 // reg byte x 750.75
+char asctime_r::wd#2 // reg byte x 500.5
+char bcd8_to_bin(char bcd)
+char bcd8_to_bin::$0 // zp[1]:70 1501.5
+char bcd8_to_bin::$1 // zp[1]:21 1001.0
+uint4_t bcd8_to_bin::$2 // reg byte a 2002.0
+char bcd8_to_bin::$4 // reg byte a 2002.0
+char bcd8_to_bin::$5 // reg byte a 2002.0
+char bcd8_to_bin::bcd // 100000.0
+char bcd8_to_bin::bcd#0 // reg byte x 202.0
+char bcd8_to_bin::bcd#1 // reg byte x 202.0
+char bcd8_to_bin::bcd#2 // reg byte x 202.0
+char bcd8_to_bin::bcd#3 // reg byte x 460.99999999999994
+char bcd8_to_bin::return
+char bcd8_to_bin::return#0 // reg byte a 202.0
+char bcd8_to_bin::return#1 // reg byte a 202.0
+char bcd8_to_bin::return#2 // reg byte a 202.0
+char bcd8_to_bin::return#3 // reg byte a 260.79999999999995
+unsigned int bin_to_bcd16(unsigned int v)
+unsigned int bin_to_bcd16::$2 // zp[2]:7 1000001.0
+char bin_to_bcd16::$3 // reg byte a 1000001.0
+unsigned int bin_to_bcd16::$4 // zp[2]:4 400000.4
+char bin_to_bcd16::$5 // reg byte a 2000002.0
+unsigned int bin_to_bcd16::$7 // zp[2]:4 2000002.0
+char bin_to_bcd16::hi
+char bin_to_bcd16::hi#0 // reg byte x 1000001.0
+char bin_to_bcd16::lo
+char bin_to_bcd16::lo#0 // lo zp[1]:30 285714.5714285714
+unsigned int bin_to_bcd16::return
+unsigned int bin_to_bcd16::return#0 // return zp[2]:4 277500.75
+unsigned int bin_to_bcd16::return#2 // return zp[2]:4 20002.0
+unsigned int bin_to_bcd16::return#3 // return zp[2]:4 200002.0
+unsigned int bin_to_bcd16::v
+unsigned int bin_to_bcd16::v#1 // v zp[2]:10 20002.0
+unsigned int bin_to_bcd16::v#2 // v zp[2]:10 200002.0
+unsigned int bin_to_bcd16::v#3 // v zp[2]:10 703334.6666666667
+unsigned int bin_to_bcd16::v#4 // v zp[2]:10 2000002.0
+char bin_to_bcd8(char val)
+char bin_to_bcd8::$0 // reg byte a 2.0000002E7
+char bin_to_bcd8::return
+char bin_to_bcd8::return#0 // reg byte a 202.0
+char bin_to_bcd8::return#1 // reg byte a 202.0
+char bin_to_bcd8::return#10 // reg byte a 202.0
+char bin_to_bcd8::return#11 // reg byte a 1501288.375
+char bin_to_bcd8::return#12 // reg byte a 2000002.0
+char bin_to_bcd8::return#13 // reg byte a 2000002.0
+char bin_to_bcd8::return#14 // reg byte a 20002.0
+char bin_to_bcd8::tens
+char bin_to_bcd8::tens#1 // reg byte y 1.000050001E9
+char bin_to_bcd8::tens#2 // reg byte y 1.0050500015E9
+char bin_to_bcd8::val // 100000.0
+char bin_to_bcd8::val#0 // reg byte x 202.0
+char bin_to_bcd8::val#1 // reg byte x 202.0
+char bin_to_bcd8::val#10 // reg byte x 1.2010307E7
+char bin_to_bcd8::val#2 // reg byte x 202.0
+char bin_to_bcd8::val#3 // reg byte x 2.000100002E9
+char bin_to_bcd8::val#4 // reg byte x 2000002.0
+char bin_to_bcd8::val#5 // reg byte x 2000002.0
+char bin_to_bcd8::val#6 // reg byte x 20002.0
+char bin_to_bcd8::val#7 // reg byte x 7.5503750125E8
+void check_str(const char *name , const char *actual , const char *expected)
+int check_str::$0 // zp[2]:14 202.0
+const char *check_str::actual
+const char *check_str::expected
+const char *check_str::expected#11 // expected zp[2]:16 50.5
+const char *check_str::name
+const char *check_str::name#11 // name zp[2]:26 11.222222222222221
+__constant char check_str::s1[3] = ": "
+void check_ulong(const char *name , unsigned long actual , unsigned long expected)
+unsigned long check_ulong::actual
+unsigned long check_ulong::actual#0 // actual zp[4]:73 22.0
+unsigned long check_ulong::actual#1 // actual zp[4]:73 22.0
+unsigned long check_ulong::actual#10 // actual zp[4]:73 105.5
+unsigned long check_ulong::actual#2 // actual zp[4]:73 22.0
+unsigned long check_ulong::actual#3 // actual zp[4]:73 22.0
+unsigned long check_ulong::actual#4 // actual zp[4]:73 22.0
+unsigned long check_ulong::actual#5 // actual zp[4]:73 22.0
+unsigned long check_ulong::actual#6 // actual zp[4]:73 22.0
+unsigned long check_ulong::actual#7 // actual zp[4]:73 22.0
+unsigned long check_ulong::actual#8 // actual zp[4]:73 22.0
+unsigned long check_ulong::actual#9 // actual zp[4]:73 22.0
+unsigned long check_ulong::expected
+unsigned long check_ulong::expected#10 // expected zp[4]:82 50.5
+const char *check_ulong::name
+const char *check_ulong::name#10 // name zp[2]:10 20.2
+void conio_c64_init()
+__constant char * const conio_c64_init::BASIC_CURSOR_LINE = (char *) 214
+char conio_c64_init::line
+char conio_c64_init::line#0 // reg byte x 11.0
+char conio_c64_init::line#2 // reg byte x 22.0
+__loadstore char conio_cursor_x // zp[1]:65 7042.765258215963
+__loadstore char conio_cursor_y // zp[1]:42 139738.46288209606
+__loadstore char *conio_line_color // zp[2]:49 100000.48868778281
+__loadstore char *conio_line_text // zp[2]:51 99103.62331838565
+void cputc(char c)
+char cputc::c
+char cputc::c#0 // reg byte x 70002.0
+char cputc::c#1 // reg byte x 22.0
+char cputc::c#2 // reg byte x 22.0
+char cputc::c#3 // reg byte x 22.0
+char cputc::c#4 // reg byte x 117518.0
+void cputln()
+void cputs(const char *s)
+char cputs::c
+char cputs::c#1 // reg byte x 35001.0
+const char *cputs::s
+const char *cputs::s#0 // s zp[2]:34 17500.5
+const char *cputs::s#13 // s zp[2]:34 53002.0
+const char *cputs::s#14 // s zp[2]:34 1203.0
+const char *cputs::s#2 // s zp[2]:34 202.0
+const char *cputs::s#7 // s zp[2]:34 202.0
+void cscroll()
+char * ctime_r(const unsigned long *timer , char *buf)
+char *ctime_r::buf
+char *ctime_r::return
+__loadstore volatile struct tm ctime_r::t // zp[11]:164
+const unsigned long *ctime_r::timer
+unsigned int days_before_year(unsigned int year)
+unsigned int days_before_year::$10 // zp[2]:26 700.7
+unsigned int days_before_year::$11 // zp[2]:4 2002.0
+unsigned int days_before_year::$12 // zp[2]:4 2002.0
+unsigned int days_before_year::$13 // zp[2]:4 2002.0
+unsigned int days_before_year::$14 // zp[2]:4 2002.0
+unsigned int days_before_year::$15 // zp[2]:4 2002.0
+unsigned int days_before_year::$16 // zp[2]:4 2002.0
+unsigned int days_before_year::$17 // zp[2]:4 2002.0
+unsigned int days_before_year::$18 // zp[2]:4 2002.0
+unsigned int days_before_year::$19 // zp[2]:4 2002.0
+unsigned int days_before_year::$3 // zp[2]:4 1001.0
+unsigned int days_before_year::$4 // zp[2]:10 2002.0
+unsigned int days_before_year::$5 // zp[2]:10 2002.0
+unsigned int days_before_year::$6 // zp[2]:10 1001.0
+unsigned int days_before_year::$7 // zp[2]:7 2002.0
+unsigned int days_before_year::$8 // zp[2]:10 2002.0
+unsigned int days_before_year::centuries
+unsigned int days_before_year::centuries#0 // centuries zp[2]:7 200.2
+unsigned int days_before_year::return
+unsigned int days_before_year::return#0 // return zp[2]:10 202.0
+unsigned int days_before_year::return#1 // return zp[2]:10 367.33333333333337
+unsigned int days_before_year::y
+unsigned int days_before_year::y#0 // y zp[2]:10 187.6875
+unsigned int days_before_year::year
+unsigned int days_before_year::year#0 // year zp[2]:26 350.5
+long difftime(unsigned long end , unsigned long beginning)
+unsigned long difftime::$2 // zp[4]:73 101.0
+unsigned long difftime::$3 // zp[4]:73 101.0
+unsigned long difftime::beginning
+unsigned long difftime::beginning#2 // beginning zp[4]:66 151.5
+unsigned long difftime::end
+unsigned long difftime::end#2 // end zp[4]:73 151.5
+long difftime::return
+long difftime::return#0 // return zp[4]:73 202.0
+long difftime::return#1 // return zp[4]:73 202.0
+long difftime::return#2 // return zp[4]:73 56.0
+long difftime::return#3 // return zp[4]:73 22.0
+long difftime::return#4 // return zp[4]:73 22.0
+unsigned int div16u(unsigned int dividend , unsigned int divisor)
+unsigned int div16u::dividend
+unsigned int div16u::dividend#0 // dividend zp[2]:10 200002.0
+unsigned int div16u::dividend#1 // dividend zp[2]:10 2002.0
+unsigned int div16u::dividend#2 // dividend zp[2]:10 2002.0
+unsigned int div16u::dividend#3 // dividend zp[2]:10 52002.0
+unsigned int div16u::dividend#4 // dividend zp[2]:10 20002.0
+unsigned int div16u::dividend#5 // dividend zp[2]:10 2002.0
+unsigned int div16u::dividend#6 // dividend zp[2]:10 2000002.0
+unsigned int div16u::dividend#7 // dividend zp[2]:10 200002.0
+unsigned int div16u::dividend#8 // dividend zp[2]:10 1.1239009E7
+unsigned int div16u::divisor
+unsigned int div16u::divisor#8 // divisor zp[2]:14 5000000.5
+unsigned int div16u::return
+unsigned int div16u::return#0 // return zp[2]:7 200002.0
+unsigned int div16u::return#11 // return zp[2]:7 2002.0
+unsigned int div16u::return#12 // return zp[2]:7 52002.0
+unsigned int div16u::return#13 // return zp[2]:7 1392250.875
+unsigned int div16u::return#14 // return zp[2]:7 20002.0
+unsigned int div16u::return#15 // return zp[2]:7 2002.0
+unsigned int div16u::return#16 // return zp[2]:7 2000002.0
+unsigned long div32u16u(unsigned long dividend , unsigned int divisor)
+unsigned int div32u16u::$0 // zp[2]:22 200002.0
+unsigned int div32u16u::$2 // zp[2]:24 200002.0
+unsigned long div32u16u::dividend
+unsigned long div32u16u::dividend#0 // dividend zp[4]:38 20002.0
+unsigned long div32u16u::dividend#1 // dividend zp[4]:38 20002.0
+unsigned long div32u16u::dividend#2 // dividend zp[4]:38 27500.5
+unsigned int div32u16u::divisor
+unsigned int div32u16u::divisor#2 // divisor zp[2]:28 20000.2
+unsigned long div32u16u::quotient
+unsigned int div32u16u::quotient_hi
+unsigned int div32u16u::quotient_hi#0 // quotient_hi zp[2]:31 25000.25
+unsigned int div32u16u::quotient_lo
+unsigned int div32u16u::quotient_lo#0 // quotient_lo zp[2]:7 200002.0
+unsigned long div32u16u::return
+unsigned long div32u16u::return#0 // return zp[4]:53 30000.75
+unsigned long div32u16u::return#2 // return zp[4]:53 20002.0
+unsigned long div32u16u::return#3 // return zp[4]:53 20002.0
+unsigned int divr16u(volatile unsigned int dividend , volatile unsigned int divisor , volatile unsigned int rem)
+__loadstore volatile unsigned int divr16u::dividend // zp[2]:12 1.10200004E7
+__loadstore volatile unsigned int divr16u::divisor // zp[2]:18 1700000.4999999998
+__loadstore volatile unsigned int divr16u::rem // zp[2]:36 72130.72727272728
+unsigned int divr16u::return
+unsigned int divr16u::return#0 // return zp[2]:7 2.20400008E7
+unsigned int divr16u::return#2 // return zp[2]:7 2.0000002E7
+unsigned int divr16u::return#3 // return_1 zp[2]:31 200002.0
+unsigned int divr16u::return#4 // return zp[2]:7 200002.0
+char failures
+char failures#0 // failures zp[1]:93 20.2
+char failures#1 // failures zp[1]:93 6.459999999999999
+char failures#100 // failures zp[1]:93 1.1578947368421053
+char failures#2 // failures zp[1]:93 33.666666666666664
+char failures#25 // failures zp[1]:93 22.0
+char failures#3 // failures zp[1]:93 5.872727272727273
+char failures#30 // failures zp[1]:93 44.57142857142857
+char failures#32 // failures zp[1]:93 104.0
+struct tm * gmtime_r(const unsigned long *timer , struct tm *result)
+unsigned int gmtime_r::$10 // zp[2]:7 1001.0
+unsigned int gmtime_r::$11 // zp[2]:10 2002.0
+bool gmtime_r::$12 // reg byte a 70002.0
+unsigned int gmtime_r::$35 // zp[2]:10 2002.0
+char gmtime_r::$39 // reg byte x 2002.0
+unsigned int gmtime_r::$6 // zp[2]:4 2002.0
+char gmtime_r::$8 // reg byte a 2002.0
+unsigned int gmtime_r::days
+unsigned int gmtime_r::days#0 // days zp[2]:2 500.5
+unsigned int gmtime_r::days#1 // days zp[2]:2 2002.0
+unsigned int gmtime_r::days#11 // days zp[2]:2 6875.5
+unsigned int gmtime_r::days#14 // days zp[2]:2 13250.5
+unsigned int gmtime_r::days#2 // days zp[2]:2 2002.0
+unsigned int gmtime_r::days#3 // days zp[2]:2 500.5
+unsigned int gmtime_r::days#4 // days zp[2]:2 35001.0
+unsigned int gmtime_r::days#5 // days zp[2]:2 35001.0
+char gmtime_r::dim
+char gmtime_r::dim#0 // dim zp[1]:33 46668.0
+char gmtime_r::dim#1 // dim zp[1]:33 70002.0
+char gmtime_r::dim#2 // dim zp[1]:33 87502.5
+bool gmtime_r::leap
+bool gmtime_r::leap#0 // reg byte x 3600.2
+char gmtime_r::mon
+char gmtime_r::mon#1 // reg byte y 70002.0
+char gmtime_r::mon#2 // reg byte y 17625.625
+char gmtime_r::q
+char gmtime_r::q#0 // reg byte x 500.5
+struct tm *gmtime_r::result
+struct tm *gmtime_r::result#13 // result zp[2]:26 1.6557377049180328
+struct tm *gmtime_r::return
+struct tm *gmtime_r::return#3 // return zp[2]:26 202.0
+unsigned long gmtime_r::t
+unsigned long gmtime_r::t#0 // t zp[4]:66 2002.0
+const unsigned long *gmtime_r::timer
+const unsigned long *gmtime_r::timer#4 // timer zp[2]:16 1001.0
+unsigned int gmtime_r::year
+unsigned int gmtime_r::year#10 // year zp[2]:10 8308.153846153846
+unsigned int gmtime_r::year#3 // year zp[2]:10 2002.0
+unsigned int gmtime_r::year#4 // year zp[2]:10 70002.0
+unsigned int gmtime_r::yl
+unsigned int gmtime_r::yl#0 // yl zp[2]:34 35001.0
+void gotoxy(char x , char y)
+unsigned int gotoxy::$10 // zp[2]:86 202.0
+char *gotoxy::$5 // zp[2]:106 202.0
+char *gotoxy::$6 // zp[2]:86 202.0
+unsigned int gotoxy::$8 // zp[2]:86 151.5
+unsigned int gotoxy::$9 // zp[2]:104 202.0
+unsigned int gotoxy::line_offset
+unsigned int gotoxy::line_offset#0 // line_offset zp[2]:86 101.0
+char gotoxy::x // 100000.0
+__constant char gotoxy::x#2 = 0 // x
+char gotoxy::y // 99000.0
+char gotoxy::y#2 // reg byte x 71.0
+char gotoxy::y#4 // reg byte x 67.33333333333333
+bool is_leap_year(unsigned int year)
+uint4_t is_leap_year::$0 // reg byte a 200002.0
+uint4_t is_leap_year::$6 // reg byte a 200002.0
+unsigned int is_leap_year::century
+unsigned int is_leap_year::century#0 // century zp[2]:7 100001.0
+bool is_leap_year::return
+bool is_leap_year::return#1 // reg byte a 27220.8
+bool is_leap_year::return#10 // reg byte a 202.0
+bool is_leap_year::return#2 // reg byte a 200002.0
+bool is_leap_year::return#4 // reg byte a 70002.0
+bool is_leap_year::return#5 // reg byte a 2002.0
+unsigned int is_leap_year::year
+unsigned int is_leap_year::year#0 // year zp[2]:10 70002.0
+unsigned int is_leap_year::year#1 // year zp[2]:10 2002.0
+unsigned int is_leap_year::year#2 // year zp[2]:10 202.0
+unsigned int is_leap_year::year#3 // year zp[2]:10 78701.66666666666
+void main()
+long main::$25 // zp[4]:73 11.0
+long main::$27 // zp[4]:73 11.0
+unsigned long main::$42 // zp[4]:43 22.0
+char main::$48 // reg byte a 22.0
+char main::$51 // reg byte a 22.0
+unsigned int main::$61 // zp[2]:121 8.25
+unsigned int main::$62 // zp[2]:121 22.0
+char main::$64 // reg byte a 22.0
+unsigned int main::$66 // zp[2]:113 22.0
+unsigned int main::$67 // zp[2]:113 22.0
+unsigned int main::$68 // zp[2]:113 22.0
+unsigned int main::$69 // zp[2]:113 22.0
+unsigned int main::$70 // zp[2]:113 22.0
+unsigned int main::$71 // zp[2]:113 22.0
+unsigned int main::$72 // zp[2]:113 22.0
+char main::$74 // zp[1]:125 16.5
+char main::$75 // reg byte a 22.0
+unsigned int main::$76 // zp[2]:123 8.25
+unsigned int main::$77 // zp[2]:123 22.0
+char main::$79 // reg byte a 22.0
+char main::$81 // reg byte a 22.0
+char main::$82 // reg byte a 22.0
+unsigned int main::$84 // zp[2]:115 22.0
+unsigned int main::$85 // zp[2]:115 22.0
+unsigned int main::$86 // zp[2]:115 22.0
+unsigned int main::$87 // zp[2]:115 22.0
+unsigned int main::$88 // zp[2]:115 22.0
+unsigned int main::$89 // zp[2]:115 22.0
+unsigned int main::$90 // zp[2]:115 22.0
+__constant char main::buf[$28] = { fill( $28, 0) }
+__constant char main::expected[$1a] = "Thu Jan  1 00:00:00 1970
+"
+__constant char main::expected1[$1a] = "Sun Sep  9 01:46:40 2001
+"
+__constant char main::expected10[$23] = "2023-11-14 22:13:20 22:13 11/14/23"
+__constant char main::expected2[$1a] = "Tue Nov 14 22:13:20 2023
+"
+__constant char main::expected3[$1a] = "Tue Feb 29 00:00:00 2000
+"
+__constant char main::expected4[$1a] = "Tue Jan 19 03:14:07 2038
+"
+__constant char main::expected5[$1a] = "Mon Mar  1 00:00:00 2100
+"
+__constant char main::expected6[$1a] = "Sun Feb  7 06:28:15 2106
+"
+__constant char main::expected7[$14] = "2023-11-14 22:13:20"
+__constant char main::expected8[$1d] = "Tue Tuesday Nov November 318"
+__constant char main::expected9[$15] = "10 PM 14 23 20 2 2 %"
+__constant char main::format[$12] = "%Y-%m-%d %H:%M:%S"
+__constant char main::format1[$f] = "%a %A %b %B %j"
+__constant char main::format2[$18] = "%I %p %e %y %C %u %w %%"
+__constant char main::format3[$c] = "%F %T %R %D"
+__constant char main::format4[9] = "%Y-%m-%d"
+__constant char main::name[6] = "epoch"
+__constant char main::name1[4] = "1e9"
+__constant char main::name10[$a] = "normalize"
+__constant char main::name11[$f] = "normalize year"
+__constant char main::name12[$e] = "normalize mon"
+__constant char main::name13[$c] = "before 1970"
+__constant char main::name14[$a] = "difftime+"
+__constant char main::name15[$a] = "difftime-"
+__constant char main::name16[$d] = "strftime iso"
+__constant char main::name17[$f] = "strftime names"
+__constant char main::name18[$e] = "strftime misc"
+__constant char main::name19[$13] = "strftime composite"
+__constant char main::name2[6] = "1.7e9"
+__constant char main::name20[$12] = "strftime overflow"
+__constant char main::name3[$b] = "2000-02-29"
+__constant char main::name4[5] = "2038"
+__constant char main::name5[$b] = "2100-03-01"
+__constant char main::name6[4] = "max"
+__constant char main::name7[7] = "mktime"
+__constant char main::name8[5] = "yday"
+__constant char main::name9[5] = "wday"
+__constant char main::s[8] = "tests: "
+__constant char main::s1[$c] = " failures: "
+__constant char main::s3[9] = "all ok
+"
+__loadstore volatile unsigned long main::t // zp[4]:117 47.66666666666666
+__loadstore volatile struct tm main::tm // zp[11]:175
+void * memcpy(void *destination , void *source , unsigned int num)
+void *memcpy::destination
+void *memcpy::destination#2 // destination zp[2]:4
+char *memcpy::dst
+char *memcpy::dst#1 // dst zp[2]:4 4.285735714714286E9
+char *memcpy::dst#5 // dst zp[2]:4 2.0016695834000004E10
+char *memcpy::dst#8 // dst zp[2]:4 2.00000002E8
+char memcpy::i
+char memcpy::i#1 // reg byte y 1.500001125015E11
+char memcpy::i#2 // reg byte y 2.00000150002E11
+char memcpy::i1
+char memcpy::i1#1 // reg byte y 1.50000750015E10
+char memcpy::i1#2 // reg byte y 2.0000100002E10
+unsigned int memcpy::num
+char memcpy::pages
+char memcpy::pages#1 // reg byte x 1.50000750015E10
+char memcpy::pages#4 // reg byte x 2.857157143142857E9
+char memcpy::rem
+__constant char memcpy::rem#0 = (char)(unsigned int)$19*$28-$28 // rem
+void *memcpy::return
+void *memcpy::source
+void *memcpy::source#2 // source zp[2]:2
+char *memcpy::src
+char *memcpy::src#1 // src zp[2]:2 3.750018750375E9
+char *memcpy::src#5 // src zp[2]:2 2.4020035000800003E10
+char *memcpy::src#8 // src zp[2]:2 1.00000001E8
+void * memset(void *str , char c , unsigned int num)
+char memset::c // 99000.0
+char memset::c#6 // reg byte x 2.0000100002E9
+char *memset::dst
+char memset::i
+char memset::i1
+char memset::i1#1 // reg byte y 1.50000750015E10
+char memset::i1#2 // reg byte y 1.50000750015E10
+unsigned int memset::num
+char memset::pages
+char memset::rem
+__constant char memset::rem#0 = $28 // rem
+void *memset::return
+void *memset::str
+void *memset::str#2 // str zp[2]:2
+unsigned long mktime(struct tm *tp)
+unsigned int mktime::$10 // zp[2]:47 202.0
+bool mktime::$12 // reg byte x 101.0
+unsigned long mktime::$17 // zp[4]:94 202.0
+unsigned int mktime::$20 // zp[2]:78 202.0
+unsigned long mktime::$34 // zp[4]:108 202.0
+unsigned int mktime::$44 // zp[2]:78 84.16666666666666
+unsigned int mktime::$45 // zp[2]:71 202.0
+unsigned int mktime::$46 // zp[2]:71 202.0
+unsigned int mktime::$47 // zp[2]:71 202.0
+unsigned int mktime::$48 // zp[2]:71 202.0
+unsigned int mktime::$49 // zp[2]:71 202.0
+unsigned int mktime::$50 // zp[2]:78 202.0
+char mktime::$60 // zp[1]:9 134.66666666666666
+char mktime::$61 // reg byte a 202.0
+unsigned int mktime::$63 // zp[2]:57 202.0
+char mktime::$65 // reg byte a 202.0
+char mktime::$67 // reg byte a 202.0
+char mktime::$68 // reg byte a 202.0
+unsigned int mktime::$70 // zp[2]:57 202.0
+unsigned int mktime::$71 // zp[2]:57 202.0
+unsigned int mktime::$72 // zp[2]:57 202.0
+unsigned int mktime::$73 // zp[2]:57 202.0
+unsigned int mktime::$74 // zp[2]:57 202.0
+unsigned int mktime::$75 // zp[2]:57 202.0
+unsigned int mktime::$76 // zp[2]:57 202.0
+char mktime::$8 // reg byte x 101.0
+char mktime::$9 // reg byte a 202.0
+unsigned long mktime::base
+unsigned long mktime::base#0 // base zp[4]:94 18.9375
+unsigned long mktime::days
+unsigned long mktime::days#0 // days zp[4]:82 50.5
+unsigned long mktime::days#1 // days zp[4]:82 57.714285714285715
+unsigned long mktime::days#2 // days zp[4]:82 202.0
+unsigned long mktime::days#3 // days zp[4]:82 101.0
+unsigned long mktime::days#4 // days zp[4]:82 202.0
+unsigned long mktime::days#5 // days zp[4]:82 202.0
+char mktime::mon
+char mktime::mon#0 // reg byte x 47.13333333333333
+char mktime::mon#1 // mon zp[1]:6 26.933333333333334
+unsigned long mktime::return
+unsigned long mktime::return#1 // return zp[4]:73 26.8
+unsigned long mktime::return#10 // return zp[4]:73 22.0
+unsigned long mktime::return#11 // return zp[4]:73 22.0
+unsigned long mktime::return#3 // return zp[4]:73 202.0
+unsigned long mktime::return#5 // return zp[4]:73 22.0
+unsigned long mktime::secs
+unsigned long mktime::secs#0 // secs zp[4]:43 22.444444444444443
+unsigned long mktime::secs#1 // secs zp[4]:43 202.0
+unsigned long mktime::secs#2 // secs zp[4]:43 202.0
+__loadstore volatile unsigned long mktime::t // zp[4]:130 1.578125
+struct tm *mktime::tp
+unsigned int mktime::year
+unsigned int mktime::year#0 // year zp[2]:80 16.833333333333332
+unsigned int mktime::year#1 // year zp[2]:80 33.666666666666664
+unsigned long mul16u(unsigned int a , unsigned int b)
+uint4_t mul16u::$1 // reg byte a 70002.0
+unsigned int mul16u::a
+unsigned int mul16u::a#0 // a zp[2]:16 202.0
+unsigned int mul16u::a#1 // a zp[2]:16 202.0
+unsigned int mul16u::a#2 // a zp[2]:16 202.0
+unsigned int mul16u::a#3 // a zp[2]:16 35001.0
+unsigned int mul16u::a#4 // a zp[2]:16 23500.833333333332
+unsigned int mul16u::a#7 // a zp[2]:16 652.0
+unsigned int mul16u::b
+unsigned int mul16u::b#3 // b zp[2]:7
+unsigned long mul16u::mb
+unsigned long mul16u::mb#0 // mb zp[4]:38 2002.0
+unsigned long mul16u::mb#1 // mb zp[4]:38 70002.0
+unsigned long mul16u::mb#2 // mb zp[4]:38 15143.42857142857
+unsigned long mul16u::res
+unsigned long mul16u::res#1 // res zp[4]:43 70002.0
+unsigned long mul16u::res#2 // res zp[4]:43 13163.25
+unsigned long mul16u::res#6 // res zp[4]:43 35001.0
+unsigned long mul16u::return
+unsigned long mul16u::return#0 // return zp[4]:43 202.0
+unsigned long mul16u::return#1 // return zp[4]:43 202.0
+unsigned long mul16u::return#2 // return zp[4]:43 202.0
+char * put2(char *p , char v , char pad)
+char *put2::p
+char *put2::p#0 // p zp[2]:28 1001.0
+char *put2::p#1 // p zp[2]:28 1001.0
+char *put2::p#2 // p zp[2]:28 1001.0
+char *put2::p#3 // p zp[2]:28 1001.0
+char *put2::p#4 // p zp[2]:28 2801.0
+char put2::pad
+char put2::pad#4 // pad zp[1]:21 1666.8333333333333
+char *put2::return
+char *put2::return#0 // return zp[2]:28 2002.0
+char *put2::return#1 // return zp[2]:28 2002.0
+char *put2::return#10 // return zp[2]:28 2334.1666666666665
+char *put2::return#2 // return zp[2]:28 2002.0
+char *put2::return#3 // return zp[2]:28 2002.0
+char put2::v
+char put2::v#0 // reg byte x 2002.0
+char put2::v#1 // reg byte x 2002.0
+char put2::v#2 // reg byte x 2002.0
+char put2::v#3 // reg byte x 2002.0
+char put2::v#4 // reg byte x 14005.0
+char * put3(char *p , const char *table , char idx)
+char put3::$0 // reg byte a 20002.0
+char put3::$2 // reg byte a 20002.0
+const char *put3::e
+const char *put3::e#0 // e zp[2]:10 8000.8
+char put3::idx // 98000.0
+char put3::idx#0 // reg byte x 2002.0
+char put3::idx#1 // reg byte x 2002.0
+char put3::idx#2 // reg byte x 11002.0
+char *put3::p
+char *put3::p#1 // p zp[2]:28 1001.0
+char *put3::p#2 // p zp[2]:28 15001.5
+char *put3::p#3 // p zp[2]:28 15001.5
+char *put3::p#5 // p zp[2]:28 4200.6
+char *put3::return
+char *put3::return#0 // return zp[2]:28 2002.0
+char *put3::return#1 // return zp[2]:28 2002.0
+char *put3::return#2 // return zp[2]:28 3000.75
+const char *put3::table
+const char *put3::table#2 // table zp[2]:10 3333.6666666666665
+char * put4(char *p , unsigned int v)
+unsigned int put4::$1 // zp[2]:47 5000.5
+unsigned int put4::b
+unsigned int put4::b#0 // b zp[2]:4 2500.25
+char *put4::p
+char *put4::p#0 // p zp[2]:28 1833.6666666666665
+char *put4::p#1 // p zp[2]:28 20002.0
+char *put4::return
+char *put4::return#0 // return zp[2]:28 2002.0
+char *put4::return#1 // return zp[2]:28 3667.333333333333
+unsigned int put4::v
+unsigned int put4::v#0 // v zp[2]:26 5501.0
+char * put_bcd8(char *p , char b , char pad)
+char put_bcd8::$3 // reg byte x 200002.0
+char put_bcd8::$5 // reg byte x 300003.0
+uint4_t put_bcd8::$6 // reg byte a 200002.0
+char put_bcd8::$7 // reg byte a 200002.0
+char put_bcd8::b // 99000.0
+char put_bcd8::b#0 // b zp[1]:20 6667.333333333333
+char put_bcd8::b#1 // b zp[1]:20 20002.0
+char put_bcd8::b#2 // b zp[1]:20 20002.0
+char put_bcd8::b#3 // b zp[1]:20 32857.857142857145
+char *put_bcd8::p
+char *put_bcd8::p#0 // p zp[2]:28 75000.75
+char *put_bcd8::p#2 // p zp[2]:28 10001.0
+char *put_bcd8::p#3 // p zp[2]:28 10001.0
+char *put_bcd8::p#4 // p zp[2]:28 10001.0
+char *put_bcd8::p#5 // p zp[2]:28 38334.166666666664
+char put_bcd8::pad // 98000.0
+char put_bcd8::pad#0 // reg byte x 20002.0
+char put_bcd8::pad#3 // reg byte x 36667.33333333333
+char *put_bcd8::return
+char *put_bcd8::return#0 // return zp[2]:28 26000.800000000003
+char *put_bcd8::return#2 // return zp[2]:28 20002.0
+char *put_bcd8::return#3 // return zp[2]:28 20002.0
+char *put_bcd8::return#4 // return zp[2]:28 20002.0
+char put_bcd8::tens
+char put_bcd8::tens#0 // reg byte a 150001.5
+unsigned int rem16u
+unsigned int rem16u#104 // rem16u zp[2]:36 4737.042253521126
+unsigned int rem16u#114 // rem16u zp[2]:36 21.95833333333333
+unsigned int rem16u#121 // rem16u zp[2]:36 19.27777777777778
+unsigned int rem16u#200 // rem16u zp[2]:36 45368.0
+unsigned int rem16u#206 // rem16u zp[2]:36 36502.5
+unsigned int rem16u#209 // rem16u zp[2]:36 11.75
+unsigned int rem16u#216 // rem16u zp[2]:36 14286.507042253514
+unsigned int rem16u#217 // rem16u zp[2]:36 17.133333333333333
+__constant char s[6] = "FAIL "
+__constant char s2[3] = "
+"
+void set_time(unsigned long t)
+char set_time::$10 // reg byte a 202.0
+char set_time::$11 // zp[1]:33 151.5
+char set_time::$12 // reg byte a 202.0
+unsigned int set_time::$14 // zp[2]:47 202.0
+char set_time::$16 // reg byte a 202.0
+char set_time::$18 // reg byte a 202.0
+char set_time::$19 // reg byte a 202.0
+unsigned int set_time::$21 // zp[2]:47 202.0
+unsigned int set_time::$22 // zp[2]:47 202.0
+unsigned int set_time::$23 // zp[2]:47 202.0
+unsigned int set_time::$24 // zp[2]:47 202.0
+unsigned int set_time::$25 // zp[2]:47 202.0
+unsigned int set_time::$26 // zp[2]:47 202.0
+unsigned int set_time::$27 // zp[2]:47 202.0
+char set_time::$9 // reg byte a 202.0
+char set_time::h
+char set_time::h#0 // h zp[1]:77 33.666666666666664
+char set_time::h12
+char set_time::h12#0 // reg byte a 101.0
+char set_time::h12#2 // reg byte a 202.0
+char set_time::hb
+char set_time::hb#0 // reg byte x 151.5
+char set_time::hb#1 // reg byte x 202.0
+char set_time::hb#2 // reg byte x 151.5
+char set_time::m
+char set_time::m#0 // m zp[1]:64 7.214285714285714
+char set_time::s
+char set_time::s#0 // s zp[1]:59 6.3125
+unsigned long set_time::sod
+unsigned long set_time::sod#0 // sod zp[4]:38 134.66666666666666
+unsigned long set_time::t
+__constant unsigned long set_time::t#0 = $6553f100 // t
+__loadstore struct $4 sf = {} // mem[5]
+void sf_abbr(const char *table , char idx)
+char sf_abbr::$0 // reg byte a 20002.0
+char sf_abbr::$5 // reg byte a 20002.0
+const char *sf_abbr::e
+const char *sf_abbr::e#0 // e zp[2]:10 8000.8
+char sf_abbr::idx
+char sf_abbr::idx#0 // reg byte x 52002.0
+char sf_abbr::idx#1 // reg byte x 52002.0
+char sf_abbr::idx#2 // reg byte x 52002.0
+char sf_abbr::idx#3 // reg byte x 52002.0
+char sf_abbr::idx#4 // reg byte x 62003.0
+const char *sf_abbr::table
+const char *sf_abbr::table#4 // table zp[2]:10 3333.6666666666665
+void sf_char(char c)
+char sf_char::c // 100000.0
+char sf_char::c#0 // reg byte x 52002.0
+char sf_char::c#12 // reg byte x 52002.0
+char sf_char::c#13 // reg byte x 2100002.0
+char sf_char::c#14 // reg byte x 2.0100002E7
+char sf_char::c#15 // reg byte x 2.0100002E7
+char sf_char::c#16 // reg byte x 20002.0
+char sf_char::c#17 // reg byte x 20002.0
+char sf_char::c#18 // reg byte x 20002.0
+char sf_char::c#23 // reg byte x 6.06160045E7
+void sf_date_us(const struct tm *tp)
+const struct tm *sf_date_us::tp
+__constant const struct tm *sf_date_us::tp#0 = &main::tm // tp
+void sf_num(unsigned int v , char width , char pad)
+unsigned int sf_num::$1 // zp[2]:47 100001.0
+unsigned int sf_num::$2 // zp[2]:22 200002.0
+uint4_t sf_num::$3 // reg byte a 100001.0
+unsigned int sf_num::$4 // zp[2]:24 200002.0
+uint4_t sf_num::$5 // reg byte a 100001.0
+uint4_t sf_num::$6 // reg byte a 100001.0
+unsigned int sf_num::b
+unsigned int sf_num::b#0 // b zp[2]:4 55556.11111111111
+__constant char sf_num::d[4] = { fill( 4, 0) }
+char sf_num::first
+char sf_num::first#1 // first zp[1]:6 2.0100002E7
+char sf_num::first#2 // first zp[1]:6 5594445.111111111
+char sf_num::i
+char sf_num::i#0 // i zp[1]:9 200002.0
+char sf_num::i#1 // i zp[1]:9 2.0100002E7
+char sf_num::i#2 // i zp[1]:9 7562501.0
+char sf_num::i1
+char sf_num::i1#1 // i1 zp[1]:6 2.0100002E7
+char sf_num::i1#2 // i1 zp[1]:6 1.256250125E7
+char sf_num::pad
+char sf_num::pad#31 // pad zp[1]:20 402000.04
+unsigned int sf_num::v
+unsigned int sf_num::v#0 // v zp[2]:7 52002.0
+unsigned int sf_num::v#1 // v zp[2]:7 52002.0
+unsigned int sf_num::v#10 // v zp[2]:7 52002.0
+unsigned int sf_num::v#11 // v zp[2]:7 52002.0
+unsigned int sf_num::v#12 // v zp[2]:7 52002.0
+unsigned int sf_num::v#13 // v zp[2]:7 52002.0
+unsigned int sf_num::v#14 // v zp[2]:7 52002.0
+unsigned int sf_num::v#15 // v zp[2]:7 52002.0
+unsigned int sf_num::v#17 // v zp[2]:7 52002.0
+unsigned int sf_num::v#18 // v zp[2]:7 52002.0
+unsigned int sf_num::v#19 // v zp[2]:7 20002.0
+unsigned int sf_num::v#2 // v zp[2]:7 52002.0
+unsigned int sf_num::v#20 // v zp[2]:7 20002.0
+unsigned int sf_num::v#21 // v zp[2]:7 20002.0
+unsigned int sf_num::v#22 // v zp[2]:7 20002.0
+unsigned int sf_num::v#23 // v zp[2]:7 20002.0
+unsigned int sf_num::v#24 // v zp[2]:7 20002.0
+unsigned int sf_num::v#25 // v zp[2]:7 628025.0
+unsigned int sf_num::v#26 // v zp[2]:7 52002.0
+unsigned int sf_num::v#3 // v zp[2]:7 52002.0
+unsigned int sf_num::v#4 // v zp[2]:7 52002.0
+unsigned int sf_num::v#5 // v zp[2]:7 52002.0
+unsigned int sf_num::v#6 // v zp[2]:7 52002.0
+unsigned int sf_num::v#7 // v zp[2]:7 52002.0
+unsigned int sf_num::v#8 // v zp[2]:7 52002.0
+unsigned int sf_num::v#9 // v zp[2]:7 52002.0
+char sf_num::width
+char sf_num::width#31 // width zp[1]:21 402000.04
+void sf_str(const char *s)
+const char *sf_str::s
+const char *sf_str::s#0 // s zp[2]:16 52002.0
+const char *sf_str::s#1 // s zp[2]:16 52002.0
+const char *sf_str::s#2 // s zp[2]:16 26001.0
+const char *sf_str::s#3 // s zp[2]:16 2100002.0
+const char *sf_str::s#4 // s zp[2]:16 1052501.25
+const char *sf_str::s#7 // s zp[2]:16 88004.0
+void sf_time(const struct tm *tp , bool withSeconds)
+const struct tm *sf_time::tp
+bool sf_time::withSeconds
+bool sf_time::withSeconds#3 // withSeconds zp[1]:77 1428.7142857142858
+unsigned int split_days(unsigned long t)
+unsigned long split_days::$1 // zp[4]:53 10001.0
+unsigned long split_days::$2 // zp[4]:60 10001.0
+char split_days::$3 // reg byte a 20002.0
+unsigned long split_days::$5 // zp[4]:60 20002.0
+unsigned int split_days::days
+unsigned int split_days::return
+unsigned int split_days::return#1 // return zp[2]:2 2002.0
+unsigned int split_days::return#2 // return zp[2]:2 1571.7142857142858
+unsigned long split_days::t
+unsigned long split_days::t#1 // t zp[4]:66 2002.0
+unsigned long split_days::t#2 // t zp[4]:66 2625.375
+char split_h
+char split_h#109 // split_h zp[1]:112 7.163934426229508
+char split_h#31 // split_h zp[1]:112 21.95833333333333
+char split_h#35 // split_h zp[1]:112 169.92424242424244
+void split_hms(unsigned long sod)
+unsigned long split_hms::$0 // zp[4]:53 10001.0
+unsigned int split_hms::$1 // zp[2]:7 10001.0
+unsigned long split_hms::sod
+unsigned long split_hms::sod#0 // sod zp[4]:38 202.0
+unsigned long split_hms::sod#1 // sod zp[4]:38 2002.0
+unsigned long split_hms::sod#2 // sod zp[4]:38 11103.0
+char split_m
+char split_m#108 // split_m zp[1]:98 7.163934426229508
+char split_m#31 // split_m zp[1]:98 21.95833333333333
+char split_m#35 // split_m zp[1]:98 180.88709677419354
+char split_s
+char split_s#108 // split_s zp[1]:99 7.163934426229508
+char split_s#31 // split_s zp[1]:99 21.95833333333333
+char split_s#35 // split_s zp[1]:99 180.88709677419354
+unsigned long split_sod
+unsigned long split_sod#106 // split_sod zp[4]:100 7.163934426229508
+unsigned long split_sod#31 // split_sod zp[4]:100 21.95833333333333
+unsigned long split_sod#35 // split_sod zp[4]:100 175.234375
+int strcmp(const char *str1 , const char *str2)
+char strcmp::$0 // reg byte a 1001.0
+int strcmp::return
+int strcmp::return#0 // return zp[2]:14 2002.0
+int strcmp::return#2 // return zp[2]:14 367.33333333333337
+int strcmp::return#3 // return zp[2]:14 202.0
+char *strcmp::s1
+char *strcmp::s1#1 // s1 zp[2]:34 35001.0
+char *strcmp::s1#2 // s1 zp[2]:34 47001.66666666667
+char *strcmp::s2
+char *strcmp::s2#1 // s2 zp[2]:16 70002.0
+char *strcmp::s2#2 // s2 zp[2]:16 26751.25
+const char *strcmp::str1
+const char *strcmp::str2
+const char *strcmp::str2#0 // str2 zp[2]:16 551.0
+unsigned int strftime(char *s , unsigned int maxsize , const char *format , const struct tm *tp)
+unsigned int strftime::$10 // zp[2]:34 1.81437125748503
+char strftime::$110 // zp[1]:59 39001.5
+char strftime::$111 // reg byte a 52002.0
+unsigned int strftime::$112 // zp[2]:57 19500.75
+unsigned int strftime::$113 // zp[2]:57 52002.0
+char strftime::$115 // reg byte a 52002.0
+char strftime::$117 // reg byte a 52002.0
+char strftime::$118 // reg byte a 52002.0
+unsigned int strftime::$120 // zp[2]:26 52002.0
+unsigned int strftime::$121 // zp[2]:26 52002.0
+unsigned int strftime::$122 // zp[2]:26 52002.0
+unsigned int strftime::$123 // zp[2]:26 52002.0
+unsigned int strftime::$124 // zp[2]:26 52002.0
+unsigned int strftime::$125 // zp[2]:26 52002.0
+unsigned int strftime::$126 // zp[2]:26 52002.0
+__constant char *strftime::$56 = "AM"
+__constant char *strftime::$57 = "PM"
+char strftime::$76 // reg byte a 52002.0
+char strftime::$77 // reg byte a 52002.0
+bool strftime::$9 // reg byte a 202.0
+char strftime::c
+char strftime::c#0 // reg byte x 26001.0
+char strftime::f
+char strftime::f#0 // f zp[1]:64 24471.529411764703
+const char *strftime::format
+const char *strftime::format#0 // format zp[2]:2 17334.0
+const char *strftime::format#1 // format zp[2]:2 5385.921428571431
+const char *strftime::format#105 // format zp[2]:2 6.733333333333333
+const char *strftime::format#7 // format zp[2]:2 208033.25
+char strftime::h12
+char strftime::h12#0 // reg byte a 39001.5
+unsigned int strftime::maxsize
+unsigned int strftime::maxsize#30 // maxsize zp[2]:34 67.33333333333333
+char strftime::mn
+char strftime::mn#0 // mn zp[1]:70 50.5
+char strftime::mn#37 // mn zp[1]:70 513.8421052631579
+unsigned int strftime::return
+unsigned int strftime::return#1 // return zp[2]:34 37.33333333333333
+unsigned int strftime::return#10 // return zp[2]:34 22.0
+unsigned int strftime::return#2 // return zp[2]:34 202.0
+char *strftime::s
+const struct tm *strftime::tp
+char strftime::wd
+char strftime::wd#0 // wd zp[1]:33 75.75
+char strftime::wd#41 // wd zp[1]:33 1007.141935483871
+unsigned int strftime::year
+unsigned int strftime::year#0 // year zp[2]:80 861.6291390728476
+char tests
+char tests#0 // tests zp[1]:92 3.3636363636363633
+char tests#100 // tests zp[1]:92 3.5166666666666666
+char tests#101 // tests zp[1]:92 1.3333333333333333
+char tests#30 // tests zp[1]:92 211.0
+char tests#32 // tests zp[1]:92 211.0
+unsigned long time(unsigned long *timer)
+unsigned int time::$17 // zp[2]:78 84.16666666666666
+unsigned int time::$18 // zp[2]:71 202.0
+unsigned int time::$19 // zp[2]:71 202.0
+unsigned int time::$20 // zp[2]:71 202.0
+unsigned int time::$21 // zp[2]:71 202.0
+unsigned int time::$22 // zp[2]:71 202.0
+unsigned int time::$23 // zp[2]:78 202.0
+char time::$4 // reg byte a 202.0
+char time::$7 // reg byte a 101.0
+unsigned int time::$8 // zp[2]:78 202.0
+char time::$9 // reg byte a 202.0
+char time::h
+char time::h#0 // reg byte y 27.545454545454547
+char time::hr
+char time::hr#0 // reg byte x 101.0
+char time::hr#2 // reg byte x 202.0
+char time::hr#3 // reg byte x 303.0
+char time::hr#4 // reg byte x 101.0
+char time::m
+char time::m#0 // m zp[1]:33 11.222222222222221
+unsigned long time::now
+unsigned long time::return
+unsigned long time::return#0 // return zp[4]:43 37.33333333333333
+unsigned long time::return#2 // return zp[4]:43 22.0
+char time::s
+char time::s#0 // s zp[1]:30 6.733333333333333
+unsigned long time::sod
+unsigned long time::sod#0 // sod zp[4]:43 15.538461538461538
+unsigned long time::sod#1 // sod zp[4]:43 40.4
+unsigned long time::sod#2 // sod zp[4]:43 75.75
+unsigned long *time::timer
+unsigned long time_day_base
+unsigned long time_day_base#0 // time_day_base zp[4]:88 202.0
+unsigned long time_day_base#1 // time_day_base zp[4]:88 303.0
+unsigned long time_day_base#13 // time_day_base zp[4]:88 3.564705882352941
+unsigned long time_last_sod
+unsigned long time_last_sod#12 // time_last_sod zp[4]:126 2.433734939759036
+void tod_set_frequency(char hz)
+char tod_set_frequency::cra
+char tod_set_frequency::cra#0 // reg byte a 202.0
+char tod_set_frequency::cra#1 // reg byte a 202.0
+char tod_set_frequency::hz // 100000.0
+char year_mod100(unsigned int year)
+char year_mod100::return
+char year_mod100::return#0 // reg byte a 52002.0
+char year_mod100::return#1 // reg byte a 34000.75
+char year_mod100::return#3 // reg byte a 20002.0
+unsigned int year_mod100::year
+unsigned int year_mod100::year#0 // year zp[2]:10 52002.0
+unsigned int year_mod100::year#1 // year zp[2]:10 20002.0
+unsigned int year_mod100::year#2 // year zp[2]:10 136003.0
+
+reg byte x [ conio_c64_init::line#2 conio_c64_init::line#0 ]
+reg byte x [ gotoxy::y#4 gotoxy::y#2 ]
+reg byte y [ gmtime_r::mon#2 gmtime_r::mon#1 ]
+zp[4]:100 [ split_sod#106 split_sod#35 split_sod#31 ]
+zp[1]:112 [ split_h#109 split_h#35 split_h#31 ]
+zp[1]:98 [ split_m#108 split_m#35 split_m#31 ]
+zp[1]:99 [ split_s#108 split_s#35 split_s#31 ]
+zp[4]:73 [ mktime::return#1 mktime::return#3 mktime::return#5 mktime::return#11 mktime::return#10 check_ulong::actual#10 check_ulong::actual#0 check_ulong::actual#1 check_ulong::actual#2 check_ulong::actual#3 check_ulong::actual#4 check_ulong::actual#5 check_ulong::actual#6 check_ulong::actual#7 check_ulong::actual#8 check_ulong::actual#9 main::$25 main::$27 difftime::end#2 difftime::$2 difftime::$3 difftime::return#2 difftime::return#0 difftime::return#1 difftime::return#4 difftime::return#3 ]
+zp[1]:92 [ tests#32 tests#30 tests#0 tests#100 tests#101 ]
+zp[4]:82 [ check_ulong::expected#10 mktime::days#5 mktime::days#1 mktime::days#4 mktime::days#0 mktime::days#2 mktime::days#3 ]
+zp[1]:93 [ failures#32 failures#30 failures#1 failures#100 failures#25 failures#3 failures#0 failures#2 ]
+reg byte a [ set_time::h12#2 set_time::h12#0 ]
+reg byte x [ set_time::hb#2 set_time::hb#1 set_time::hb#0 ]
+reg byte x [ time::hr#3 time::hr#4 time::hr#0 time::hr#2 ]
+zp[4]:88 [ time_day_base#1 time_day_base#13 time_day_base#0 ]
+reg byte x [ cputc::c#4 cputc::c#0 cputc::c#1 cputc::c#2 cputc::c#3 ]
+reg byte x [ asctime_r::wd#2 asctime_r::wd#0 ]
+zp[2]:34 [ strcmp::s1#2 strcmp::s1#1 cputs::s#13 cputs::s#14 cputs::s#2 cputs::s#7 cputs::s#0 strftime::maxsize#30 strftime::$10 strftime::return#1 strftime::return#2 strftime::return#10 gmtime_r::yl#0 ]
+zp[4]:66 [ split_days::t#2 split_days::t#1 gmtime_r::t#0 difftime::beginning#2 ]
+zp[2]:14 [ div16u::divisor#8 strcmp::return#2 strcmp::return#0 strcmp::return#3 check_str::$0 ]
+zp[2]:36 [ rem16u#200 rem16u#217 rem16u#209 rem16u#206 divr16u::rem rem16u#104 rem16u#114 rem16u#121 rem16u#216 ]
+reg byte a [ is_leap_year::return#1 is_leap_year::return#2 ]
+zp[4]:43 [ mul16u::res#2 mul16u::res#6 mul16u::res#1 mul16u::return#0 mul16u::return#1 mul16u::return#2 mktime::secs#0 mktime::secs#1 time::sod#0 time::sod#1 mktime::secs#2 time::return#2 main::$42 time::return#0 time::sod#2 ]
+zp[4]:38 [ mul16u::mb#2 mul16u::mb#0 mul16u::mb#1 split_hms::sod#2 split_hms::sod#1 split_hms::sod#0 set_time::sod#0 div32u16u::dividend#2 div32u16u::dividend#0 div32u16u::dividend#1 ]
+reg byte x [ sf_char::c#23 sf_char::c#16 sf_char::c#17 sf_char::c#18 sf_char::c#14 sf_char::c#15 sf_char::c#13 sf_char::c#12 sf_char::c#0 ]
+zp[2]:7 [ sf_num::v#25 sf_num::v#22 sf_num::v#23 sf_num::v#24 sf_num::v#19 sf_num::v#20 sf_num::v#21 sf_num::v#6 sf_num::v#7 sf_num::v#14 sf_num::v#3 sf_num::v#4 sf_num::v#5 sf_num::v#8 sf_num::v#9 sf_num::v#10 sf_num::v#11 sf_num::v#12 sf_num::v#13 sf_num::v#15 sf_num::v#18 sf_num::v#26 sf_num::v#17 sf_num::v#0 sf_num::v#1 sf_num::v#2 div16u::return#12 div16u::return#11 div16u::return#13 gmtime_r::$10 div16u::return#15 days_before_year::centuries#0 days_before_year::$7 div16u::return#14 split_hms::$1 div16u::return#0 is_leap_year::century#0 divr16u::return#2 divr16u::return#0 divr16u::return#4 div32u16u::quotient_lo#0 div16u::return#16 bin_to_bcd16::$2 mul16u::b#3 ]
+zp[2]:16 [ sf_str::s#4 sf_str::s#7 sf_str::s#0 sf_str::s#1 sf_str::s#2 sf_str::s#3 mul16u::a#4 mul16u::a#7 mul16u::a#2 mul16u::a#1 mul16u::a#0 mul16u::a#3 gmtime_r::timer#4 check_str::expected#11 strcmp::s2#2 strcmp::str2#0 strcmp::s2#1 ]
+reg byte x [ sf_abbr::idx#4 sf_abbr::idx#0 sf_abbr::idx#1 sf_abbr::idx#2 sf_abbr::idx#3 ]
+reg byte x [ bin_to_bcd8::val#7 bin_to_bcd8::val#10 bin_to_bcd8::val#4 bin_to_bcd8::val#5 bin_to_bcd8::val#6 bin_to_bcd8::val#0 bin_to_bcd8::val#1 bin_to_bcd8::val#2 bin_to_bcd8::val#3 ]
+reg byte y [ bin_to_bcd8::tens#2 bin_to_bcd8::tens#1 ]
+reg byte x [ bcd8_to_bin::bcd#3 bcd8_to_bin::bcd#0 bcd8_to_bin::bcd#1 bcd8_to_bin::bcd#2 ]
+reg byte x [ put3::idx#2 put3::idx#0 put3::idx#1 ]
+zp[2]:10 [ put3::table#2 put3::e#0 sf_abbr::table#4 sf_abbr::e#0 check_ulong::name#10 gmtime_r::year#10 gmtime_r::year#3 gmtime_r::year#4 is_leap_year::year#3 is_leap_year::year#1 is_leap_year::year#0 is_leap_year::year#2 gmtime_r::$11 gmtime_r::$35 div16u::dividend#8 div16u::dividend#6 div16u::dividend#5 div16u::dividend#1 div16u::dividend#2 div16u::dividend#0 div16u::dividend#4 div16u::dividend#3 div16u::dividend#7 year_mod100::year#2 year_mod100::year#1 year_mod100::year#0 bin_to_bcd16::v#4 bin_to_bcd16::v#3 bin_to_bcd16::v#1 bin_to_bcd16::v#2 days_before_year::y#0 days_before_year::$4 days_before_year::$5 days_before_year::return#0 days_before_year::return#1 days_before_year::$6 days_before_year::$8 ]
+reg byte x [ put2::v#4 put2::v#0 put2::v#1 put2::v#2 put2::v#3 ]
+zp[2]:28 [ div32u16u::divisor#2 put3::p#5 put3::p#1 asctime_r::p#1 put3::p#2 put3::p#3 put3::return#0 put3::return#2 asctime_r::p#0 put2::p#4 put2::p#0 put2::p#1 put2::p#2 put2::p#3 asctime_r::p#5 asctime_r::p#3 put_bcd8::p#5 put_bcd8::p#2 put_bcd8::p#3 put_bcd8::p#4 asctime_r::p#9 asctime_r::p#7 put2::return#2 asctime_r::p#8 put2::return#1 asctime_r::p#6 put2::return#0 asctime_r::p#4 put2::return#10 put_bcd8::p#0 put3::return#1 asctime_r::p#2 asctime_r::p#11 put4::p#0 put_bcd8::return#3 put4::p#1 put_bcd8::return#2 put_bcd8::return#0 put2::return#3 asctime_r::p#10 put4::return#0 put4::return#1 asctime_r::p#12 asctime_r::p#13 put_bcd8::return#4 ]
+zp[1]:20 [ put_bcd8::b#3 put_bcd8::b#0 put_bcd8::b#1 put_bcd8::b#2 sf_num::pad#31 ]
+reg byte x [ put_bcd8::$5 put_bcd8::pad#3 put_bcd8::pad#0 put_bcd8::$3 ]
+reg byte x [ memcpy::pages#4 memcpy::pages#1 ]
+reg byte y [ memcpy::i#2 memcpy::i#1 ]
+reg byte y [ memcpy::i1#2 memcpy::i1#1 ]
+zp[2]:2 [ memset::str#2 memcpy::source#2 memcpy::src#5 memcpy::src#8 memcpy::src#1 strftime::format#7 strftime::format#1 strftime::format#105 strftime::format#0 gmtime_r::days#14 gmtime_r::days#5 gmtime_r::days#11 gmtime_r::days#0 gmtime_r::days#3 gmtime_r::days#2 gmtime_r::days#4 gmtime_r::days#1 split_days::return#1 split_days::return#2 ]
+reg byte x [ memset::c#6 ]
+reg byte y [ memset::i1#2 memset::i1#1 ]
+zp[1]:65 [ conio_cursor_x ]
+zp[1]:42 [ conio_cursor_y ]
+zp[2]:51 [ conio_line_text ]
+zp[2]:49 [ conio_line_color ]
+zp[4]:117 [ main::t ]
+zp[2]:121 [ main::$61 main::$62 ]
+zp[2]:113 [ main::$66 main::$67 main::$68 main::$69 main::$70 main::$71 main::$72 ]
+reg byte a [ main::$64 ]
+reg byte a [ main::$48 ]
+zp[2]:123 [ main::$76 main::$77 ]
+zp[2]:115 [ main::$84 main::$85 main::$86 main::$87 main::$88 main::$89 main::$90 ]
+reg byte a [ main::$79 ]
+zp[1]:125 [ main::$74 ]
+reg byte a [ main::$81 ]
+reg byte a [ main::$82 ]
+reg byte a [ main::$75 ]
+reg byte a [ main::$51 ]
+zp[2]:86 [ gotoxy::$8 gotoxy::$10 gotoxy::line_offset#0 gotoxy::$6 ]
+zp[2]:104 [ gotoxy::$9 ]
+zp[2]:106 [ gotoxy::$5 ]
+reg byte x [ gmtime_r::q#0 ]
+reg byte a [ is_leap_year::return#4 ]
+reg byte a [ gmtime_r::$12 ]
+reg byte a [ is_leap_year::return#5 ]
+reg byte x [ gmtime_r::leap#0 ]
+reg byte x [ gmtime_r::$39 ]
+reg byte a [ gmtime_r::$8 ]
+reg byte x [ mktime::mon#0 ]
+reg byte a [ mktime::$65 ]
+zp[1]:9 [ mktime::$60 sf_num::i#2 sf_num::i#1 sf_num::i#0 ]
+reg byte a [ mktime::$67 ]
+reg byte a [ mktime::$68 ]
+reg byte a [ mktime::$61 ]
+zp[1]:6 [ mktime::mon#1 sf_num::i1#2 sf_num::i1#1 sf_num::first#2 sf_num::first#1 ]
+reg byte x [ mktime::$8 ]
+reg byte a [ mktime::$9 ]
+reg byte a [ is_leap_year::return#10 ]
+reg byte x [ mktime::$12 ]
+zp[4]:108 [ mktime::$34 ]
+zp[4]:94 [ mktime::$17 mktime::base#0 ]
+zp[4]:130 [ mktime::t ]
+zp[2]:80 [ strftime::year#0 mktime::year#0 mktime::year#1 ]
+reg byte a [ strftime::$9 ]
+reg byte x [ strftime::c#0 ]
+reg byte a [ year_mod100::return#0 ]
+zp[2]:57 [ strftime::$112 strftime::$113 mktime::$70 mktime::$71 mktime::$72 mktime::$73 mktime::$74 mktime::$75 mktime::$76 mktime::$63 ]
+zp[2]:26 [ strftime::$120 strftime::$121 strftime::$122 strftime::$123 strftime::$124 strftime::$125 strftime::$126 days_before_year::year#0 days_before_year::$10 gmtime_r::result#13 gmtime_r::return#3 asctime_r::tp#0 put4::v#0 check_str::name#11 ]
+reg byte a [ strftime::$115 ]
+reg byte a [ strftime::$117 ]
+reg byte a [ strftime::$118 ]
+reg byte a [ strftime::$111 ]
+reg byte a [ strftime::h12#0 ]
+reg byte a [ strftime::$77 ]
+reg byte a [ strftime::$76 ]
+reg byte a [ tod_set_frequency::cra#0 ]
+reg byte a [ tod_set_frequency::cra#1 ]
+zp[4]:126 [ time_last_sod#12 ]
+zp[1]:77 [ set_time::h#0 sf_time::withSeconds#3 ]
+zp[1]:64 [ set_time::m#0 strftime::f#0 ]
+zp[1]:59 [ set_time::s#0 strftime::$110 ]
+reg byte a [ set_time::$16 ]
+reg byte a [ set_time::$18 ]
+reg byte a [ set_time::$19 ]
+reg byte a [ set_time::$12 ]
+reg byte a [ bin_to_bcd8::return#0 ]
+reg byte a [ bin_to_bcd8::return#1 ]
+reg byte a [ set_time::$9 ]
+reg byte a [ bin_to_bcd8::return#10 ]
+reg byte a [ set_time::$10 ]
+reg byte y [ time::h#0 ]
+zp[1]:33 [ time::m#0 set_time::$11 strftime::wd#41 strftime::wd#0 gmtime_r::dim#2 gmtime_r::dim#0 gmtime_r::dim#1 ]
+reg byte a [ bcd8_to_bin::return#0 ]
+reg byte a [ time::$4 ]
+reg byte a [ bcd8_to_bin::return#1 ]
+reg byte a [ time::$7 ]
+zp[2]:78 [ time::$17 time::$23 time::$8 mktime::$44 mktime::$50 mktime::$20 ]
+zp[2]:71 [ time::$18 time::$19 time::$20 time::$21 time::$22 mktime::$45 mktime::$46 mktime::$47 mktime::$48 mktime::$49 ]
+reg byte a [ bcd8_to_bin::return#2 ]
+reg byte a [ time::$9 ]
+reg byte x [ cputs::c#1 ]
+reg byte a [ strcmp::$0 ]
+zp[4]:53 [ div32u16u::return#2 div32u16u::return#0 split_days::$1 div32u16u::return#3 split_hms::$0 ]
+zp[4]:60 [ split_days::$5 split_days::$2 ]
+reg byte a [ split_days::$3 ]
+zp[2]:12 [ divr16u::dividend ]
+zp[2]:18 [ divr16u::divisor ]
+reg byte a [ is_leap_year::$0 ]
+reg byte a [ is_leap_year::$6 ]
+reg byte a [ mul16u::$1 ]
+zp[2]:4 [ bin_to_bcd16::return#3 bin_to_bcd16::return#0 sf_num::b#0 bin_to_bcd16::return#2 put4::b#0 bin_to_bcd16::$7 bin_to_bcd16::$4 days_before_year::$11 days_before_year::$12 days_before_year::$13 days_before_year::$14 days_before_year::$15 days_before_year::$16 days_before_year::$17 days_before_year::$18 days_before_year::$19 days_before_year::$3 gmtime_r::$6 memcpy::destination#2 memcpy::dst#5 memcpy::dst#8 memcpy::dst#1 ]
+reg byte a [ sf_num::$3 ]
+reg byte a [ sf_num::$5 ]
+reg byte a [ sf_num::$6 ]
+reg byte a [ year_mod100::return#1 ]
+reg byte a [ year_mod100::return#3 ]
+reg byte a [ sf_abbr::$5 ]
+reg byte a [ sf_abbr::$0 ]
+reg byte a [ bin_to_bcd8::$0 ]
+reg byte a [ bin_to_bcd8::return#11 ]
+zp[1]:70 [ bcd8_to_bin::$0 asctime_r::mn#3 asctime_r::mn#0 strftime::mn#37 strftime::mn#0 ]
+reg byte a [ bcd8_to_bin::$4 ]
+reg byte a [ bcd8_to_bin::$5 ]
+zp[1]:21 [ bcd8_to_bin::$1 put2::pad#4 sf_num::width#31 ]
+reg byte a [ bcd8_to_bin::$2 ]
+reg byte a [ bcd8_to_bin::return#3 ]
+reg byte a [ put3::$2 ]
+reg byte a [ put3::$0 ]
+reg byte a [ bin_to_bcd8::return#14 ]
+zp[2]:47 [ put4::$1 sf_num::$1 set_time::$21 set_time::$22 set_time::$23 set_time::$24 set_time::$25 set_time::$26 set_time::$27 set_time::$14 mktime::$10 ]
+zp[2]:22 [ div32u16u::$0 sf_num::$2 ]
+zp[2]:31 [ divr16u::return#3 div32u16u::quotient_hi#0 ]
+zp[2]:24 [ div32u16u::$2 sf_num::$4 ]
+reg byte x [ bin_to_bcd16::hi#0 ]
+zp[1]:30 [ bin_to_bcd16::lo#0 time::s#0 ]
+reg byte a [ bin_to_bcd8::return#12 ]
+reg byte a [ bin_to_bcd16::$3 ]
+reg byte a [ bin_to_bcd8::return#13 ]
+reg byte a [ bin_to_bcd16::$5 ]
+reg byte a [ put_bcd8::tens#0 ]
+reg byte a [ put_bcd8::$6 ]
+reg byte a [ put_bcd8::$7 ]
+zp[11]:164 [ ctime_r::t ]
+mem[5] [ sf ]
+zp[11]:175 [ main::tm ]
