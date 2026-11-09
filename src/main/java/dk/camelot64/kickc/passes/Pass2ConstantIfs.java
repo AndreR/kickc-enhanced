@@ -10,6 +10,7 @@ import dk.camelot64.kickc.model.operators.OperatorUnary;
 import dk.camelot64.kickc.model.operators.Operators;
 import dk.camelot64.kickc.model.statements.Statement;
 import dk.camelot64.kickc.model.statements.StatementConditionalJump;
+import dk.camelot64.kickc.model.statements.StatementLValue;
 import dk.camelot64.kickc.model.types.SymbolType;
 import dk.camelot64.kickc.model.types.SymbolTypeInference;
 import dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed;
@@ -214,7 +215,7 @@ public class Pass2ConstantIfs extends Pass2SsaOptimization {
    }
 
    private ConstantLiteral findConditionLiteralDominance(Graph.Block blockB, StatementConditionalJump conditionalB) {
-      if(!isImmutableCondition(conditionalB)) return null;
+      if(!isImmutableCondition(blockB, conditionalB)) return null;
 
       DominatorsGraph dominators = getProgram().getDominators();
       if(dominators == null) return null;
@@ -224,7 +225,7 @@ public class Pass2ConstantIfs extends Pass2SsaOptimization {
       for(Graph.Block blockA : getGraph().getAllBlocks()) {
          if(blockA.equals(blockB)) continue;
          StatementConditionalJump conditionalA = getConditionalJump(blockA);
-         if(conditionalA == null || !isImmutableCondition(conditionalA)) continue;
+         if(conditionalA == null || !isImmutableCondition(blockA, conditionalA)) continue;
 
          LabelRef condSuccA = conditionalA.getDestination();
          LabelRef defaultSuccA = blockA.getDefaultSuccessor();
@@ -275,16 +276,40 @@ public class Pass2ConstantIfs extends Pass2SsaOptimization {
       return null;
    }
 
-   private boolean isImmutableCondition(StatementConditionalJump conditional) {
-      return isImmutableValue(conditional.getrValue1()) && isImmutableValue(conditional.getrValue2());
+   private boolean isImmutableCondition(Graph.Block block, StatementConditionalJump conditional) {
+      return isImmutableValue(block, conditional.getrValue1()) && isImmutableValue(block, conditional.getrValue2());
    }
 
-   private boolean isImmutableValue(RValue val) {
+   private boolean isImmutableValue(Graph.Block block, RValue val) {
       if(val == null) return true;
       if(val instanceof ConstantValue) return true;
-      if(val instanceof VariableRef) {
-         Variable variable = getProgramScope().getVariable((VariableRef) val);
-         return variable != null && variable.getKind() != Variable.Kind.LOAD_STORE && variable.getKind() != Variable.Kind.PHI_MASTER;
+      if(val instanceof VariableRef varRef) {
+         Variable variable = getProgramScope().getVariable(varRef);
+         if(variable == null) return false;
+         if(variable.isVolatile()) return false;
+         if(variable.getKind() != Variable.Kind.LOAD_STORE && variable.getKind() != Variable.Kind.PHI_MASTER) {
+            return true;
+         }
+         // Check if variable has no writes in containing procedure
+         dk.camelot64.kickc.model.symbols.Scope blockScope = getProgramScope().getScope(block.getScope());
+         dk.camelot64.kickc.model.symbols.Procedure proc = blockScope != null ? blockScope.getContainingProcedure() : null;
+         if(proc != null) {
+            return !isVariableWrittenInProcedure(varRef, proc);
+         }
+      }
+      return false;
+   }
+
+   private boolean isVariableWrittenInProcedure(VariableRef varRef, dk.camelot64.kickc.model.symbols.Procedure proc) {
+      ScopeRef procScope = proc.getScope().getRef();
+      for(var b : getGraph().getAllBlocks()) {
+         if(procScope.equals(b.getScope())) {
+            for(Statement stmt : b.getStatements()) {
+               if(stmt instanceof StatementLValue sa) {
+                  if(varRef.equals(sa.getlValue())) return true;
+               }
+            }
+         }
       }
       return false;
    }

@@ -7,6 +7,7 @@ import dk.camelot64.kickc.model.VariableBuilder;
 import dk.camelot64.kickc.model.operators.Operators;
 import dk.camelot64.kickc.model.statements.Statement;
 import dk.camelot64.kickc.model.statements.StatementAssignment;
+import dk.camelot64.kickc.model.statements.StatementPhiBlock;
 import dk.camelot64.kickc.model.symbols.Scope;
 import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.types.SymbolType;
@@ -111,44 +112,64 @@ public class Pass2ModuloToAndRewriting extends Pass2SsaOptimization {
    }
 
    private boolean isVariableBoundedByConstant(VariableRef varRef, long cVal) {
+      return isVariableBoundedByConstant(varRef, cVal, new java.util.HashSet<>());
+   }
+
+   private boolean isVariableBoundedByConstant(VariableRef varRef, long cVal, java.util.Set<VariableRef> visited) {
+      if(!visited.add(varRef)) return true;
       List<VarAssignments.VarAssignment> assigns = VarAssignments.get(varRef, getGraph(), getProgramScope());
       if(assigns == null || assigns.isEmpty()) return false;
       for(VarAssignments.VarAssignment va : assigns) {
-         if(!VarAssignments.VarAssignment.Type.STATEMENT_LVALUE.equals(va.type)) {
-            return false;
-         }
-         if(va.statementLValue instanceof StatementAssignment sa) {
-            if(sa.getOperator() == null && sa.getrValue1() == null) {
-               if(sa.getrValue2() instanceof ConstantValue cv) {
-                  ConstantLiteral lit = getConstantLiteral(cv);
-                  if(lit instanceof ConstantInteger ci) {
-                     if(ci.getValue() < 0 || ci.getValue() > cVal) return false;
-                  } else {
-                     return false;
-                  }
+         if(VarAssignments.VarAssignment.Type.INIT_VALUE.equals(va.type)) {
+            if(va.variableInitValue != null && va.variableInitValue.getInitValue() != null) {
+               ConstantLiteral lit = getConstantLiteral(va.variableInitValue.getInitValue());
+               if(lit instanceof ConstantInteger ci) {
+                  if(ci.getValue() < 0 || ci.getValue() > cVal) return false;
                } else {
                   return false;
                }
-            } else if(Operators.MINUS.equals(sa.getOperator())) {
-               if(sa.getrValue1() instanceof ConstantValue cv) {
-                  ConstantLiteral lit = getConstantLiteral(cv);
-                  if(lit instanceof ConstantInteger ci && ci.getValue() == cVal) {
-                     if(varRef.equals(sa.getrValue2())) {
-                        continue;
-                     }
+            } else {
+               return false;
+            }
+         } else if(VarAssignments.VarAssignment.Type.STATEMENT_PHI.equals(va.type)) {
+            if(va.statementPhiVariable != null) {
+               for(StatementPhiBlock.PhiRValue phiRVal : va.statementPhiVariable.getValues()) {
+                  if(!isRValueBoundedByConstant(phiRVal.getrValue(), cVal, visited)) {
+                     return false;
                   }
                }
+            } else {
                return false;
-            } else if(Operators.BOOL_XOR.equals(sa.getOperator())) {
-               if(sa.getrValue2() instanceof ConstantValue cv) {
-                  ConstantLiteral lit = getConstantLiteral(cv);
-                  if(lit instanceof ConstantInteger ci && ci.getValue() == cVal) {
-                     if(varRef.equals(sa.getrValue1())) {
-                        continue;
+            }
+         } else if(VarAssignments.VarAssignment.Type.STATEMENT_LVALUE.equals(va.type)) {
+            if(va.statementLValue instanceof StatementAssignment sa) {
+               if(sa.getOperator() == null && sa.getrValue1() == null) {
+                  if(!isRValueBoundedByConstant(sa.getrValue2(), cVal, visited)) {
+                     return false;
+                  }
+               } else if(Operators.MINUS.equals(sa.getOperator())) {
+                  if(sa.getrValue1() instanceof ConstantValue cv) {
+                     ConstantLiteral lit = getConstantLiteral(cv);
+                     if(lit instanceof ConstantInteger ci && ci.getValue() == cVal) {
+                        if(isRValueBoundedByConstant(sa.getrValue2(), cVal, visited)) {
+                           continue;
+                        }
                      }
                   }
+                  return false;
+               } else if(Operators.BOOL_XOR.equals(sa.getOperator())) {
+                  if(sa.getrValue2() instanceof ConstantValue cv) {
+                     ConstantLiteral lit = getConstantLiteral(cv);
+                     if(lit instanceof ConstantInteger ci && ci.getValue() == cVal) {
+                        if(isRValueBoundedByConstant(sa.getrValue1(), cVal, visited)) {
+                           continue;
+                        }
+                     }
+                  }
+                  return false;
+               } else {
+                  return false;
                }
-               return false;
             } else {
                return false;
             }
@@ -157,6 +178,20 @@ public class Pass2ModuloToAndRewriting extends Pass2SsaOptimization {
          }
       }
       return true;
+   }
+
+   private boolean isRValueBoundedByConstant(RValue rVal, long cVal, java.util.Set<VariableRef> visited) {
+      if(rVal == null) return false;
+      if(rVal instanceof ConstantValue cv) {
+         ConstantLiteral lit = getConstantLiteral(cv);
+         if(lit instanceof ConstantInteger ci) {
+            return ci.getValue() >= 0 && ci.getValue() <= cVal;
+         }
+         return false;
+      } else if(rVal instanceof VariableRef vr) {
+         return isVariableBoundedByConstant(vr, cVal, visited);
+      }
+      return false;
    }
 
    /**

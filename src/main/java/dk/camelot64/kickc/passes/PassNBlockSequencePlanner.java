@@ -43,13 +43,21 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
          Graph.Block defaultSuccessor = getGraph().getDefaultSuccessor(block);
          if(conditionalSuccessor != null && defaultSuccessor != null) {
             // Both conditional and default successor
-            if(defaultSuccessor.getLabel().equals(conditionalSuccessor.getDefaultSuccessor())) {
+            boolean condFirst = true;
+            boolean condReachesDef = reaches(conditionalSuccessor, defaultSuccessor.getLabel(), new HashSet<>());
+            boolean defReachesCond = reaches(defaultSuccessor, conditionalSuccessor.getLabel(), new HashSet<>());
+            if(defReachesCond && !condReachesDef) {
+               // defaultSuccessor flows into conditionalSuccessor (e.g. negated branch to loop exit)
+               condFirst = false;
+            }
+
+            if(condFirst) {
                // Best sequence is cond->default (resulting in better code locality)
                pushTodo(defaultSuccessor);
-               pushTodo(getGraph().getConditionalSuccessor(block));
+               pushTodo(conditionalSuccessor);
             } else {
                // Best sequence is default->cond
-               pushTodo(getGraph().getConditionalSuccessor(block));
+               pushTodo(conditionalSuccessor);
                pushTodo(defaultSuccessor);
             }
          } else if(conditionalSuccessor != null) {
@@ -146,11 +154,44 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
 
    Graph.Block popTodo() {
       ScopeTodo scopeTodo = todoScopes.peek();
-      Graph.Block block = scopeTodo.todo.pop();
+      if(scopeTodo == null || scopeTodo.todo.isEmpty()) {
+         if(scopeTodo != null) todoScopes.pop();
+         return null;
+      }
+      // Topological selection: find a block that is NOT reached by any other pending block
+      Graph.Block bestBlock = null;
+      for(Graph.Block candidate : scopeTodo.todo) {
+         boolean reachedByOther = false;
+         for(Graph.Block other : scopeTodo.todo) {
+            if(!candidate.equals(other) && reaches(other, candidate.getLabel(), new HashSet<>())) {
+               reachedByOther = true;
+               break;
+            }
+         }
+         if(!reachedByOther) {
+            bestBlock = candidate;
+            break;
+         }
+      }
+      if(bestBlock == null) {
+         bestBlock = scopeTodo.todo.peek();
+      }
+      scopeTodo.todo.remove(bestBlock);
       if(scopeTodo.todo.isEmpty()) {
          todoScopes.pop();
       }
-      return block;
+      return bestBlock;
+   }
+
+   private boolean reaches(Graph.Block from, LabelRef target, Set<LabelRef> visited) {
+      if(from == null) return false;
+      if(target.equals(from.getLabel())) return true;
+      if(!visited.add(from.getLabel())) return false;
+      Graph.Block defSucc = getGraph().getDefaultSuccessor(from);
+      if(defSucc != null && reaches(defSucc, target, visited)) return true;
+      Graph.Block condSucc = getGraph().getConditionalSuccessor(from);
+      if(condSucc != null && reaches(condSucc, target, visited)) return true;
+      return false;
    }
 
    private static class ScopeTodo {
