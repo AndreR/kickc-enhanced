@@ -107,7 +107,7 @@ void tod_set_frequency(uint8_t hz);
 int32_t difftime(time_t end, time_t beginning);
 
 /// Returns true if `year` (full year, e.g. 2026) is a leap year in the Gregorian calendar.
-bool is_leap_year(uint16_t year);
+__carry bool is_leap_year(uint16_t year);
 
 /// Returns the number of days in the month `mon` [0, 11] of the full year `year`.
 uint8_t days_in_month(uint16_t year, uint8_t mon);

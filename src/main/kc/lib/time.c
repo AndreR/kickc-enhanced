@@ -156,7 +156,7 @@ int32_t difftime(time_t end, time_t beginning) {
 // ---------------------------------------------------------------------------------------------
 
 // Returns true if year is a leap year in the Gregorian calendar.
-bool is_leap_year(uint16_t year) {
+__carry bool is_leap_year(uint16_t year) {
     if ((year & 3) != 0) return false;
     uint16_t century = div16u(year, 100);
     if (rem16u != 0) return true;
