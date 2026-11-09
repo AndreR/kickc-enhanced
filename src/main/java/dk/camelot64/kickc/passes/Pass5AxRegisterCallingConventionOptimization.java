@@ -299,11 +299,6 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
             }
          }
          axReturnProcs.removeAll(unsafeAxReturnProcs);
-         for(Procedure proc : rootScope.getAllProcedures(true)) {
-            if(axReturnProcs.contains(proc.getLocalName()) || axReturnProcs.contains(proc.getFullName())) {
-               proc.setAxConvention(true);
-            }
-         }
 
          // -------------------------------------------------------------
          // Step 1: Callee AX Return Optimization
@@ -513,12 +508,12 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
                   }
                }
 
-               if(!matchedDirect) {
-                  CpuAddressingMode stMode = (pAddr != null) ? CpuAddressingMode.ZP : CpuAddressingMode.ABS;
+               if(!matchedDirect && pAddr != null) {
+                  CpuAddressingMode stMode = CpuAddressingMode.ZP;
                   CpuOpcode staOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("sta", stMode, false);
                   CpuOpcode stxOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("stx", stMode, false);
-                  String pLoOp = (pAddr != null) ? pAddr : pName;
-                  String pHiOp = (pAddr != null) ? pAddr + "+1" : pName + "+1";
+                  String pLoOp = pAddr;
+                  String pHiOp = pAddr + "+1";
 
                   int entryIndex = ref.chunk.getLines().indexOf(ref.line);
                   if(entryIndex >= 0) {

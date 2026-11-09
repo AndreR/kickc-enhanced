@@ -23,11 +23,6 @@ import java.util.*;
  * When falling through, the CPU executes BIT $xxxx, consuming the 2-byte LDA #val2 as an operand
  * and skipping it in 4 cycles without altering register A, X, or Y.
  * Saves 2 bytes (1 byte instead of 3 bytes for JMP) and eliminates jump overhead.
- *
- * Pattern A (Procedure-Level Entry-Point Merging):
- * Identifies adjacent procedures differing only by an initial 2-byte immediate load into the same
- * register, sharing an identical remaining body and RTS.
- * Replaces the first procedure's body with .byte $2c, allowing it to fall through into the second.
  */
 public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
 
@@ -57,6 +52,29 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
 
    public Pass5MultiEntryByteSkipping(Program program) {
       super(program);
+   }
+
+   private static Long parseConstValue(String val) {
+      if(val == null) return null;
+      String t = val.trim();
+      if(t.startsWith("#")) t = t.substring(1).trim();
+      if(t.startsWith("<") || t.startsWith(">")) return null; // Reject address lo/hi
+      if(t.startsWith("'") && t.endsWith("'") && t.length() >= 3) {
+         return (long) t.charAt(1);
+      }
+      try {
+         if(t.startsWith("$")) {
+            return Long.parseLong(t.substring(1), 16);
+         } else if(t.startsWith("0x") || t.startsWith("0X")) {
+            return Long.parseLong(t.substring(2), 16);
+         } else if(t.startsWith("%")) {
+            return Long.parseLong(t.substring(1), 2);
+         } else {
+            return Long.parseLong(t);
+         }
+      } catch(NumberFormatException e) {
+         return null;
+      }
    }
 
    private static boolean isImmediateLoad(AsmInstruction inst) {
@@ -237,12 +255,38 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
 
             if(insts1.size() < 2 || insts2.size() != insts1.size()) continue;
 
+            // p1 must not have data segments, segment changes or non-instruction content (strings, tables)
+            boolean hasSegmentOrData = false;
+            for(AsmChunk ch : p1.chunks) {
+               for(AsmLine l : ch.getLines()) {
+                  if(l instanceof AsmSegment) {
+                     hasSegmentOrData = true;
+                     break;
+                  }
+                  if(l instanceof AsmInlineKickAsm inlineAsm && (inlineAsm.getAsm().contains(".text") || inlineAsm.getAsm().contains(".byte") || inlineAsm.getAsm().contains(".segment"))) {
+                     hasSegmentOrData = true;
+                     break;
+                  }
+                  if(l instanceof AsmConstant) {
+                     hasSegmentOrData = true;
+                     break;
+                  }
+               }
+               if(hasSegmentOrData) break;
+            }
+            if(hasSegmentOrData) continue;
+
             AsmInstruction first1 = insts1.get(0);
             AsmInstruction first2 = insts2.get(0);
 
             if(!isImmediateLoad(first1) || !isImmediateLoad(first2)) continue;
             if(!first1.getCpuOpcode().getMnemonic().equals(first2.getCpuOpcode().getMnemonic())) continue;
             if(first1.getLineBytes() != 2 || first2.getLineBytes() != 2) continue;
+
+            // Operands must be pure scalar/numeric constants, NOT label references like #<msg or #>msg
+            Long const1 = parseConstValue(first1.getOperand1());
+            Long const2 = parseConstValue(first2.getOperand1());
+            if(const1 == null || const2 == null) continue;
 
             // Last instruction must be RTS
             AsmInstruction last1 = insts1.get(insts1.size() - 1);
@@ -255,7 +299,20 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
             for(int k = 1; k < insts1.size(); k++) {
                AsmInstruction i1 = insts1.get(k);
                AsmInstruction i2 = insts2.get(k);
-               if(!i1.getAsm().equals(i2.getAsm())) {
+               if(!Objects.equals(i1.getCpuOpcode(), i2.getCpuOpcode())) {
+                  identical = false;
+                  break;
+               }
+               if(!Objects.equals(i1.getOperand1(), i2.getOperand1())) {
+                  identical = false;
+                  break;
+               }
+               if(!Objects.equals(i1.getOperand2(), i2.getOperand2())) {
+                  identical = false;
+                  break;
+               }
+               // Instructions must not reference local symbols of p1 or p2
+               if(i1.getOperand1() != null && (i1.getOperand1().contains(p1.name + ".") || i1.getOperand1().contains(p2.name + "."))) {
                   identical = false;
                   break;
                }

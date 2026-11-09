@@ -584,10 +584,12 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
          // Copy Resource Files
          for(Path asmResourceFile : getProgram().getAsmResourceFiles()) {
             File binFile = getTmpFile(tmpDir, asmResourceFile.getFileName().toString());
-            Files.copy(asmResourceFile, binFile.toPath());
+            if(Files.exists(asmResourceFile)) {
+               Files.copy(asmResourceFile, binFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
          }
       } catch(IOException e) {
-         throw new CompileError("Error writing ASM temp file.", e);
+         throw new CompileError("Error writing ASM temp file: " + e.getMessage(), e);
       }
       long tWrite = System.currentTimeMillis() - t0;
 

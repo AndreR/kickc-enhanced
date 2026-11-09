@@ -190,6 +190,8 @@ public class SymbolTypeConversion {
          return true;
       if(lValueType.equals(rValueType))
          return true;
+      if(SymbolType.isInteger(lValueType) && SymbolType.isInteger(rValueType))
+         return true;
       if(SymbolType.NIBBLE.equals(lValueType) && SymbolType.isInteger(rValueType))
          return true;
       if(SymbolType.isInteger(lValueType) && SymbolType.NIBBLE.equals(rValueType))

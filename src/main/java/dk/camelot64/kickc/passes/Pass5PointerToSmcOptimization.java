@@ -280,10 +280,12 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
                // Safety: Never apply Pointer-to-SMC to variables mapped to hardware/fixed memory addresses (__address)
                Variable ptrVariable = null;
                if(proc != null) {
-                  ptrVariable = proc.getScope().findVariable(ptrVar);
+                  dk.camelot64.kickc.model.symbols.Symbol sym = proc.getScope().findSymbol(ptrVar);
+                  if(sym instanceof Variable) ptrVariable = (Variable) sym;
                }
                if(ptrVariable == null) {
-                  ptrVariable = rootScope.findVariable(ptrVar);
+                  dk.camelot64.kickc.model.symbols.Symbol sym = rootScope.findSymbol(ptrVar);
+                  if(sym instanceof Variable) ptrVariable = (Variable) sym;
                }
                if(ptrVariable != null && ptrVariable.getMemoryAddress() != null) {
                   continue;

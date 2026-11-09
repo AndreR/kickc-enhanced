@@ -70,7 +70,7 @@ INLINE: 'inline' ;
 COUNTDOWN: '__countdown' | 'countdown' ;
 CARRY: '__carry' ;
 AX: '__ax' ;
-LOHI: '__lohi' | 'lohi' ;
+LOHI: '__lohi' ;
 SOA: '__soa' | 'soa' ;
 VOLATILE: 'volatile' ;
 STATIC: 'static' ;

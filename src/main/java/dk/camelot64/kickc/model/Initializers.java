@@ -92,6 +92,7 @@ public class Initializers {
       } else if(initValue instanceof UnionDesignator) {
          initValue = constantifyUnion((UnionDesignator) initValue, (SymbolTypeStruct) typeSpec.getType(), program, source);
       } else if(typeSpec.getType() instanceof SymbolTypeStruct && ((SymbolTypeStruct) typeSpec.getType()).getStructDefinition(program.getScope()) != null && ((SymbolTypeStruct) typeSpec.getType()).getStructDefinition(program.getScope()).isUnion() && !(initValue instanceof ValueList) && !(initValue instanceof ConstantStructValue)) {
+         if(initValue instanceof VariableRef) { Variable var = program.getScope().getVariable((VariableRef) initValue); if(var != null && (typeSpec.getType().equals(var.getType()) || SymbolType.VAR.equals(var.getType()))) { return initValue; } }
          StructDefinition structDefinition = ((SymbolTypeStruct) typeSpec.getType()).getStructDefinition(program.getScope());
          Collection<Variable> memberDefinitions = structDefinition.getAllVars(false);
          if(!memberDefinitions.isEmpty()) {
@@ -276,3 +277,4 @@ public class Initializers {
    }
 
 }
+
