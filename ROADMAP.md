@@ -75,6 +75,7 @@ This document outlines the compiler architecture, completed milestones, planned 
 | **F-49** | Graphics | Library C64: Asset & Graphics Pipeline (Universal ZX02 Decompressor, Fading) | C64 Graphics | 🟢 Completed |
 | **F-50** | I/O | Library C64: High-Speed Disk I/O Suite (Hardware Probing, Turbo Read/Write, ELoad) | C64 I/O | 🟢 Completed |
 | **F-51** | Compression | Library: Ultra-Fast Run-Length Encoding (RLE) Compression Suite (<rle.h>) | 6502 Library | 🟢 Completed |
+| **F-83** | Allocator | Dynamic OS / Kernal Zero-Page Interference Analysis & Context-Aware Reclaiming | Compiler Core | ⚪ Planned (v0.11.0) |
 
 ---
 
@@ -846,3 +847,14 @@ eturn or at scope exit in LIFO order. (Issue #79).
 * **Solution & Optimization:**
   * Implement zero-stack cooperative coroutines using yield.
   * Generates a 1-byte continuation index and dispatches via 12-cycle RTS jump table on resume. (Issue #82).
+
+
+---
+
+### Feature 83: Allocator: Dynamic OS / Kernal Zero-Page Interference Analysis & Context-Aware Reclaiming
+* **Problem:**
+  On systems with active ROM operating systems or default timer interrupts (such as the Commodore 64 Kernal 60 Hz timer scanning $0091 / STKEY and $0090 / STATUS), Zero-Page addresses used by the OS interrupt handler cannot be safely assigned to variables whose live ranges span across an unmasked interrupt. However, hardcoding static exclusion ranges (such as $90..) in target platform definitions permanently denies these memory regions to games, demos, and bare-metal applications even after the OS has been banked out or interrupts have been disabled.
+* **Solution & Optimization:**
+  * **OS Virtual Variable Modeling:** Model OS-managed hardware/status Zero-Page regions as virtual variables (__OS_INTERRUPT_RESERVE) in Pass 3 / Pass 4 register allocation.
+  * **Static Interrupt / Banking Context Tracking:** Perform control-flow dataflow analysis tracking interrupt mask state (SEI / CLI) and memory configuration port values (e.g. processor port $0001 on 6510/8502).
+  * **Interference-Aware Register Assignment:** Variables that are alive during states where OS interrupts can fire interfere with __OS_INTERRUPT_RESERVE and are assigned safe addresses ($02..). Variables residing in purely bare-metal loops, custom raster IRQs, or code paths with banked-out OS do not interfere and can dynamically reclaim all available Zero-Page bytes. (Issue #83).

@@ -295,6 +295,23 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
                   continue;
                }
 
+               // Safety: Never apply Pointer-to-SMC to procedure parameters!
+               if(proc != null) {
+                  if(proc.getParameterNames() != null && proc.getParameterNames().contains(ptrVar)) {
+                     continue;
+                  }
+                  if(proc.getParameters() != null) {
+                     boolean isParam = false;
+                     for(Variable pVar : proc.getParameters()) {
+                        if(pVar != null && (pVar.getLocalName().equals(ptrVar) || pVar.equals(ptrVariable))) {
+                           isParam = true;
+                           break;
+                        }
+                     }
+                     if(isParam) continue;
+                  }
+               }
+
                // Safety: Never apply Pointer-to-SMC to variables referenced outside the current procedure scope!
                boolean referencedOutsideScope = false;
                for(LineRef outsideRef : allLines) {
@@ -366,6 +383,14 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
                // each site receives its own SMC label, and all initializations and increments are broadcasted
                // to every site synchronously, keeping all sites in lockstep.
                if(!safeCandidate || derefLines.isEmpty() || derefLines.size() > 4 || initLoLines.isEmpty() || initHiLines.isEmpty()) {
+                  continue;
+               }
+
+               // Safety: Pointer must be initialized before any dereference site in the procedure!
+               int firstInitLo = linesInScope.indexOf(initLoLines.get(0));
+               int firstInitHi = linesInScope.indexOf(initHiLines.get(0));
+               int firstDeref = linesInScope.indexOf(derefLines.get(0));
+               if(firstDeref < firstInitLo || firstDeref < firstInitHi) {
                   continue;
                }
 
