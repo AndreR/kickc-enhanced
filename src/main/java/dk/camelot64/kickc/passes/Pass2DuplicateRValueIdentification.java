@@ -9,6 +9,7 @@ import dk.camelot64.kickc.model.operators.OperatorCast;
 import dk.camelot64.kickc.model.operators.Operators;
 import dk.camelot64.kickc.model.statements.*;
 import dk.camelot64.kickc.model.symbols.Variable;
+import dk.camelot64.kickc.model.symbols.ProgramScope;
 import dk.camelot64.kickc.model.types.SymbolType;
 import dk.camelot64.kickc.model.types.SymbolTypeInference;
 import dk.camelot64.kickc.model.values.*;
@@ -72,15 +73,15 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
                               // Since we are visiting statements sequentially the other  other assignment is guaranteed to be executed before this assignment
                               if(isSafeSameBlock(otherRValue, thisRValue))
                                  duplicate |= deduplicateRValue(otherRValue, thisRValue);
-                           } else if(!thisRValue.isLoadStore() && !otherRValue.isLoadStore()) {
+                           } else {
                               if(thisDominators.contains(otherRValue.block.getLabel())) {
                                  // The other assignment is guaranteed to be executed before this assignment
-                                 if(scopeMatch(thisRValue, otherRValue))
-                                    duplicate |= deduplicateRValue(otherRValue, thisRValue);
+                                 if(scopeMatch(thisRValue, otherRValue) && isSafeCrossBlock(otherRValue, thisRValue))
+                                     duplicate |= deduplicateRValue(otherRValue, thisRValue);
                               } else if(otherDominators.contains(thisRValue.block.getLabel())) {
                                  // This assignment is guaranteed to be executed before the other assignment
-                                 if(scopeMatch(thisRValue, otherRValue))
-                                    duplicate |= deduplicateRValue(thisRValue, otherRValue);
+                                 if(scopeMatch(thisRValue, otherRValue) && isSafeCrossBlock(thisRValue, otherRValue))
+                                     duplicate |= deduplicateRValue(thisRValue, otherRValue);
                               }
                            }
                         }
@@ -330,5 +331,109 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
       } else if(val instanceof CastValue) {
          collectVarRefs(((CastValue) val).getValue(), out);
       }
+   }
+
+   private boolean isSafeCrossBlock(AssignmentWithRValue first, AssignmentWithRValue second) {
+      if(!first.isLoadStore() && !second.isLoadStore()) return true;
+
+      // Collect all variables referenced by the RValue operands
+      Set<VariableRef> operands = new HashSet<>();
+      collectVarRefs(first.rValue1, operands);
+      collectVarRefs(first.rValue2, operands);
+
+      // If any operand can be modified by a call, check if there\'s any call between first and second
+      boolean operandsVulnerableToCalls = false;
+      for(VariableRef varRef : operands) {
+         Variable var = getProgramScope().getVar(varRef);
+         if(var != null && (var.getScope() instanceof ProgramScope || var.isVolatile())) {
+            operandsVulnerableToCalls = true;
+            break;
+         }
+      }
+
+      // Check statements in first.block after first.assignment
+      List<Statement> firstStmts = first.block.getStatements();
+      int idx1 = firstStmts.indexOf(first.assignment);
+      if(idx1 >= 0) {
+         for(int i = idx1 + 1; i < firstStmts.size(); i++) {
+            Statement s = firstStmts.get(i);
+            if(s instanceof StatementAssignment sa) {
+               if(sa.getlValue() instanceof VariableRef vr && operands.contains(vr)) return false;
+            } else if((s instanceof StatementCall || s instanceof StatementCallExecute) && operandsVulnerableToCalls) {
+               return false;
+            } else if(s instanceof StatementAsm) {
+               return false;
+            }
+         }
+      }
+
+      // Check statements in second.block before second.assignment
+      List<Statement> secondStmts = second.block.getStatements();
+      int idx2 = secondStmts.indexOf(second.assignment);
+      if(idx2 >= 0) {
+         for(int i = 0; i < idx2; i++) {
+            Statement s = secondStmts.get(i);
+            if(s instanceof StatementAssignment sa) {
+               if(sa.getlValue() instanceof VariableRef vr && operands.contains(vr)) return false;
+            } else if((s instanceof StatementCall || s instanceof StatementCallExecute) && operandsVulnerableToCalls) {
+               return false;
+            } else if(s instanceof StatementAsm) {
+               return false;
+            }
+         }
+      }
+
+      // Collect all blocks in the procedure that write to any operand
+      ScopeRef scope = first.block.getScope();
+      Set<LabelRef> writeBlocks = new HashSet<>();
+      for(Graph.Block b : getGraph().getAllBlocks()) {
+         if(scope.equals(b.getScope()) && !b.equals(first.block) && !b.equals(second.block)) {
+            for(Statement s : b.getStatements()) {
+               if(s instanceof StatementAssignment sa) {
+                  if(sa.getlValue() instanceof VariableRef vr && operands.contains(vr)) {
+                     writeBlocks.add(b.getLabel());
+                     break;
+                  }
+               } else if((s instanceof StatementCall || s instanceof StatementCallExecute) && operandsVulnerableToCalls) {
+                  writeBlocks.add(b.getLabel());
+                  break;
+               } else if(s instanceof StatementAsm) {
+                  writeBlocks.add(b.getLabel());
+                  break;
+               }
+            }
+         }
+      }
+
+      if(writeBlocks.isEmpty()) {
+         return true; // No writes to operands anywhere in other blocks of the procedure!
+      }
+
+      // Traverse all paths from first.block to second.block. If any block in writeBlocks can reach second.block, unsafe!
+      Set<LabelRef> visited = new HashSet<>();
+      Queue<LabelRef> queue = new ArrayDeque<>();
+      for(LabelRef succ : getGraph().getBlock(first.block.getLabel()).getSuccessors()) {
+         if(succ != null && !succ.equals(second.block.getLabel())) {
+            queue.add(succ);
+            visited.add(succ);
+         }
+      }
+
+      while(!queue.isEmpty()) {
+         LabelRef cur = queue.poll();
+         if(writeBlocks.contains(cur)) {
+            return false; // A block that writes to an operand is reachable between first and second!
+         }
+         Graph.Block curBlock = getGraph().getBlock(cur);
+         if(curBlock != null && scope.equals(curBlock.getScope())) {
+            for(LabelRef succ : curBlock.getSuccessors()) {
+               if(succ != null && !succ.equals(second.block.getLabel()) && visited.add(succ)) {
+                  queue.add(succ);
+               }
+            }
+         }
+      }
+
+      return true;
    }
 }
