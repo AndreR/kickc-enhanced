@@ -463,6 +463,7 @@ public class Compiler {
             return false;
          });
          optimizations.add(new Pass2LoopHeadConstantIdentification(program));
+         optimizations.add(new Pass2LoopInvariantCodeMotion(program));
          optimizations.add(() -> {
             program.clearStatementIndices();
             return false;

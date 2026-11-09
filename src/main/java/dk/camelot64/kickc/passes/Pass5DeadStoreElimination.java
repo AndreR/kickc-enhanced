@@ -795,6 +795,12 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                      String simpleName = dotIdx != -1 ? baseVar.substring(dotIdx + 1) : baseVar;
 
                      if(deadVars.contains(baseVar) || deadVars.contains(simpleName)) {
+                        if(tryFoldDeadStackPullIntoAxs(sLines, i, inst, deadVars)) {
+                           passModified = true;
+                           overallModified = true;
+                           break;
+                        }
+
                         String reg = mnem.equals("sta") ? "A" : (mnem.equals("stx") ? "X" : "Y");
 
                         int prevIdx = -1;
@@ -858,5 +864,108 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
       }
 
       return overallModified;
+   }
+
+   private static int prevInstIdx(List<LineRef> lines, int start) {
+      for(int i = start; i >= 0; i--) {
+         AsmLine line = lines.get(i).line;
+         if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
+         if(line instanceof AsmInstruction) return i;
+         break;
+      }
+      return -1;
+   }
+
+   private static int nextInstIdx(List<LineRef> lines, int start) {
+      for(int i = start; i < lines.size(); i++) {
+         AsmLine line = lines.get(i).line;
+         if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
+         if(line instanceof AsmInstruction) return i;
+         break;
+      }
+      return -1;
+   }
+
+   private boolean tryFoldDeadStackPullIntoAxs(List<LineRef> sLines, int staIdx, AsmInstruction staInst, Set<String> deadVars) {
+      int prevIdx = prevInstIdx(sLines, staIdx - 1);
+      if(prevIdx < 0) return false;
+      AsmInstruction prevInst = (AsmInstruction) sLines.get(prevIdx).line;
+      if(prevInst.getCpuOpcode() == null || !"pla".equalsIgnoreCase(prevInst.getCpuOpcode().getMnemonic())) {
+         return false;
+      }
+
+      int txsIdx = prevInstIdx(sLines, prevIdx - 1);
+      if(txsIdx < 0) return false;
+      AsmInstruction txsInst = (AsmInstruction) sLines.get(txsIdx).line;
+      if(txsInst.getCpuOpcode() == null || !"txs".equalsIgnoreCase(txsInst.getCpuOpcode().getMnemonic())) {
+         return false;
+      }
+
+      int axsIdx = prevInstIdx(sLines, txsIdx - 1);
+      if(axsIdx < 0) return false;
+      AsmInstruction axsInst = (AsmInstruction) sLines.get(axsIdx).line;
+      if(axsInst.getCpuOpcode() == null || !"axs".equalsIgnoreCase(axsInst.getCpuOpcode().getMnemonic())) {
+         return false;
+      }
+
+      int txaIdx = prevInstIdx(sLines, axsIdx - 1);
+      if(txaIdx < 0) return false;
+      AsmInstruction txaInst = (AsmInstruction) sLines.get(txaIdx).line;
+      if(txaInst.getCpuOpcode() == null || !"txa".equalsIgnoreCase(txaInst.getCpuOpcode().getMnemonic())) {
+         return false;
+      }
+
+      int tsxIdx = prevInstIdx(sLines, txaIdx - 1);
+      if(tsxIdx < 0) return false;
+      AsmInstruction tsxInst = (AsmInstruction) sLines.get(tsxIdx).line;
+      if(tsxInst.getCpuOpcode() == null || !"tsx".equalsIgnoreCase(tsxInst.getCpuOpcode().getMnemonic())) {
+         return false;
+      }
+
+      String axsOp = axsInst.getOperand1();
+      if(axsOp == null || !axsOp.startsWith("#-")) return false;
+      int currentK;
+      try {
+         currentK = Integer.parseInt(axsOp.substring(2));
+      } catch(NumberFormatException e) {
+         return false;
+      }
+
+      int deadPops = 1;
+      int secondPlaIdx = nextInstIdx(sLines, staIdx + 1);
+      int secondStaIdx = (secondPlaIdx >= 0) ? nextInstIdx(sLines, secondPlaIdx + 1) : -1;
+      boolean hasSecondDeadPop = false;
+
+      if(secondPlaIdx >= 0 && secondStaIdx >= 0) {
+         AsmInstruction pla2 = (AsmInstruction) sLines.get(secondPlaIdx).line;
+         AsmInstruction sta2 = (AsmInstruction) sLines.get(secondStaIdx).line;
+         if(pla2.getCpuOpcode() != null && "pla".equalsIgnoreCase(pla2.getCpuOpcode().getMnemonic()) &&
+            sta2.getCpuOpcode() != null && "sta".equalsIgnoreCase(sta2.getCpuOpcode().getMnemonic())) {
+            String op2 = sta2.getOperand1();
+            if(op2 != null) {
+               String base2 = getBaseVar(op2);
+               int dot = base2.lastIndexOf('.');
+               String simple2 = (dot != -1) ? base2.substring(dot + 1) : base2;
+               if(deadVars.contains(base2) || deadVars.contains(simple2)) {
+                  deadPops = 2;
+                  hasSecondDeadPop = true;
+               }
+            }
+         }
+      }
+
+      int newK = currentK + deadPops;
+      axsInst.setOperand1("#-" + newK);
+
+      sLines.get(prevIdx).chunk.getLines().remove(prevInst);
+      sLines.get(staIdx).chunk.getLines().remove(staInst);
+
+      if(hasSecondDeadPop) {
+         sLines.get(secondPlaIdx).chunk.getLines().remove(sLines.get(secondPlaIdx).line);
+         sLines.get(secondStaIdx).chunk.getLines().remove(sLines.get(secondStaIdx).line);
+      }
+
+      getLog().append("Fusing " + deadPops + " dead stack pull(s) into axs #-" + newK + " and removing dummy pla/sta");
+      return true;
    }
 }

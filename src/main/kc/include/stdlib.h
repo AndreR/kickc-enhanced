@@ -53,13 +53,28 @@ void ultoa(unsigned long value, char* buffer, enum RADIX radix);
 int atoi(const char *str);
 
 /// Returns the absolute value of 8-bit signed char x.
-signed char abs8(signed char x);
+inline signed char abs8(signed char x) {
+    if(x < 0)
+        return -x;
+    else
+        return x;
+}
 
 /// Returns the absolute value of 16-bit signed int x.
-int abs16(int x);
+inline int abs16(int x) {
+    if(x < 0)
+        return -x;
+    else
+        return x;
+}
 
 /// Returns the absolute value of long int x.
-long labs(long x);
+inline long labs(long x) {
+    if(x < 0)
+        return -x;
+    else
+        return x;
+}
 
 
 /// C11 _Generic polymorphic absolute value macro

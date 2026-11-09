@@ -48,24 +48,46 @@ public class Pass2ComparisonOptimization extends Pass2SsaOptimization {
                } catch(ConstantNotLiteral e) {
                   // Ignore
                }
-               if(Operators.GT.equals(operator) && valueType instanceof SymbolTypeIntegerFixed && constantLiteral instanceof ConstantInteger) {
-                  // Found > C - rewrite to >= C+1 if possible
-                  Long longValue = (Long) constantLiteral.getValue();
-                  if(longValue > 0x00L && longValue < 0xffL) {
-                     // Rewrite is possible - do it
-                     getLog().append("Rewriting conditional comparison " + statement.toString(getProgram(), false));
+               if(valueType instanceof SymbolTypeIntegerFixed && constantLiteral instanceof ConstantInteger) {
+                  SymbolTypeIntegerFixed fixedType = (SymbolTypeIntegerFixed) valueType;
+                  Long longValue = ((ConstantInteger) constantLiteral).getInteger();
+                  long maxVal = fixedType.getMaxValue();
+                  long minVal = fixedType.getMinValue();
+
+                  // Rewrite signed comparison with -1: x > -1 -> x >= 0 (2 instructions)
+                  if(fixedType.isSigned() && longValue == -1L && Operators.GT.equals(operator)) {
+                     getLog().append("Rewriting signed x > -1 to x >= 0 " + statement.toString(getProgram(), false));
                      conditionalJump.setOperator(Operators.GE);
-                     conditionalJump.setrValue2(new ConstantBinary(constantValue, Operators.PLUS, new ConstantInteger(1L)));
+                     conditionalJump.setrValue2(new ConstantInteger(0L, fixedType));
+                     return true;
                   }
-               }
-               if(Operators.LE.equals(operator) && valueType instanceof SymbolTypeIntegerFixed && constantLiteral instanceof ConstantInteger) {
-                  // Found <= C - rewrite to < C+1 if possible
-                  Long longValue = (Long) constantLiteral.getValue();
-                  if(longValue > 0x00L && longValue < 0xffL) {
-                     // Rewrite is possible - do it
-                     getLog().append("Rewriting conditional comparison " + statement.toString(getProgram(), false));
+
+                  // Rewrite signed comparison with -1: x <= -1 -> x < 0 (2 instructions)
+                  if(fixedType.isSigned() && longValue == -1L && Operators.LE.equals(operator)) {
+                     getLog().append("Rewriting signed x <= -1 to x < 0 " + statement.toString(getProgram(), false));
                      conditionalJump.setOperator(Operators.LT);
-                     conditionalJump.setrValue2(new ConstantBinary(constantValue, Operators.PLUS, new ConstantInteger(1L)));
+                     conditionalJump.setrValue2(new ConstantInteger(0L, fixedType));
+                     return true;
+                  }
+
+                  if(Operators.GT.equals(operator)) {
+                     // Found > C - rewrite to >= C+1 if possible (below max value)
+                     if(longValue >= minVal && longValue < maxVal) {
+                        getLog().append("Rewriting conditional comparison > to >= " + statement.toString(getProgram(), false));
+                        conditionalJump.setOperator(Operators.GE);
+                        conditionalJump.setrValue2(new ConstantInteger(longValue + 1L, fixedType));
+                        return true;
+                     }
+                  }
+
+                  if(Operators.LE.equals(operator)) {
+                     // Found <= C - rewrite to < C+1 if possible (below max value)
+                     if(longValue >= minVal && longValue < maxVal) {
+                        getLog().append("Rewriting conditional comparison <= to < " + statement.toString(getProgram(), false));
+                        conditionalJump.setOperator(Operators.LT);
+                        conditionalJump.setrValue2(new ConstantInteger(longValue + 1L, fixedType));
+                        return true;
+                     }
                   }
                }
             }

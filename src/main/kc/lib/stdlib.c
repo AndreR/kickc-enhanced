@@ -260,31 +260,6 @@ int atoi(const char *str) {
         return res;
 }
 
-// Returns the absolute value of 8-bit signed char x.
-signed char abs8(signed char x) {
-    if(x < 0)
-        return -x;
-    else
-        return x;
-}
-
-// Returns the absolute value of 16-bit signed int x.
-int abs16(int x) {
-    if(x < 0)
-        return -x;
-    else
-        return x;
-}
-
-// Returns the absolute value of int x (compatibility).
-
-// Returns the absolute value of long int x.
-long labs(long x) {
-    if(x < 0)
-        return -x;
-    else
-        return x;
-}
 
 // The random state variable
 volatile unsigned int rand_state = 1;
