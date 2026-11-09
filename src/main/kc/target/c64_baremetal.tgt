@@ -1,0 +1,14 @@
+{
+    "description": "Commodore 64 PRG executable file (Bare Metal / Full ZP).",
+    "extension": "prg",
+    "link": "c64.ld",
+    "start_address": "0x080d",
+    "cpu": "MOS6502X",
+    "interrupt": "none",
+    "zp_reserve": [ "0xfc..0xff" ],
+    "emulator": "x64sc",
+    "defines": {
+        "__C64__": 1,
+        "__BARE_METAL__": 1
+    }
+}
