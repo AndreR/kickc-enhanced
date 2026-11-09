@@ -194,7 +194,12 @@ public class Pass4RegistersFinalize extends Pass2Base {
                if(overflowToMainMem) {
                   if (zp + sizeBytes > 0x100) {
                      if(hasMultipleDataSegments(equivalenceClass)) {
-                        throw new CompileError("Error! Variables spanning multiple data segments do not fit on zeropage: " + variable.toString());
+                        StringBuilder sb = new StringBuilder();
+                        for(VariableRef vr : equivalenceClass.getVariables()) {
+                           Variable v = getProgram().getSymbolInfos().getVariable(vr);
+                           sb.append(" [").append(vr.toString()).append(" in seg ").append(v == null ? "null" : v.getDataSegment()).append("]");
+                        }
+                        throw new CompileError("Error! Variables spanning multiple data segments do not fit on zeropage: " + variable.toString() + " | All in class: " + sb.toString());
                      }
                      // Zero-page exhausted - move to main memory instead (TODO: prioritize!)
                      register = new Registers.RegisterMainMem(variableRef, variable.getType().getSizeBytes(), null, false);

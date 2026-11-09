@@ -263,6 +263,186 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
       return optimized;
    }
 
+   private RValue emitDivConstWordRecursive(StatementAssignment assignment, ListIterator<Statement> stmtIt, RValue currentVal, Scope scope, long divisor) {
+      if(divisor == 1) {
+         return currentVal;
+      }
+      // Powers of 2: shift right
+      if((divisor & (divisor - 1)) == 0) {
+         int shift = Long.numberOfTrailingZeros(divisor);
+         Variable res = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+         stmtIt.add(new StatementAssignment((LValue) res.getRef(), currentVal, Operators.SHIFT_RIGHT, new ConstantInteger((long) shift, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+         return res.getRef();
+      }
+      // If divisible by 2: extract power of 2
+      int trailingZeros = Long.numberOfTrailingZeros(divisor);
+      if(trailingZeros > 0) {
+         long rem = divisor >> trailingZeros;
+         RValue q = emitDivConstWordRecursive(assignment, stmtIt, currentVal, scope, rem);
+         if(q == null) return null;
+         Variable res = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+         stmtIt.add(new StatementAssignment((LValue) res.getRef(), q, Operators.SHIFT_RIGHT, new ConstantInteger((long) trailingZeros, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+         return res.getRef();
+      }
+      // Divisible by 5 (and note 10 = 2 * 5 is handled above by 5 then shift >> 1)
+      if(divisor % 5 == 0) {
+         RValue q5 = emitDiv5Word(assignment, stmtIt, currentVal, scope);
+         return emitDivConstWordRecursive(assignment, stmtIt, q5, scope, divisor / 5);
+      }
+      // Divisible by 3
+      if(divisor % 3 == 0) {
+         RValue q3 = emitDiv3Word(assignment, stmtIt, currentVal, scope);
+         return emitDivConstWordRecursive(assignment, stmtIt, q3, scope, divisor / 3);
+      }
+      // Divisible by 7
+      if(divisor % 7 == 0) {
+         RValue q7 = emitDiv7Word(assignment, stmtIt, currentVal, scope);
+         return emitDivConstWordRecursive(assignment, stmtIt, q7, scope, divisor / 7);
+      }
+      return null;
+   }
+
+   private RValue emitDiv5Word(StatementAssignment assignment, ListIterator<Statement> stmtIt, RValue varValue, Scope scope) {
+      Variable q1 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q1.getRef(), varValue, Operators.SHIFT_RIGHT, new ConstantInteger(1L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q2 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q2.getRef(), varValue, Operators.SHIFT_RIGHT, new ConstantInteger(2L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q.getRef(), q1.getRef(), Operators.PLUS, q2.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_s4 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_s4.getRef(), q.getRef(), Operators.SHIFT_RIGHT, new ConstantInteger(4L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_add4 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_add4.getRef(), q.getRef(), Operators.PLUS, q_s4.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_s8 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_s8.getRef(), q_add4.getRef(), Operators.SHIFT_RIGHT, new ConstantInteger(8L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_add8 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_add8.getRef(), q_add4.getRef(), Operators.PLUS, q_s8.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_final = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_final.getRef(), q_add8.getRef(), Operators.SHIFT_RIGHT, new ConstantInteger(3L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_s3 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_s3.getRef(), q_final.getRef(), Operators.SHIFT_LEFT, new ConstantInteger(3L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_s1 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_s1.getRef(), q_final.getRef(), Operators.SHIFT_LEFT, new ConstantInteger(1L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_mul10 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_mul10.getRef(), q_s3.getRef(), Operators.PLUS, q_s1.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable r = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) r.getRef(), varValue, Operators.MINUS, q_mul10.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable r_add3 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) r_add3.getRef(), r.getRef(), Operators.PLUS, new ConstantInteger(3L, SymbolType.WORD), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable corr = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) corr.getRef(), r_add3.getRef(), Operators.SHIFT_RIGHT, new ConstantInteger(3L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_s1_2 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_s1_2.getRef(), q_final.getRef(), Operators.SHIFT_LEFT, new ConstantInteger(1L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable res = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) res.getRef(), q_s1_2.getRef(), Operators.PLUS, corr.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      return res.getRef();
+   }
+
+   private RValue emitDiv3Word(StatementAssignment assignment, ListIterator<Statement> stmtIt, RValue varValue, Scope scope) {
+      Variable q1 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q1.getRef(), varValue, Operators.SHIFT_RIGHT, new ConstantInteger(1L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+      Variable q3 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q3.getRef(), varValue, Operators.SHIFT_RIGHT, new ConstantInteger(3L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+      Variable q = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q.getRef(), q1.getRef(), Operators.PLUS, q3.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_s4 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_s4.getRef(), q.getRef(), Operators.SHIFT_RIGHT, new ConstantInteger(4L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+      Variable q_add4 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_add4.getRef(), q.getRef(), Operators.PLUS, q_s4.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_s8 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_s8.getRef(), q_add4.getRef(), Operators.SHIFT_RIGHT, new ConstantInteger(8L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+      Variable q_add8 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_add8.getRef(), q_add4.getRef(), Operators.PLUS, q_s8.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_final = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_final.getRef(), q_add8.getRef(), Operators.SHIFT_RIGHT, new ConstantInteger(1L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_s1 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_s1.getRef(), q_final.getRef(), Operators.SHIFT_LEFT, new ConstantInteger(1L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+      Variable q_mul3 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_mul3.getRef(), q_s1.getRef(), Operators.PLUS, q_final.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+      Variable r = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) r.getRef(), varValue, Operators.MINUS, q_mul3.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable r_s3 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) r_s3.getRef(), r.getRef(), Operators.SHIFT_LEFT, new ConstantInteger(3L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+      Variable r_s1 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) r_s1.getRef(), r.getRef(), Operators.SHIFT_LEFT, new ConstantInteger(1L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+      Variable r_sum1 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) r_sum1.getRef(), r_s3.getRef(), Operators.PLUS, r_s1.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+      Variable r_mul11 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) r_mul11.getRef(), r_sum1.getRef(), Operators.PLUS, r.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable corr = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) corr.getRef(), r_mul11.getRef(), Operators.SHIFT_RIGHT, new ConstantInteger(5L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable res = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) res.getRef(), q_final.getRef(), Operators.PLUS, corr.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      return res.getRef();
+   }
+
+   private RValue emitDiv7Word(StatementAssignment assignment, ListIterator<Statement> stmtIt, RValue varValue, Scope scope) {
+      Variable q1 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q1.getRef(), varValue, Operators.SHIFT_RIGHT, new ConstantInteger(3L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q2 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q2.getRef(), varValue, Operators.SHIFT_RIGHT, new ConstantInteger(6L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q.getRef(), q1.getRef(), Operators.PLUS, q2.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_s6 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_s6.getRef(), q.getRef(), Operators.SHIFT_RIGHT, new ConstantInteger(6L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_sum = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_sum.getRef(), q.getRef(), Operators.PLUS, q_s6.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_s3 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_s3.getRef(), q_sum.getRef(), Operators.SHIFT_LEFT, new ConstantInteger(3L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable q_mul7 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) q_mul7.getRef(), q_s3.getRef(), Operators.MINUS, q_sum.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable r = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) r.getRef(), varValue, Operators.MINUS, q_mul7.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable r_s3 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) r_s3.getRef(), r.getRef(), Operators.SHIFT_LEFT, new ConstantInteger(3L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable r_mul9 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) r_mul9.getRef(), r_s3.getRef(), Operators.PLUS, r.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable r_add7 = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) r_add7.getRef(), r_mul9.getRef(), Operators.PLUS, new ConstantInteger(7L, SymbolType.WORD), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable corr = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) corr.getRef(), r_add7.getRef(), Operators.SHIFT_RIGHT, new ConstantInteger(6L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      Variable res = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
+      stmtIt.add(new StatementAssignment((LValue) res.getRef(), q_sum.getRef(), Operators.PLUS, corr.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
+
+      return res.getRef();
+   }
+
    private boolean rewriteDivide(StatementAssignment assignment, ListIterator<Statement> stmtIt, Long constValue, RValue varValue, Scope scope) {
       boolean optimized = false;
       double power2 = Math.log(constValue) / Math.log(2);
@@ -313,6 +493,18 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
                   finalVal = varShift.getRef();
                }
                stmtIt.next();
+               assignment.setOperator(null);
+               assignment.setrValue1(null);
+               assignment.setrValue2(finalVal);
+               optimized = true;
+            }
+         } else if(varType.getSizeBytes() == 2) {
+            stmtIt.previous();
+            RValue finalVal = emitDivConstWordRecursive(assignment, stmtIt, varValue, scope, constValue);
+            stmtIt.next();
+            if(finalVal != null) {
+               inlinedDivCounts.put(constValue, inlinedDivCounts.getOrDefault(constValue, 0) + 1);
+               getLog().append("Rewriting 16-bit division by " + constValue + " to fast shift-add sequence: " + assignment.toString(getProgram(), false));
                assignment.setOperator(null);
                assignment.setrValue1(null);
                assignment.setrValue2(finalVal);

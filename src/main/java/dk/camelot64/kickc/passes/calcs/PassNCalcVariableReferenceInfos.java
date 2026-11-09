@@ -95,9 +95,18 @@ public class PassNCalcVariableReferenceInfos extends PassNCalcBase<VariableRefer
       LinkedHashSet<SymbolVariableRef> usedVars = new LinkedHashSet<>();
       if(statement instanceof StatementLValue) {
          final StatementLValue statementLValue = (StatementLValue) statement;
-         if(!((statementLValue).getlValue() instanceof VariableRef)) {
+         LValue lValue = statementLValue.getlValue();
+         if(lValue instanceof StructMemberRef) {
+            RValue root = ((StructMemberRef) lValue).getStruct();
+            while(root instanceof StructMemberRef) {
+               root = ((StructMemberRef) root).getStruct();
+            }
+            if(!(root instanceof VariableRef)) {
+               usedVars.addAll(getReferenced(root));
+            }
+         } else if(!(lValue instanceof VariableRef)) {
             // No assignments - find all vars referenced
-            usedVars.addAll(getReferenced((statementLValue).getlValue()));
+            usedVars.addAll(getReferenced(lValue));
          }
          if(statementLValue instanceof StatementAssignment) {
             usedVars.addAll(getReferenced(((StatementAssignment) statementLValue).getrValue1()));
@@ -201,8 +210,12 @@ public class PassNCalcVariableReferenceInfos extends PassNCalcBase<VariableRefer
          return defined;
       } else if(stmt instanceof StatementLValue) {
          LValue lValue = ((StatementLValue) stmt).getlValue();
-         if(lValue instanceof VariableRef) {
-            return Collections.singletonList((VariableRef) lValue);
+         RValue root = lValue;
+         while(root instanceof StructMemberRef) {
+            root = ((StructMemberRef) root).getStruct();
+         }
+         if(root instanceof VariableRef) {
+            return Collections.singletonList((VariableRef) root);
          }
       }
       return new ArrayList<>();

@@ -25,6 +25,8 @@ public class OperatorMinus extends OperatorBinary {
 
    @Override
    public SymbolType inferType(SymbolType type1, SymbolType type2) {
+      if(SymbolTypeConversion.isInt24(type1)) type1 = SymbolType.DWORD;
+      if(SymbolTypeConversion.isInt24(type2)) type2 = SymbolType.DWORD;
       // Handle pointer types
       if(type1 instanceof SymbolTypePointer && SymbolType.isInteger(type2)) {
          return new SymbolTypePointer(((SymbolTypePointer) type1).getElementType());

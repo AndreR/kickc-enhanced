@@ -90,11 +90,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
     * @return The new intermediate variable
     */
    private Variable addIntermediateVar() {
+      return addIntermediateVar(SymbolType.VAR);
+   }
+
+   private Variable addIntermediateVar(SymbolType type) {
       Scope currentScope = getCurrentScope();
       if(currentScope == null || ScopeRef.ROOT.equals(currentScope.getRef())) {
          currentScope = getInitProc();
       }
-      return VariableBuilder.createIntermediate(currentScope, SymbolType.VAR, program);
+      return VariableBuilder.createIntermediate(currentScope, type != null ? type : SymbolType.VAR, program);
    }
 
    /**
@@ -2558,7 +2562,26 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          PrePostModifierHandler.addPreModifiers(this, exprCtx, new StatementSource(ctx));
          rValue = (RValue) this.visit(exprCtx);
          Variable returnVar = procedure.getLocalVariable("return");
-         addStatement(new StatementAssignment((LValue) returnVar.getRef(), rValue, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         if(returnVar != null) {
+            SymbolType returnVarType = returnVar.getType();
+            SymbolType exprType = inferExprType(getExprFromCommaExpr(exprCtx));
+            if(isInt24Type(returnVarType) && !isInt24Type(exprType)) {
+               StructMemberRef loMember = new StructMemberRef(returnVar.getRef(), "lo");
+               StructMemberRef hiMember = new StructMemberRef(returnVar.getRef(), "hi");
+               RValue byte0 = addExprUnary(ctx, Operators.BYTE0, rValue);
+               RValue byte1 = addExprUnary(ctx, Operators.BYTE1, rValue);
+               RValue byte2 = addExprUnary(ctx, Operators.BYTE2, rValue);
+               RValue loVal = addExprBinary(ctx, byte1, Operators.WORD, byte0);
+               addStatement(new StatementAssignment(loMember, loVal, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+               addStatement(new StatementAssignment(hiMember, byte2, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+               rValue = null;
+            } else if(!isInt24Type(returnVarType) && isInt24Type(exprType) && rValue instanceof LValue) {
+               rValue = promoteInt24ToDword(ctx, (LValue) rValue, exprType);
+            }
+         }
+         if(rValue != null) {
+            addStatement(new StatementAssignment((LValue) returnVar.getRef(), rValue, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         }
          PrePostModifierHandler.addPostModifiers(this, exprCtx, new StatementSource(ctx));
       }
       Label returnLabel = procedure.getLocalLabel(SymbolRef.PROCEXIT_BLOCK_NAME);
@@ -3481,6 +3504,226 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return rhsVal;
    }
 
+   public KickCParser.ExprContext getExprFromCommaExpr(KickCParser.CommaExprContext commaCtx) {
+      if(commaCtx == null) return null;
+      if(commaCtx instanceof KickCParser.CommaNoneContext) {
+         return ((KickCParser.CommaNoneContext) commaCtx).expr();
+      } else if(commaCtx instanceof KickCParser.CommaSimpleContext) {
+         return ((KickCParser.CommaSimpleContext) commaCtx).expr();
+      }
+      return null;
+   }
+
+   public RValue promoteInt24ToDword(ParserRuleContext ctx, LValue val, SymbolType type) {
+      StructMemberRef loMember = new StructMemberRef(val, "lo");
+      StructMemberRef hiMember = new StructMemberRef(val, "hi");
+      SymbolVariableRef hiWordVar = addIntermediateVar().getRef();
+      SymbolType hiWordType = isSignedInt24(type) ? SymbolType.SWORD : SymbolType.WORD;
+      addStatement(new StatementAssignment((LValue) hiWordVar, Operators.getCastUnary(hiWordType), hiMember, true, new StatementSource(ctx), Comment.NO_COMMENTS));
+      return addExprBinary(ctx, hiWordVar, Operators.DWORD, loMember);
+   }
+
+   public boolean isInt24Type(SymbolType type) {
+      if(type instanceof SymbolTypeStruct structType) {
+         if(!structType.isUnion() && structType.getSizeBytes() == 3) {
+            return true;
+         }
+      }
+      return false;
+   }
+
+   public boolean isSignedInt24(SymbolType type) {
+      if(type instanceof SymbolTypeStruct structType) {
+         StructDefinition sDef = structType.getStructDefinition(program.getScope());
+         if(sDef != null) {
+            Variable hi = sDef.getMember("hi");
+            if(hi != null && hi.getType() instanceof SymbolTypeIntegerFixed && ((SymbolTypeIntegerFixed) hi.getType()).isSigned()) {
+               return true;
+            }
+         }
+      }
+      return false;
+   }
+
+   public KickCParser.ExprArrayContext getInt24ArrayContext(KickCParser.ExprContext exprCtx) {
+      while(exprCtx instanceof KickCParser.ExprParContext) {
+         KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) exprCtx).commaExpr();
+         if(commaCtx instanceof KickCParser.CommaNoneContext) {
+            exprCtx = ((KickCParser.CommaNoneContext) commaCtx).expr();
+         } else if(commaCtx instanceof KickCParser.CommaSimpleContext) {
+            exprCtx = ((KickCParser.CommaSimpleContext) commaCtx).expr();
+         } else {
+            return null;
+         }
+      }
+      if(exprCtx instanceof KickCParser.ExprArrayContext arrayCtx) {
+         SymbolType arrayType = inferExprType(arrayCtx.expr());
+         if(arrayType instanceof SymbolTypePointer ptrType && isInt24Type(ptrType.getElementType())) {
+            return arrayCtx;
+         }
+      }
+      return null;
+   }
+
+   public RValue desugarInt24ArrayRead(KickCParser.ExprArrayContext arrayCtx) {
+      SymbolType arrayType = inferExprType(arrayCtx.expr());
+      SymbolType elementType = (arrayType instanceof SymbolTypePointer) ? ((SymbolTypePointer) arrayType).getElementType() : null;
+      boolean signed = isSignedInt24(elementType);
+
+      RValue arrayRVal = (RValue) visit(arrayCtx.expr());
+      RValue indexRVal = (RValue) visit(arrayCtx.commaExpr());
+
+      if(!(indexRVal instanceof SymbolVariableRef || indexRVal instanceof ConstantValue)) {
+         SymbolVariableRef idxVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) idxVar, indexRVal, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+         indexRVal = idxVar;
+      }
+
+      SymbolTypePointer bytePtrType = new SymbolTypePointer(SymbolType.BYTE);
+
+      if(indexRVal instanceof ConstantInteger ci && arrayRVal instanceof ConstantValue cv) {
+         long byteOffset = ci.getInteger() * 3;
+         ConstantCastValue baseBytePtr = new ConstantCastValue(bytePtrType, cv);
+         ConstantBinary ptr0 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(byteOffset, SymbolType.WORD));
+         ConstantBinary ptr1 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(byteOffset + 1, SymbolType.WORD));
+         ConstantBinary ptr2 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(byteOffset + 2, SymbolType.WORD));
+
+         PointerDereferenceSimple deref0 = new PointerDereferenceSimple(ptr0);
+         PointerDereferenceSimple deref1 = new PointerDereferenceSimple(ptr1);
+         PointerDereferenceSimple deref2 = new PointerDereferenceSimple(ptr2);
+
+         SymbolVariableRef b0Var = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) b0Var, deref0, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+         SymbolVariableRef b1Var = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) b1Var, deref1, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+         SymbolVariableRef b2Var = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) b2Var, deref2, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+         RValue loVar = addExprBinary(arrayCtx, b1Var, Operators.WORD, b0Var);
+
+         SymbolVariableRef hiWordVar = addIntermediateVar().getRef();
+         SymbolType hiWordType = signed ? SymbolType.SWORD : SymbolType.WORD;
+         addStatement(new StatementAssignment((LValue) hiWordVar, Operators.getCastUnary(hiWordType), b2Var, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+         return addExprBinary(arrayCtx, hiWordVar, Operators.DWORD, loVar);
+      }
+
+      SymbolVariableRef byteOffsetVar = addIntermediateVar().getRef();
+      addStatement(new StatementAssignment((LValue) byteOffsetVar, indexRVal, Operators.MULTIPLY, new ConstantInteger(3L, SymbolType.BYTE), true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+      PointerDereferenceIndexed deref0, deref1, deref2;
+      if(arrayRVal instanceof ConstantValue cv) {
+         ConstantCastValue baseBytePtr = new ConstantCastValue(bytePtrType, cv);
+         ConstantBinary basePlus1 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(1L, SymbolType.WORD));
+         ConstantBinary basePlus2 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(2L, SymbolType.WORD));
+
+         deref0 = new PointerDereferenceIndexed(baseBytePtr, byteOffsetVar);
+         deref1 = new PointerDereferenceIndexed(basePlus1, byteOffsetVar);
+         deref2 = new PointerDereferenceIndexed(basePlus2, byteOffsetVar);
+      } else {
+         SymbolVariableRef ptrAddress = addIntermediateVar().getRef();
+         CastValue baseBytePtr = new CastValue(bytePtrType, arrayRVal);
+         addStatement(new StatementAssignment((LValue) ptrAddress, baseBytePtr, Operators.PLUS, byteOffsetVar, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+         deref0 = new PointerDereferenceIndexed(ptrAddress, new ConstantInteger(0L, SymbolType.BYTE));
+         deref1 = new PointerDereferenceIndexed(ptrAddress, new ConstantInteger(1L, SymbolType.BYTE));
+         deref2 = new PointerDereferenceIndexed(ptrAddress, new ConstantInteger(2L, SymbolType.BYTE));
+      }
+
+      SymbolVariableRef b0Var = addIntermediateVar().getRef();
+      addStatement(new StatementAssignment((LValue) b0Var, deref0, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+      SymbolVariableRef b1Var = addIntermediateVar().getRef();
+      addStatement(new StatementAssignment((LValue) b1Var, deref1, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+      SymbolVariableRef b2Var = addIntermediateVar().getRef();
+      addStatement(new StatementAssignment((LValue) b2Var, deref2, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+      RValue loVar = addExprBinary(arrayCtx, b1Var, Operators.WORD, b0Var);
+
+      SymbolVariableRef hiWordVar = addIntermediateVar().getRef();
+      SymbolType hiWordType = signed ? SymbolType.SWORD : SymbolType.WORD;
+      addStatement(new StatementAssignment((LValue) hiWordVar, Operators.getCastUnary(hiWordType), b2Var, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+      return addExprBinary(arrayCtx, hiWordVar, Operators.DWORD, loVar);
+   }
+
+   public RValue writeInt24Array(ParserRuleContext ctx, KickCParser.ExprArrayContext arrayCtx, RValue rhsVal) {
+      RValue arrayRVal = (RValue) visit(arrayCtx.expr());
+      RValue indexRVal = (RValue) visit(arrayCtx.commaExpr());
+
+      if(!(indexRVal instanceof SymbolVariableRef || indexRVal instanceof ConstantValue)) {
+         SymbolVariableRef idxVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) idxVar, indexRVal, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+         indexRVal = idxVar;
+      }
+      if(!(rhsVal instanceof SymbolVariableRef || rhsVal instanceof ConstantValue)) {
+         SymbolVariableRef rhsVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) rhsVar, rhsVal, true, new StatementSource(ctx), Comment.NO_COMMENTS));
+         rhsVal = rhsVar;
+      }
+
+      RValue byte0, byte1, byte2;
+      if(rhsVal instanceof ConstantInteger ci) {
+         long val = ci.getInteger();
+         byte0 = new ConstantInteger(val & 0xffL, SymbolType.BYTE);
+         byte1 = new ConstantInteger((val >> 8) & 0xffL, SymbolType.BYTE);
+         byte2 = new ConstantInteger((val >> 16) & 0xffL, SymbolType.BYTE);
+      } else {
+         byte0 = addExprUnary(ctx, Operators.BYTE0, rhsVal);
+         byte1 = addExprUnary(ctx, Operators.BYTE1, rhsVal);
+         byte2 = addExprUnary(ctx, Operators.BYTE2, rhsVal);
+      }
+
+      SymbolTypePointer bytePtrType = new SymbolTypePointer(SymbolType.BYTE);
+
+      if(indexRVal instanceof ConstantInteger ci && arrayRVal instanceof ConstantValue cv) {
+         long byteOffset = ci.getInteger() * 3;
+         ConstantCastValue baseBytePtr = new ConstantCastValue(bytePtrType, cv);
+         ConstantBinary ptr0 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(byteOffset, SymbolType.WORD));
+         ConstantBinary ptr1 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(byteOffset + 1, SymbolType.WORD));
+         ConstantBinary ptr2 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(byteOffset + 2, SymbolType.WORD));
+
+         addStatement(new StatementAssignment(new PointerDereferenceSimple(ptr0), byte0, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         addStatement(new StatementAssignment(new PointerDereferenceSimple(ptr1), byte1, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         addStatement(new StatementAssignment(new PointerDereferenceSimple(ptr2), byte2, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         return rhsVal;
+      }
+
+      SymbolVariableRef byteOffsetVar = addIntermediateVar().getRef();
+      addStatement(new StatementAssignment((LValue) byteOffsetVar, indexRVal, Operators.MULTIPLY, new ConstantInteger(3L, SymbolType.BYTE), true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+      if(arrayRVal instanceof ConstantValue cv) {
+         ConstantCastValue baseBytePtr = new ConstantCastValue(bytePtrType, cv);
+         ConstantBinary basePlus1 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(1L, SymbolType.WORD));
+         ConstantBinary basePlus2 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(2L, SymbolType.WORD));
+
+         PointerDereferenceIndexed deref0 = new PointerDereferenceIndexed(baseBytePtr, byteOffsetVar);
+         PointerDereferenceIndexed deref1 = new PointerDereferenceIndexed(basePlus1, byteOffsetVar);
+         PointerDereferenceIndexed deref2 = new PointerDereferenceIndexed(basePlus2, byteOffsetVar);
+
+         addStatement(new StatementAssignment(deref0, byte0, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         addStatement(new StatementAssignment(deref1, byte1, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         addStatement(new StatementAssignment(deref2, byte2, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+      } else {
+         SymbolVariableRef ptrAddress = addIntermediateVar().getRef();
+         CastValue baseBytePtr = new CastValue(bytePtrType, arrayRVal);
+         addStatement(new StatementAssignment((LValue) ptrAddress, baseBytePtr, Operators.PLUS, byteOffsetVar, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
+
+         PointerDereferenceIndexed deref0 = new PointerDereferenceIndexed(ptrAddress, new ConstantInteger(0L, SymbolType.BYTE));
+         PointerDereferenceIndexed deref1 = new PointerDereferenceIndexed(ptrAddress, new ConstantInteger(1L, SymbolType.BYTE));
+         PointerDereferenceIndexed deref2 = new PointerDereferenceIndexed(ptrAddress, new ConstantInteger(2L, SymbolType.BYTE));
+
+         addStatement(new StatementAssignment(deref0, byte0, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         addStatement(new StatementAssignment(deref1, byte1, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         addStatement(new StatementAssignment(deref2, byte2, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+      }
+
+      return rhsVal;
+   }
+
    public KickCParser.ExprArrayContext getNibbleArrayContext(KickCParser.ExprContext exprCtx) {
       while(exprCtx instanceof KickCParser.ExprParContext) {
          KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) exprCtx).commaExpr();
@@ -3659,6 +3902,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          RValue rhsVal = (RValue) visit(ctx.expr(1));
          return writeLoHiArray(ctx, loHiArrayCtx, rhsVal);
       }
+      KickCParser.ExprArrayContext int24ArrayCtx = getInt24ArrayContext(ctx.expr(0));
+      if(int24ArrayCtx != null) {
+         RValue rhsVal = (RValue) visit(ctx.expr(1));
+         return writeInt24Array(ctx, int24ArrayCtx, rhsVal);
+      }
       Object val = visit(ctx.expr(0));
       if(val instanceof ConstantRef) {
          throw new CompileError("const variable may not be modified " + val, new StatementSource(ctx));
@@ -3691,6 +3939,26 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
                lValue = new StructMemberRef(lValue, firstMember.getLocalName());
             }
          }
+      } else if(isInt24Type(lType) && !isInt24Type(inferExprType(ctx.expr(1)))) {
+         StructMemberRef loMember = new StructMemberRef(lValue, "lo");
+         StructMemberRef hiMember = new StructMemberRef(lValue, "hi");
+         RValue byte0, byte1, byte2;
+         if(rValue instanceof ConstantInteger ci) {
+            long cval = ci.getInteger();
+            byte0 = new ConstantInteger(cval & 0xffL, SymbolType.BYTE);
+            byte1 = new ConstantInteger((cval >> 8) & 0xffL, SymbolType.BYTE);
+            byte2 = new ConstantInteger((cval >> 16) & 0xffL, SymbolType.BYTE);
+         } else {
+            byte0 = addExprUnary(ctx, Operators.BYTE0, rValue);
+            byte1 = addExprUnary(ctx, Operators.BYTE1, rValue);
+            byte2 = addExprUnary(ctx, Operators.BYTE2, rValue);
+         }
+         RValue loVal = (rValue instanceof ConstantInteger) ? new ConstantInteger(((ConstantInteger) rValue).getInteger() & 0xffffL, SymbolType.WORD) : addExprBinary(ctx, byte1, Operators.WORD, byte0);
+         addStatement(new StatementAssignment(loMember, loVal, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         addStatement(new StatementAssignment(hiMember, byte2, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         consumeExpr(lValue);
+         consumeExpr(rValue);
+         return lValue;
       } else if(rValue instanceof LValue) {
          SymbolType rType = inferExprType(ctx.expr(1));
          if(rType instanceof SymbolTypeStruct && ((SymbolTypeStruct) rType).isUnion()) {
@@ -3699,6 +3967,8 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
                Variable firstMember = sDef.getAllVars(false).iterator().next();
                rValue = new StructMemberRef((LValue) rValue, firstMember.getLocalName());
             }
+         } else if(isInt24Type(rType) && !isInt24Type(lType)) {
+            rValue = promoteInt24ToDword(ctx, (LValue) rValue, rType);
          }
       }
       Statement stmt = new StatementAssignment(lValue, rValue, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx)));
@@ -3739,6 +4009,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          RValue updatedVal = addExprBinary(ctx, currentVal, operator, rhsVal);
          return writeLoHiArray(ctx, loHiArrayCtx, updatedVal);
       }
+      KickCParser.ExprArrayContext int24ArrayCtx = getInt24ArrayContext(ctx.expr(0));
+      if(int24ArrayCtx != null) {
+         RValue rhsVal = (RValue) visit(ctx.expr(1));
+         String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
+         Operator operator = Operators.getBinaryCompound(op);
+         RValue currentVal = desugarInt24ArrayRead(int24ArrayCtx);
+         RValue updatedVal = addExprBinary(ctx, currentVal, operator, rhsVal);
+         return writeInt24Array(ctx, int24ArrayCtx, updatedVal);
+      }
       // Assignment (rValue/lValue)
       Object value = visit(ctx.expr(0));
       if(!(value instanceof LValue lValue)) {
@@ -3763,6 +4042,21 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       // Binary Operator
       String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
       Operator operator = Operators.getBinaryCompound(op);
+      if(isInt24Type(lCompoundType)) {
+         RValue currentVal = promoteInt24ToDword(ctx, lValue, lCompoundType);
+         RValue updatedVal = addExprBinary(ctx, currentVal, operator, rValue);
+         StructMemberRef loMember = new StructMemberRef(copyLValue(lValue), "lo");
+         StructMemberRef hiMember = new StructMemberRef(copyLValue(lValue), "hi");
+         RValue byte0 = addExprUnary(ctx, Operators.BYTE0, updatedVal);
+         RValue byte1 = addExprUnary(ctx, Operators.BYTE1, updatedVal);
+         RValue byte2 = addExprUnary(ctx, Operators.BYTE2, updatedVal);
+         RValue loVal = addExprBinary(ctx, byte1, Operators.WORD, byte0);
+         addStatement(new StatementAssignment(loMember, loVal, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         addStatement(new StatementAssignment(hiMember, byte2, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+         consumeExpr(lValue);
+         consumeExpr(rValue);
+         return lValue;
+      }
       // Assignment with operator
       LValue rValue1 = copyLValue(lValue);
       Statement stmt = new StatementAssignment(lValue, rValue1, operator, rValue, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx)));
@@ -3999,7 +4293,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       } else if(ctx instanceof KickCParser.ExprPtrContext) {
          SymbolType ptrType = inferExprType(((KickCParser.ExprPtrContext) ctx).expr());
          if(ptrType instanceof SymbolTypePointer) {
-            return ((SymbolTypePointer) ptrType).getElementType();
+            SymbolType elem = ((SymbolTypePointer) ptrType).getElementType();
+            if(isInt24Type(elem)) {
+               return isSignedInt24(elem) ? SymbolType.SDWORD : SymbolType.DWORD;
+            }
+            return elem;
          }
          return null;
       } else if(ctx instanceof KickCParser.ExprPreModContext) {
@@ -4020,7 +4318,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          }
          return left != null ? left : right;
       } else if(ctx instanceof KickCParser.ExprTernaryContext) {
-         return inferExprType(((KickCParser.ExprTernaryContext) ctx).expr(1));
+         SymbolType tType = inferExprType(((KickCParser.ExprTernaryContext) ctx).expr(1));
+         if(isInt24Type(tType)) {
+            return isSignedInt24(tType) ? SymbolType.SDWORD : SymbolType.DWORD;
+         }
+         return tType;
       } else if(ctx instanceof KickCParser.ExprDotContext) {
          KickCParser.ExprDotContext dotCtx = (KickCParser.ExprDotContext) ctx;
          SymbolType structType = inferExprType(dotCtx.expr());
@@ -4046,19 +4348,26 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       } else if(ctx instanceof KickCParser.ExprArrayContext) {
          SymbolType arrType = inferExprType(((KickCParser.ExprArrayContext) ctx).expr());
          if(arrType instanceof SymbolTypePointer) {
-            return ((SymbolTypePointer) arrType).getElementType();
+            SymbolType elem = ((SymbolTypePointer) arrType).getElementType();
+            if(isInt24Type(elem)) {
+               return isSignedInt24(elem) ? SymbolType.SDWORD : SymbolType.DWORD;
+            }
+            return elem;
          }
          return null;
       } else if(ctx instanceof KickCParser.ExprCallContext) {
          KickCParser.ExprCallContext callCtx = (KickCParser.ExprCallContext) ctx;
          SymbolType fnType = inferExprType(callCtx.expr());
+         SymbolType ret = null;
          if(fnType instanceof SymbolTypeProcedure) {
-            return ((SymbolTypeProcedure) fnType).getReturnType();
+            ret = ((SymbolTypeProcedure) fnType).getReturnType();
+         } else if(fnType instanceof SymbolTypePointer && ((SymbolTypePointer) fnType).getElementType() instanceof SymbolTypeProcedure) {
+            ret = ((SymbolTypeProcedure) ((SymbolTypePointer) fnType).getElementType()).getReturnType();
          }
-         if(fnType instanceof SymbolTypePointer && ((SymbolTypePointer) fnType).getElementType() instanceof SymbolTypeProcedure) {
-            return ((SymbolTypeProcedure) ((SymbolTypePointer) fnType).getElementType()).getReturnType();
+         if(isInt24Type(ret)) {
+            return isSignedInt24(ret) ? SymbolType.SDWORD : SymbolType.DWORD;
          }
-         return null;
+         return ret;
       } else if(ctx instanceof KickCParser.ExprSizeOfContext || ctx instanceof KickCParser.ExprSizeOfTypeContext || ctx instanceof KickCParser.ExprCountOfContext || ctx instanceof KickCParser.ExprCountOfTypeContext || ctx instanceof KickCParser.ExprTypeIdContext || ctx instanceof KickCParser.ExprTypeIdTypeContext) {
          return SymbolType.WORD;
       } else if(ctx instanceof KickCParser.ExprAssignmentContext) {
@@ -4247,27 +4556,51 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
       // Examine if the procedureName references a variable
       RValue procedurePointer = (RValue) this.visit(ctx.expr());
+      SymbolType callType = inferExprType(ctx.expr());
+      SymbolType returnType = SymbolType.VAR;
+      if(callType instanceof SymbolTypeProcedure) {
+         returnType = ((SymbolTypeProcedure) callType).getReturnType();
+      } else if(callType instanceof SymbolTypePointer && ((SymbolTypePointer) callType).getElementType() instanceof SymbolTypeProcedure) {
+         returnType = ((SymbolTypeProcedure) ((SymbolTypePointer) callType).getElementType()).getReturnType();
+      } else if(procedurePointer instanceof ProcedureRef) {
+         Procedure proc = program.getScope().getProcedure((ProcedureRef) procedurePointer);
+         if(proc != null && proc.getReturnType() != null) {
+            returnType = proc.getReturnType();
+         }
+      } else if(procedurePointer instanceof ForwardVariableRef) {
+         Procedure proc = program.getScope().getLocalProcedure(((ForwardVariableRef) procedurePointer).getName());
+         if(proc != null && proc.getReturnType() != null) {
+            returnType = proc.getReturnType();
+         }
+      }
+      if(returnType == null || SymbolType.VOID.equals(returnType)) {
+         returnType = SymbolType.VAR;
+      }
+
+      LValue result;
       if(procedurePointer instanceof ProcedureRef) {
          // A normal named call
-         LValue result = (LValue) addIntermediateVar().getRef();
+         result = (LValue) addIntermediateVar(returnType).getRef();
          String procedureName = ((ProcedureRef) procedurePointer).getLocalName();
          addStatement(new StatementCall(result, procedureName, parameters, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-         return result;
       } else if(procedurePointer instanceof ForwardVariableRef) {
          // TODO: Remove the need for forward references!
          // Assume this is a named call to a yet undeclared function.
-         LValue result = (LValue) addIntermediateVar().getRef();
+         result = (LValue) addIntermediateVar(returnType).getRef();
          String procedureName = ((ForwardVariableRef) procedurePointer).getName();
          addStatement(new StatementCall(result, procedureName, parameters, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-         return result;
       } else {
-         LValue result = (LValue) addIntermediateVar().getRef();
+         result = (LValue) addIntermediateVar(returnType).getRef();
          addStatement(new StatementCallPointer(result, procedurePointer, parameters, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
          consumeExpr(procedurePointer);
          Label afterCallLabel = getCurrentScope().addLabelIntermediate();
          addStatement(new StatementLabel(afterCallLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
-         return result;
       }
+
+      if(isInt24Type(returnType)) {
+         return promoteInt24ToDword(ctx, result, returnType);
+      }
+      return result;
    }
 
    @Override
@@ -4287,6 +4620,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       }
       if(getLoHiArrayVariableFromArrayContext(ctx) != null) {
          return desugarLoHiArrayRead(ctx);
+      }
+      if(getInt24ArrayContext(ctx) != null) {
+         return desugarInt24ArrayRead(ctx);
       }
       RValue array = (RValue) visit(ctx.expr());
       RValue index = (RValue) visit(ctx.commaExpr());
@@ -4368,6 +4704,12 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       RValue right = (RValue) this.visit(ctx.expr(1));
       String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
       Operator operator = Operators.getBinary(op);
+      if(left instanceof LValue && isInt24Type(inferExprType(ctx.expr(0)))) {
+         left = promoteInt24ToDword(ctx, (LValue) left, inferExprType(ctx.expr(0)));
+      }
+      if(right instanceof LValue && isInt24Type(inferExprType(ctx.expr(1)))) {
+         right = promoteInt24ToDword(ctx, (LValue) right, inferExprType(ctx.expr(1)));
+      }
       return addExprBinary(ctx, left, operator, right);
    }
 
@@ -4473,12 +4815,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       addStatement(new StatementConditionalJump(condValue, trueLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
       addStatement(new StatementLabel(falseLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
       RValue falseValue = (RValue) this.visit(ctx.expr(2));
+      if(falseValue instanceof LValue && isInt24Type(inferExprType(ctx.expr(2)))) {
+         falseValue = promoteInt24ToDword(ctx, (LValue) falseValue, inferExprType(ctx.expr(2)));
+      }
       SymbolVariableRef falseVar = addIntermediateVar().getRef();
       addStatement(new StatementAssignment((LValue) falseVar, falseValue, true, new StatementSource(ctx), Comment.NO_COMMENTS));
       LabelRef falseExitLabel = getCurrentProcedureCompilation().getStatementSequence().getCurrentBlockLabel();
       addStatement(new StatementJump(endJumpLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
       addStatement(new StatementLabel(trueLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
       RValue trueValue = (RValue) this.visit(ctx.expr(1));
+      if(trueValue instanceof LValue && isInt24Type(inferExprType(ctx.expr(1)))) {
+         trueValue = promoteInt24ToDword(ctx, (LValue) trueValue, inferExprType(ctx.expr(1)));
+      }
       SymbolVariableRef trueVar = addIntermediateVar().getRef();
       addStatement(new StatementAssignment((LValue) trueVar, trueValue, true, new StatementSource(ctx), Comment.NO_COMMENTS));
       LabelRef trueExitLabel = getCurrentProcedureCompilation().getStatementSequence().getCurrentBlockLabel();
@@ -4754,6 +5102,13 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
                parser.writeLoHiArray(mod.ctx, mod.loHiArrayCtx, updatedVal);
                continue;
             }
+            if(mod.int24ArrayCtx != null) {
+               RValue currentVal = parser.desugarInt24ArrayRead(mod.int24ArrayCtx);
+               Operator op = mod.operator.equals(Operators.INCREMENT) ? Operators.PLUS : Operators.MINUS;
+               RValue updatedVal = parser.addExprBinary(mod.ctx, currentVal, op, new ConstantInteger(1L));
+               parser.writeInt24Array(mod.ctx, mod.int24ArrayCtx, updatedVal);
+               continue;
+            }
             if(mod.child instanceof ConstantValue) {
                throw new CompileError("Constants can not be modified " + mod.child.toString(), source);
             }
@@ -4804,6 +5159,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             this.visit(ctx.expr());
             return null;
          }
+         KickCParser.ExprArrayContext int24ArrayCtx = mainParser.getInt24ArrayContext(ctx.expr());
+         if(int24ArrayCtx != null) {
+            String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
+            Operator operator = Operators.getUnary(op);
+            PrePostModifier modifier = new PrePostModifier(ctx, operator, int24ArrayCtx, 24);
+            postMods.add(modifier);
+            this.visit(ctx.expr());
+            return null;
+         }
          // First handle the ++/-- modifier
          RValue child = (RValue) mainParser.visit(ctx.expr());
          String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
@@ -4845,6 +5209,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             this.visit(ctx.expr());
             return null;
          }
+         KickCParser.ExprArrayContext int24ArrayCtx = mainParser.getInt24ArrayContext(ctx.expr());
+         if(int24ArrayCtx != null) {
+            String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
+            Operator operator = Operators.getUnary(op);
+            PrePostModifier modifier = new PrePostModifier(ctx, operator, int24ArrayCtx, 24);
+            preMods.add(modifier);
+            this.visit(ctx.expr());
+            return null;
+         }
          // First handle the ++/-- modifier
          RValue child = (RValue) mainParser.visit(ctx.expr());
          String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
@@ -4864,6 +5237,13 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          LValue containerLVal;
          KickCParser.ExprArrayContext nibbleArrayCtx;
          KickCParser.ExprArrayContext loHiArrayCtx;
+         KickCParser.ExprArrayContext int24ArrayCtx;
+
+         PrePostModifier(ParserRuleContext ctx, Operator operator, KickCParser.ExprArrayContext int24ArrayCtx, int marker24) {
+            this.ctx = ctx;
+            this.operator = operator;
+            this.int24ArrayCtx = int24ArrayCtx;
+         }
 
          PrePostModifier(RValue child, Operator operator) {
             this.child = child;

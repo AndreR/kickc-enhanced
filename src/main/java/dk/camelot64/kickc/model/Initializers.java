@@ -110,6 +110,14 @@ public class Initializers {
             UnionDesignator autoDesignator = new UnionDesignator(firstMember.getLocalName(), initValue);
             initValue = constantifyUnion(autoDesignator, (SymbolTypeStruct) typeSpec.getType(), program, source);
          }
+      } else if(typeSpec.getType() instanceof SymbolTypeStruct && SymbolTypeConversion.isInt24(typeSpec.getType()) && !(initValue instanceof ValueList) && !(initValue instanceof ConstantStructValue)) {
+         if(initValue instanceof ConstantInteger) {
+            ConstantInteger ci = (ConstantInteger) initValue;
+            long val = ci.getInteger();
+            ConstantInteger lo = new ConstantInteger(val & 0xffffL, SymbolType.WORD);
+            ConstantInteger hi = new ConstantInteger((val >> 16) & 0xffL, SymbolType.BYTE);
+            initValue = constantifyStructOrUnion(new ValueList(java.util.Arrays.asList(lo, hi)), (SymbolTypeStruct) typeSpec.getType(), program, source);
+         }
       } else if(initValue instanceof ValueList) {
          ValueList initList = (ValueList) initValue;
          if(initList.getList().isEmpty()) {
@@ -277,4 +285,3 @@ public class Initializers {
    }
 
 }
-

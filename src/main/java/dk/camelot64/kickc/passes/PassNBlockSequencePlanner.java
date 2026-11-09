@@ -11,6 +11,8 @@ import java.util.*;
 public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
 
    Deque<ScopeTodo> todoScopes = new ArrayDeque<>();
+   private final Map<LabelRef, Graph.Block> blockCache = new HashMap<>();
+   private final Map<LabelRef, Set<LabelRef>> reachableMap = new HashMap<>();
 
    public PassNBlockSequencePlanner(Program program) {
       super(program);
@@ -18,6 +20,12 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
 
    @Override
    public boolean step() {
+
+      blockCache.clear();
+      reachableMap.clear();
+      for(Graph.Block b : getGraph().getAllBlocks()) {
+         blockCache.put(b.getLabel(), b);
+      }
 
       List<Graph.Block> entryPointBlocks = getProgram().getEntryPointBlocks();
 
@@ -39,13 +47,13 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
          if(block.getCallSuccessor() != null) {
             pushCallTodo(getGraph().getCallSuccessor(block));
          }
-         Graph.Block conditionalSuccessor = getGraph().getConditionalSuccessor(block);
-         Graph.Block defaultSuccessor = getGraph().getDefaultSuccessor(block);
+         Graph.Block conditionalSuccessor = getConditionalSuccessorFast(block);
+         Graph.Block defaultSuccessor = getDefaultSuccessorFast(block);
          if(conditionalSuccessor != null && defaultSuccessor != null) {
             // Both conditional and default successor
             boolean condFirst = true;
-            boolean condReachesDef = reaches(conditionalSuccessor, defaultSuccessor.getLabel(), new HashSet<>());
-            boolean defReachesCond = reaches(defaultSuccessor, conditionalSuccessor.getLabel(), new HashSet<>());
+            boolean condReachesDef = reachesFast(conditionalSuccessor, defaultSuccessor.getLabel());
+            boolean defReachesCond = reachesFast(defaultSuccessor, conditionalSuccessor.getLabel());
             if(defReachesCond && !condReachesDef) {
                // defaultSuccessor flows into conditionalSuccessor (e.g. negated branch to loop exit)
                condFirst = false;
@@ -62,7 +70,7 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
             }
          } else if(conditionalSuccessor != null) {
             // Only a conditional successor
-            pushTodo(getGraph().getConditionalSuccessor(block));
+            pushTodo(conditionalSuccessor);
          } else if(defaultSuccessor != null) {
             // Only a default successor
             pushTodo(defaultSuccessor);
@@ -147,7 +155,6 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
          todoScopes.push(top);
    }
 
-
    boolean hasTodo() {
       return !todoScopes.isEmpty();
    }
@@ -158,12 +165,19 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
          if(scopeTodo != null) todoScopes.pop();
          return null;
       }
+      if(scopeTodo.todo.size() == 1) {
+         Graph.Block block = scopeTodo.todo.pop();
+         if(scopeTodo.todo.isEmpty()) {
+            todoScopes.pop();
+         }
+         return block;
+      }
       // Topological selection: find a block that is NOT reached by any other pending block
       Graph.Block bestBlock = null;
       for(Graph.Block candidate : scopeTodo.todo) {
          boolean reachedByOther = false;
          for(Graph.Block other : scopeTodo.todo) {
-            if(!candidate.equals(other) && reaches(other, candidate.getLabel(), new HashSet<>())) {
+            if(!candidate.equals(other) && reachesFast(other, candidate.getLabel())) {
                reachedByOther = true;
                break;
             }
@@ -183,15 +197,40 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
       return bestBlock;
    }
 
-   private boolean reaches(Graph.Block from, LabelRef target, Set<LabelRef> visited) {
+   private Graph.Block getDefaultSuccessorFast(Graph.Block block) {
+      if(block == null || block.getDefaultSuccessor() == null) return null;
+      return blockCache.get(block.getDefaultSuccessor());
+   }
+
+   private Graph.Block getConditionalSuccessorFast(Graph.Block block) {
+      if(block == null || block.getConditionalSuccessor() == null) return null;
+      return blockCache.get(block.getConditionalSuccessor());
+   }
+
+   private boolean reachesFast(Graph.Block from, LabelRef target) {
       if(from == null) return false;
       if(target.equals(from.getLabel())) return true;
-      if(!visited.add(from.getLabel())) return false;
-      Graph.Block defSucc = getGraph().getDefaultSuccessor(from);
-      if(defSucc != null && reaches(defSucc, target, visited)) return true;
-      Graph.Block condSucc = getGraph().getConditionalSuccessor(from);
-      if(condSucc != null && reaches(condSucc, target, visited)) return true;
-      return false;
+      Set<LabelRef> reach = reachableMap.get(from.getLabel());
+      if(reach != null) {
+         return reach.contains(target);
+      }
+      reach = new HashSet<>();
+      reach.add(from.getLabel());
+      Deque<Graph.Block> work = new ArrayDeque<>();
+      work.add(from);
+      while(!work.isEmpty()) {
+         Graph.Block curr = work.pop();
+         Graph.Block defSucc = getDefaultSuccessorFast(curr);
+         if(defSucc != null && reach.add(defSucc.getLabel())) {
+            work.push(defSucc);
+         }
+         Graph.Block condSucc = getConditionalSuccessorFast(curr);
+         if(condSucc != null && reach.add(condSucc.getLabel())) {
+            work.push(condSucc);
+         }
+      }
+      reachableMap.put(from.getLabel(), reach);
+      return reach.contains(target);
    }
 
    private static class ScopeTodo {
@@ -214,6 +253,5 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
       }
 
    }
-
 
 }

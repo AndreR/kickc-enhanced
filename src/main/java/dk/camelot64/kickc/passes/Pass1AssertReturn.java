@@ -1,20 +1,25 @@
 package dk.camelot64.kickc.passes;
 
-import dk.camelot64.kickc.model.*;
-import dk.camelot64.kickc.model.values.LabelRef;
-import dk.camelot64.kickc.model.values.SymbolRef;
-import dk.camelot64.kickc.model.values.VariableRef;
+import dk.camelot64.kickc.model.CompileError;
+import dk.camelot64.kickc.model.ControlFlowGraph;
+import dk.camelot64.kickc.model.Graph;
+import dk.camelot64.kickc.model.ProcedureCompilation;
+import dk.camelot64.kickc.model.Program;
 import dk.camelot64.kickc.model.statements.Statement;
 import dk.camelot64.kickc.model.statements.StatementAssignment;
 import dk.camelot64.kickc.model.statements.StatementConditionalJump;
 import dk.camelot64.kickc.model.symbols.Procedure;
 import dk.camelot64.kickc.model.types.SymbolType;
-
+import dk.camelot64.kickc.model.values.LabelRef;
+import dk.camelot64.kickc.model.values.RValue;
+import dk.camelot64.kickc.model.values.StructMemberRef;
+import dk.camelot64.kickc.model.values.SymbolRef;
+import dk.camelot64.kickc.model.values.VariableRef;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 
 /**
- * Asserts that all control flow paths in a method with a defined return value ends at a return statement
+ * Assert that all non-void methods end with a return statement
  */
 public class Pass1AssertReturn extends Pass1Base {
 
@@ -52,7 +57,11 @@ public class Pass1AssertReturn extends Pass1Base {
       visited.add(block.getLabel());
       for(Statement statement : block.getStatements()) {
          if(statement instanceof StatementAssignment assignment) {
-            if(assignment.getlValue() instanceof VariableRef && ((VariableRef) assignment.getlValue()).getLocalName().equals("return")) {
+            RValue target = assignment.getlValue();
+            while(target instanceof StructMemberRef) {
+               target = ((StructMemberRef) target).getStruct();
+            }
+            if(target instanceof VariableRef && ((VariableRef) target).getLocalName().equals("return")) {
                // Happy days - return found!
                return;
             }

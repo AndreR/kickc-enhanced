@@ -30,6 +30,8 @@ public class OperatorPlus extends OperatorBinary {
 
    @Override
    public SymbolType inferType(SymbolType type1, SymbolType type2) {
+      if(SymbolTypeConversion.isInt24(type1)) type1 = SymbolType.DWORD;
+      if(SymbolTypeConversion.isInt24(type2)) type2 = SymbolType.DWORD;
       // Handle all non-numeric types
       if(SymbolType.isInteger(type1) && type2 instanceof SymbolTypePointer) {
          return new SymbolTypePointer(((SymbolTypePointer) type2).getElementType());

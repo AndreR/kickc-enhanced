@@ -40,6 +40,8 @@ public class SymbolTypeInference {
          ConstantBinary constBin = (ConstantBinary) rValue;
          SymbolType leftType = inferType(symbols, constBin.getLeft());
          SymbolType rightType = inferType(symbols, constBin.getRight());
+         if(SymbolTypeConversion.isInt24(leftType)) leftType = SymbolType.DWORD;
+         if(SymbolTypeConversion.isInt24(rightType)) rightType = SymbolType.DWORD;
          SymbolType binaryType = constBin.getOperator().inferType(leftType, rightType);
          if(constBin.getOperator() instanceof dk.camelot64.kickc.model.operators.OperatorShiftLeft) {
             try {
@@ -108,6 +110,8 @@ public class SymbolTypeInference {
             // Binary operation assignment
             SymbolType leftType = inferType(symbols, rValue1);
             SymbolType rightType = inferType(symbols, rValue2);
+            if(SymbolTypeConversion.isInt24(leftType)) leftType = SymbolType.DWORD;
+            if(SymbolTypeConversion.isInt24(rightType)) rightType = SymbolType.DWORD;
             rValueType = ((OperatorBinary) assignment.getOperator()).inferType(leftType, rightType);
          } else {
             return null; // throw new InternalError("Cannot infer type of " + assignment.toString());
