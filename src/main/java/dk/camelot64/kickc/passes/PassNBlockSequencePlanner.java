@@ -43,7 +43,7 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
          Graph.Block defaultSuccessor = getGraph().getDefaultSuccessor(block);
          if(conditionalSuccessor != null && defaultSuccessor != null) {
             // Both conditional and default successor
-            if(conditionalSuccessor.getDefaultSuccessor().equals(defaultSuccessor.getLabel())) {
+            if(defaultSuccessor.getLabel().equals(conditionalSuccessor.getDefaultSuccessor())) {
                // Best sequence is cond->default (resulting in better code locality)
                pushTodo(defaultSuccessor);
                pushTodo(getGraph().getConditionalSuccessor(block));

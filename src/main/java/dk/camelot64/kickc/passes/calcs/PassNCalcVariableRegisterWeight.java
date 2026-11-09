@@ -114,6 +114,10 @@ public class PassNCalcVariableRegisterWeight extends PassNCalcBase<VariableRegis
    private static double addWeight(VariableRef variable, LabelRef block, LiveRangeVariables liveRangeVariables, NaturalLoopSet loopSet, CallGraph callGraph, StatementInfos statementInfos, VariableRegisterWeights variableRegisterWeights, java.util.Map<LabelRef, Integer> depthMemo) {
       int loopCallDepth = getLoopCallDepth(block, loopSet, callGraph, statementInfos, depthMemo, new java.util.HashSet<>());
       double w = 1.0 + Math.pow(10.0, loopCallDepth);
+      int loopDepth = loopSet != null ? loopSet.getMaxLoopDepth(block) : 0;
+      if(loopDepth > 0) {
+         w += 25000.0 * loopDepth;
+      }
       LiveRange liveRange = liveRangeVariables.getLiveRange(variable);
       double s = liveRange == null ? 0.0 : liveRange.size();
       if(s < 0.01) {
