@@ -123,6 +123,7 @@ public class Pass1CallStack extends Pass2SsaOptimization {
 
       // Convert callprepare(xxx,yyy,) to stackpush(type)=xxx, ...;
       for(var block : getGraph().getAllBlocks()) {
+         rescheduleStackCallParameters(block);
          ListIterator<Statement> stmtIt = block.getStatements().listIterator();
          while(stmtIt.hasNext()) {
             Statement statement = stmtIt.next();
@@ -136,7 +137,6 @@ public class Pass1CallStack extends Pass2SsaOptimization {
                   for(int i=0;i<paramTypes.size();i++) {
                      SymbolType paramType = paramTypes.get(i);
                      final RValue parameterVal = call.getParameters().get(i);
-                     rescheduleParameterDefinition(parameterVal, block, stmtIt);
                      generateStackPushValues(parameterVal, paramType, source, comments, stmtIt);
                      // Clear comments - enduring they are only output once
                      comments = Comment.NO_COMMENTS;
@@ -250,14 +250,30 @@ public class Pass1CallStack extends Pass2SsaOptimization {
       }
    }
 
-   private void rescheduleParameterDefinition(RValue parameterVal, Graph.Block block, ListIterator<Statement> stmtIt) {
+   private void rescheduleStackCallParameters(Graph.Block block) {
+      List<Statement> stmts = block.getStatements();
+      for(int i = 0; i < stmts.size(); i++) {
+         Statement s = stmts.get(i);
+         if(s instanceof StatementCallPrepare) {
+            StatementCallPrepare call = (StatementCallPrepare) s;
+            if(Procedure.CallingConvention.STACK_CALL.equals(call.getCallingConvention())) {
+               for(RValue param : call.getParameters()) {
+                  rescheduleParameterDefinition(param, block, call);
+               }
+            }
+         }
+      }
+   }
+
+   private void rescheduleParameterDefinition(RValue parameterVal, Graph.Block block, StatementCallPrepare call) {
       if(!(parameterVal instanceof VariableRef)) return;
       VariableRef varRef = (VariableRef) parameterVal;
       Variable var = getProgramScope().getVariable(varRef);
       if(var == null || !var.isKindIntermediate()) return;
 
       List<Statement> stmts = block.getStatements();
-      int currentIdx = stmtIt.nextIndex();
+      int currentIdx = stmts.indexOf(call);
+      if(currentIdx <= 0) return;
 
       // Find the assignment defining varRef earlier in this block
       int defIdx = -1;
@@ -292,9 +308,10 @@ public class Pass1CallStack extends Pass2SsaOptimization {
          }
       }
 
-      // Safe to move: remove from defIdx and add at stmtIt
+      // Safe to move: remove from defIdx and insert immediately before call
       stmts.remove(defIdx);
-      stmtIt.add(defAssign);
+      int newCallIdx = stmts.indexOf(call);
+      stmts.add(newCallIdx, defAssign);
       getLog().append("Direct-to-stack: Rescheduled parameter definition " + defAssign.toString(getProgram(), false) + " to precede stack push.");
    }
 
