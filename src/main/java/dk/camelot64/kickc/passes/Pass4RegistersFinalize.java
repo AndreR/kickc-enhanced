@@ -193,17 +193,24 @@ public class Pass4RegistersFinalize extends Pass2Base {
                int sizeBytes = variable.getType().getSizeBytes();
                if(overflowToMainMem) {
                   if (zp + sizeBytes > 0x100) {
+                     VariableRef targetRef = variableRef;
                      if(hasMultipleDataSegments(equivalenceClass)) {
-                        StringBuilder sb = new StringBuilder();
+                        // Find a variable in the equivalence class that belongs to resident Data segment
                         for(VariableRef vr : equivalenceClass.getVariables()) {
                            Variable v = getProgram().getSymbolInfos().getVariable(vr);
-                           sb.append(" [").append(vr.toString()).append(" in seg ").append(v == null ? "null" : v.getDataSegment()).append("]");
+                           if(v != null && ("Data".equals(v.getDataSegment()) || v.getDataSegment() == null)) {
+                              targetRef = vr;
+                              break;
+                           }
                         }
-                        throw new CompileError("Error! Variables spanning multiple data segments do not fit on zeropage: " + variable.toString() + " | All in class: " + sb.toString());
+                        Variable primary = getProgram().getSymbolInfos().getVariable(targetRef);
+                        if(primary != null && !"Data".equals(primary.getDataSegment())) {
+                           primary.setDataSegment("Data");
+                        }
                      }
                      // Zero-page exhausted - move to main memory instead (TODO: prioritize!)
-                     register = new Registers.RegisterMainMem(variableRef, variable.getType().getSizeBytes(), null, false);
-                     getLog().append("Zero-page exhausted. Moving allocation to main memory " + variable.toString());
+                     register = new Registers.RegisterMainMem(targetRef, variable.getType().getSizeBytes(), null, false);
+                     getLog().append("Zero-page exhausted. Moving allocation to main memory " + targetRef.toString());
                   }
                }
             }
