@@ -1,2 +1,2 @@
-lda {m2}
+lda $fe
 sax {m1}
