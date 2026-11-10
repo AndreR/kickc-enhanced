@@ -352,6 +352,9 @@ public class Pass4CodeGeneration {
     }
 
     private boolean hasData(Variable constantVar) {
+        if(constantVar.getMemoryAddress() != null && !constantVar.isExplicitInitializer()) {
+            return false;
+        }
         ConstantValue constantValue = constantVar.getInitValue();
         if (constantValue instanceof ConstantArray) return true;
         else if (constantValue instanceof ConstantStructValue) return true;
@@ -467,7 +470,8 @@ public class Pass4CodeGeneration {
                     if (constantVar.getType() instanceof SymbolTypePointer) {
                         // Must use a label for pointers
                         added.add(asmName);
-                        String asmConstant = AsmFormat.getAsmConstant(program, constantVar.getInitValue(), 99, scopeRef);
+                        ConstantValue value = constantVar.getMemoryAddress() != null ? constantVar.getMemoryAddress() : constantVar.getInitValue();
+                        String asmConstant = AsmFormat.getAsmConstant(program, value, 99, scopeRef);
                         addConstantLabelDecl(asmName, constantVar, asmConstant, asm);
                     } else if (isIntTypeInScope(constantVar)) {
                         // Use label for integers referenced in other scope - to allow cross-scope referencing
@@ -1261,16 +1265,7 @@ public class Pass4CodeGeneration {
     }
 
     private Integer getEffectiveAlignment(Variable var) {
-        if(var.getMemoryAlignment() != null) {
-            return var.getMemoryAlignment();
-        }
-        if(var.isArray() && var.getMemoryAddress() == null) {
-            Long totalBytes = getArrayTotalBytes(var);
-            if(totalBytes != null && totalBytes >= 64L && totalBytes <= 256L) {
-                return 256;
-            }
-        }
-        return null;
+        return var.getMemoryAlignment();
     }
 
     private Long getArrayTotalBytes(Variable var) {

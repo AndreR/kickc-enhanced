@@ -1432,6 +1432,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
                   // Set initial value
                   ConstantValue constInitValue = getConstInitValue(initValue, initializer, declSource);
                   variable.setInitValue(constInitValue);
+                  if(initializer != null) variable.setExplicitInitializer(true);
                   // Add comments to constant
                   variable.setComments(ensureUnusedComments(declComments));
                } else if(!variable.isKindConstant() && !isStructMember) {
@@ -1527,6 +1528,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       Variable variable = varBuilder.build();
       // Set constant value
       variable.setInitValue(getConstInitValue(constantArrayKickAsm, null, statementSource));
+      variable.setExplicitInitializer(true);
       // Add comments to constant
       variable.setComments(ensureUnusedComments(varDecl.getDeclComments()));
       varDecl.exitVar();

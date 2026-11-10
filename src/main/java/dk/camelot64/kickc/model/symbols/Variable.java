@@ -67,6 +67,8 @@ public class Variable implements Symbol {
    private boolean loHi;
    /** Specifies that an array of structs is flattened to parallel member arrays (__soa). */
    private boolean soa;
+   /** True if the variable had an explicit initializer in the C source code. */
+   private boolean explicitInitializer;
 
    /** Specifies that the should be optimized (register keyword). */
    private boolean optimize;
@@ -164,6 +166,7 @@ public class Variable implements Symbol {
       version.setExport(phiMaster.isExport());
       version.setLoHi(phiMaster.isLoHi());
       version.setSoa(phiMaster.isSoa());
+      version.setExplicitInitializer(phiMaster.isExplicitInitializer());
       version.setComments(phiMaster.getComments());
       version.setStructUnwind(phiMaster.isStructUnwind());
       return version;
@@ -209,6 +212,7 @@ public class Variable implements Symbol {
       constVar.setExport(variable.isExport());
       constVar.setLoHi(variable.isLoHi());
       constVar.setSoa(variable.isSoa());
+      constVar.setExplicitInitializer(variable.isExplicitInitializer());
       constVar.setComments(variable.getComments());
       constVar.setStructUnwind(variable.isStructUnwind());
       return constVar;
@@ -230,6 +234,7 @@ public class Variable implements Symbol {
       copy.setExport(original.isExport());
       copy.setLoHi(original.isLoHi());
       copy.setSoa(original.isSoa());
+      copy.setExplicitInitializer(original.isExplicitInitializer());
       copy.setRegister(original.getRegister());
       copy.setComments(original.getComments());
       copy.setStructUnwind(original.isStructUnwind());
@@ -497,6 +502,15 @@ public class Variable implements Symbol {
    public void setSoa(boolean soa) {
       this.soa = soa;
    }
+
+   public boolean isExplicitInitializer() {
+      return explicitInitializer;
+   }
+
+   public void setExplicitInitializer(boolean explicitInitializer) {
+      this.explicitInitializer = explicitInitializer;
+   }
+
 
    public boolean isLoHi() {
       return loHi;
