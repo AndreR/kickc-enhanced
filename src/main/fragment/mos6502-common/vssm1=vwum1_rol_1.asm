@@ -1,0 +1,9 @@
+lda {m1}
+sta {m1}
+lda {m1}+1
+sta {m1}+1
+lda #0
+sta {m1}+2
+asl {m1}
+rol {m1}+1
+rol {m1}+2
