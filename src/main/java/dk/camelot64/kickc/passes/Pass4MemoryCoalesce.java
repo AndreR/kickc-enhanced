@@ -96,25 +96,17 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
       if(Objects.equals(dataSegment1, dataSegment2)) {
          return true;
       }
-      // If data segments differ, cross-segment coalescing is ONLY safe if both equivalence classes
-      // are exclusively allocated to Zero Page (ZP_MEM) registers, no member variable is designated
-      // for main memory, and neither uses reserved ZP registers.
-      Registers.Register reg1 = ec1.getRegister();
-      Registers.Register reg2 = ec2.getRegister();
-      if(reg1 != null && reg2 != null &&
-            Registers.RegisterType.ZP_MEM.equals(reg1.getType()) &&
-            Registers.RegisterType.ZP_MEM.equals(reg2.getType())) {
-         for(VariableRef varRef : ec1.getVariables()) {
-            Variable v = program.getScope().getVar(varRef);
-            if(v != null && v.isMemoryAreaMain()) return false;
-         }
-         for(VariableRef varRef : ec2.getVariables()) {
-            Variable v = program.getScope().getVar(varRef);
-            if(v != null && v.isMemoryAreaMain()) return false;
-         }
-         return true;
+      // If neither equivalence class contains any variable designated for main memory,
+      // both are candidates for Zero Page registers and can safely coalesce across segments.
+      for(VariableRef varRef : ec1.getVariables()) {
+         Variable v = program.getScope().getVar(varRef);
+         if(v != null && v.isMemoryAreaMain()) return false;
       }
-      return false;
+      for(VariableRef varRef : ec2.getVariables()) {
+         Variable v = program.getScope().getVar(varRef);
+         if(v != null && v.isMemoryAreaMain()) return false;
+      }
+      return true;
    }
 
    private static boolean canCoalesceThreads(LiveRangeEquivalenceClass ec1, LiveRangeEquivalenceClass ec2, Collection<ScopeRef> threadHeads, Program program) {

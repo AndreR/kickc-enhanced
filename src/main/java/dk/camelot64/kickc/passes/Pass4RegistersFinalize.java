@@ -287,6 +287,10 @@ public class Pass4RegistersFinalize extends Pass2Base {
          Registers.RegisterZpMem registerZpWord =
                new Registers.RegisterZpMem(allocateZp(2), 2);
          return registerZpWord;
+      } else if(SymbolType.TRIBYTE.equals(varType) || SymbolType.STRIBYTE.equals(varType)) {
+         Registers.RegisterZpMem registerZpTribyte =
+               new Registers.RegisterZpMem(allocateZp(3), 3);
+         return registerZpTribyte;
       } else if(SymbolType.DWORD.equals(varType)) {
          Registers.RegisterZpMem registerZpDWord =
                new Registers.RegisterZpMem(allocateZp(4), 4);

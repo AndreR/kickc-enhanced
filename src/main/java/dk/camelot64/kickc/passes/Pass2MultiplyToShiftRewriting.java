@@ -263,42 +263,6 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
       return optimized;
    }
 
-   private static final Map<Long, Reciprocal> RECIP_CACHE_16 = new HashMap<>();
-
-   public static Reciprocal findReciprocal16(long d) {
-      if(d <= 1 || d > 65535) return null;
-      if(RECIP_CACHE_16.containsKey(d)) return RECIP_CACHE_16.get(d);
-      for(int s = 16; s <= 32; s++) {
-         long m = (1L << s) / d + 1;
-         if(m >= (1L << 32)) continue;
-         boolean ok = true;
-         long[] testVals = new long[]{0, 1, 2, d - 1, d, d + 1, 255, 256, 1000, 32767, 32768, 65534, 65535};
-         for(long x : testVals) {
-            if(x >= 0 && x <= 65535) {
-               if(((x * m) >> s) != (x / d)) {
-                  ok = false;
-                  break;
-               }
-            }
-         }
-         if(ok) {
-            for(int x = 0; x < 65536; x++) {
-               if(((x * m) >> s) != (x / d)) {
-                  ok = false;
-                  break;
-               }
-            }
-         }
-         if(ok) {
-            Reciprocal r = new Reciprocal(m, s);
-            RECIP_CACHE_16.put(d, r);
-            return r;
-         }
-      }
-      RECIP_CACHE_16.put(d, null);
-      return null;
-   }
-
    private boolean rewriteDivide(StatementAssignment assignment, ListIterator<Statement> stmtIt, Long constValue, RValue varValue, Scope scope) {
       boolean optimized = false;
       double power2 = Math.log(constValue) / Math.log(2);
@@ -315,12 +279,14 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
          assignment.setrValue2(new ConstantInteger((long) power2, SymbolType.BYTE));
          optimized = true;
       } else {
+         if(constValue > 1) {
+            inlinedDivCounts.put(constValue, inlinedDivCounts.getOrDefault(constValue, 0) + 1);
+         }
          // Feature 13: Reciprocal Division for unsigned 8-bit integers by constant
          SymbolType varType = SymbolTypeInference.inferType(getProgramScope(), varValue);
          if(varType.getSizeBytes() == 1 && constValue > 1 && constValue <= 255) {
             Reciprocal recip = findReciprocal(constValue);
             if(recip != null) {
-               inlinedDivCounts.put(constValue, inlinedDivCounts.getOrDefault(constValue, 0) + 1);
                getLog().append("Rewriting division by " + constValue + " to reciprocal multiplication (M=" + recip.m + ", S=" + recip.s + "): " + assignment.toString(getProgram(), false));
                stmtIt.previous();
                // varPromote = (word) varValue
@@ -347,48 +313,6 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
                   Variable varShift = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
                   stmtIt.add(new StatementAssignment((LValue) varShift.getRef(), varMul.getRef(), Operators.SHIFT_RIGHT, new ConstantInteger((long) recip.s, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
                   finalVal = varShift.getRef();
-               }
-               stmtIt.next();
-               assignment.setOperator(null);
-               assignment.setrValue1(null);
-               assignment.setrValue2(finalVal);
-               optimized = true;
-            }
-         } else if(varType.getSizeBytes() == 2 && constValue > 1 && constValue <= 65535) {
-            // Feature: Reciprocal Division for unsigned 16-bit integers by constant
-            Reciprocal recip = findReciprocal16(constValue);
-            if(recip != null) {
-               inlinedDivCounts.put(constValue, inlinedDivCounts.getOrDefault(constValue, 0) + 1);
-               getLog().append("Rewriting 16-bit division by " + constValue + " to reciprocal multiplication (M=" + recip.m + ", S=" + recip.s + "): " + assignment.toString(getProgram(), false));
-               stmtIt.previous();
-               // varPromote = (dword) varValue
-               Variable varPromote = VariableBuilder.createIntermediate(scope, SymbolType.DWORD, getProgram());
-               stmtIt.add(new StatementAssignment((LValue) varPromote.getRef(), varValue, true, assignment.getSource(), Comment.NO_COMMENTS));
-               // varMul = varPromote * M
-               Variable varMul = VariableBuilder.createIntermediate(scope, SymbolType.DWORD, getProgram());
-               stmtIt.add(new StatementAssignment((LValue) varMul.getRef(), varPromote.getRef(), Operators.MULTIPLY, new ConstantInteger(recip.m, SymbolType.DWORD), true, assignment.getSource(), Comment.NO_COMMENTS));
-
-               RValue finalVal;
-               if(recip.s >= 16) {
-                  Variable varShift16 = VariableBuilder.createIntermediate(scope, SymbolType.DWORD, getProgram());
-                  stmtIt.add(new StatementAssignment((LValue) varShift16.getRef(), varMul.getRef(), Operators.SHIFT_RIGHT, new ConstantInteger(16L, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
-                  if(recip.s > 16) {
-                     Variable varCast = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
-                     stmtIt.add(new StatementAssignment((LValue) varCast.getRef(), varShift16.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
-                     Variable varShiftRem = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
-                     stmtIt.add(new StatementAssignment((LValue) varShiftRem.getRef(), varCast.getRef(), Operators.SHIFT_RIGHT, new ConstantInteger((long) (recip.s - 16), SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
-                     finalVal = varShiftRem.getRef();
-                  } else {
-                     Variable varCast = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
-                     stmtIt.add(new StatementAssignment((LValue) varCast.getRef(), varShift16.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
-                     finalVal = varCast.getRef();
-                  }
-               } else {
-                  Variable varShift = VariableBuilder.createIntermediate(scope, SymbolType.DWORD, getProgram());
-                  stmtIt.add(new StatementAssignment((LValue) varShift.getRef(), varMul.getRef(), Operators.SHIFT_RIGHT, new ConstantInteger((long) recip.s, SymbolType.BYTE), true, assignment.getSource(), Comment.NO_COMMENTS));
-                  Variable varCast = VariableBuilder.createIntermediate(scope, SymbolType.WORD, getProgram());
-                  stmtIt.add(new StatementAssignment((LValue) varCast.getRef(), varShift.getRef(), true, assignment.getSource(), Comment.NO_COMMENTS));
-                  finalVal = varCast.getRef();
                }
                stmtIt.next();
                assignment.setOperator(null);

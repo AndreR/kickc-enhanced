@@ -908,6 +908,8 @@ public class Pass4CodeGeneration {
             dataChunk.addDataNumeric(AsmDataNumeric.Type.BYTE, AsmFormat.getAsmConstant(program, value, 99, scopeRef), AsmEncodingHelper.getEncoding(value));
         } else if (SymbolType.WORD.equals(valueType) || SymbolType.SWORD.equals(valueType)) {
             dataChunk.addDataNumeric(AsmDataNumeric.Type.WORD, AsmFormat.getAsmConstant(program, value, 99, scopeRef), AsmEncodingHelper.getEncoding(value));
+        } else if (SymbolType.TRIBYTE.equals(valueType) || SymbolType.STRIBYTE.equals(valueType)) {
+            dataChunk.addDataNumeric(AsmDataNumeric.Type.TRIBYTE, AsmFormat.getAsmConstant(program, value, 99, scopeRef), AsmEncodingHelper.getEncoding(value));
         } else if (SymbolType.DWORD.equals(valueType) || SymbolType.SDWORD.equals(valueType)) {
             dataChunk.addDataNumeric(AsmDataNumeric.Type.DWORD, AsmFormat.getAsmConstant(program, value, 99, scopeRef), AsmEncodingHelper.getEncoding(value));
         } else if (valueType instanceof SymbolTypePointer) {
@@ -930,6 +932,8 @@ public class Pass4CodeGeneration {
             return AsmDataNumeric.Type.BYTE;
         } else if (SymbolType.WORD.equals(valueType) || SymbolType.SWORD.equals(valueType)) {
             return AsmDataNumeric.Type.WORD;
+        } else if (SymbolType.TRIBYTE.equals(valueType) || SymbolType.STRIBYTE.equals(valueType)) {
+            return AsmDataNumeric.Type.TRIBYTE;
         } else if (SymbolType.DWORD.equals(valueType) || SymbolType.SDWORD.equals(valueType)) {
             return AsmDataNumeric.Type.DWORD;
         } else if (valueType instanceof SymbolTypePointer) {
@@ -954,7 +958,11 @@ public class Pass4CodeGeneration {
                         program.getLog().append("Warning! Unknown fragment for statement " + statement.toString(program, false) + "\nMissing ASM fragment " + e.getFragmentSignature() + "\n" + stmtFormat);
                         asm.addLine(new AsmInlineKickAsm(".assert \"Missing ASM fragment " + e.getFragmentSignature() + "\", 0, 1", 0L, 0L, CpuClobber.CLOBBER_NONE));
                     } else {
-                        throw new CompileError("Unknown fragment for statement " + statement.toString(program, false) + "\nMissing ASM fragment " + e.getFragmentSignature(), statementSource);
+                        String msg = "Unknown fragment for statement " + statement.toString(program, false) + "\nMissing ASM fragment " + e.getFragmentSignature();
+                        if(statement instanceof StatementAssignment assign && Operators.DIVIDE.equals(assign.getOperator())) {
+                            msg += "\nHint: Runtime division requires an ASM fragment (e.g. " + e.getFragmentSignature() + ".asm), or use div8u()/div16u() from <division.h>.";
+                        }
+                        throw new CompileError(msg, statementSource);
                     }
                 } catch (CompileError e) {
                     if (e.getSource() == null) {

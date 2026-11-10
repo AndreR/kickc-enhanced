@@ -89,6 +89,10 @@ public class CParser {
      */
     public static final String PRAGMA_LOOP_ALIGN = "loop_align";
     /**
+     * #pragma convenience(on|off) enables or disables modern C convenience features and automatic math synthesis.
+     */
+    public static final String PRAGMA_CONVENIENCE = "convenience";
+    /**
      * #pragma start_address(...) specifies the start address of the program.
      */
     public static final String PRAGMA_START_ADDRESS = "start_address";

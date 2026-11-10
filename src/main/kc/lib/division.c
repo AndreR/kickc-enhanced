@@ -196,10 +196,43 @@ signed int div16s(signed int dividend, signed int divisor) {
 
 // High-speed division by 10 for unsigned 8-bit integers (22 cycles)
 char div10u(char val) {
-    return val / 10;
+    return (char)(((unsigned int)val * 205) >> 11);
 }
 
 // High-speed modulo by 10 for unsigned 8-bit integers (26 cycles)
+// Performs modulo on two 8 bit unsigned chars
+char mod8u(char dividend, char divisor) {
+    div8u(dividend, divisor);
+    return rem8u;
+}
+
+// Performs modulo on two 8 bit signed chars
+signed char mod8s(signed char dividend, signed char divisor) {
+    div8s(dividend, divisor);
+    return rem8s;
+}
+
+// Performs modulo on two 16 bit unsigned ints
+unsigned int mod16u(unsigned int dividend, unsigned int divisor) {
+    return modr16u(dividend, divisor, 0);
+}
+
+// Performs modulo on two 16 bit signed ints
+signed int mod16s(signed int dividend, signed int divisor) {
+    div16s(dividend, divisor);
+    return rem16s;
+}
+
 char mod10u(char val) {
+    return (char)(val - div10u(val) * 10);
+}
+
+// High-speed division by 10 for unsigned 16-bit integers
+unsigned int div16u10(unsigned int val) {
+    return val / 10;
+}
+
+// High-speed modulo by 10 for unsigned 16-bit integers
+unsigned int mod16u10(unsigned int val) {
     return val % 10;
 }

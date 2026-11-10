@@ -678,6 +678,16 @@ public class Program {
       this.loopAlignThreshold = loopAlignThreshold;
    }
 
+   private boolean enableConvenience = false;
+
+   public boolean isEnableConvenience() {
+      return enableConvenience;
+   }
+
+   public void setEnableConvenience(boolean enableConvenience) {
+      this.enableConvenience = enableConvenience;
+   }
+
    private List<StaticAssert> staticAsserts = new ArrayList<>();
 
    public List<StaticAssert> getStaticAsserts() {

@@ -338,6 +338,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
                }
             }
          }
+         case CParser.PRAGMA_CONVENIENCE -> {
+            if(ctx.pragmaParam().isEmpty()) {
+               this.program.setEnableConvenience(true);
+            } else {
+               String p = pragmaParamName(ctx.pragmaParam(0)).toLowerCase();
+               if(p.equals("on") || p.equals("enable") || p.equals("true") || p.equals("1")) {
+                  this.program.setEnableConvenience(true);
+               } else if(p.equals("off") || p.equals("disable") || p.equals("false") || p.equals("0")) {
+                  this.program.setEnableConvenience(false);
+               }
+            }
+         }
          case CParser.PRAGMA_BANK -> {
             if(ctx.pragmaParam().size() != 2)
                throw new CompileError("#pragma expects two parameters!", new StatementSource(ctx));

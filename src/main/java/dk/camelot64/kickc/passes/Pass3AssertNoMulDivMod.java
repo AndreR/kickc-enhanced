@@ -23,8 +23,8 @@ public class Pass3AssertNoMulDivMod extends Pass2SsaAssertion {
                   + "\nHint: For constants use power-of-two shifts/adds, or use fast_mul8u() from <multiply.h>.", statement.getSource());
             }
             if(Operators.DIVIDE.equals(assignment.getOperator())) {
-               throw new CompileError("Runtime division not supported. " + statement.toString(getProgram(), false)
-                  + "\nHint: For powers of 2 use '>>'. For runtime variables use div8u()/div16u() from <division.h>.", statement.getSource());
+               throw new CompileError("Runtime or unsupported division: " + statement.toString(getProgram(), false)
+                  + "\nHint: For powers of 2 use '>>'. For runtime variables or constants use div8u()/div16u() from <division.h>, or enable '-fconvenience'.", statement.getSource());
             }
             if(Operators.MODULO.equals(assignment.getOperator())) {
                throw new CompileError("Runtime modulo not supported. " + statement.toString(getProgram(), false)

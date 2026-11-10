@@ -54,6 +54,19 @@ public class Compiler {
       }
    }
 
+   private boolean enableConvenience = false;
+
+   public boolean isEnableConvenience() {
+      return enableConvenience;
+   }
+
+   public void setEnableConvenience(boolean enableConvenience) {
+      this.enableConvenience = enableConvenience;
+      if(this.program != null) {
+         this.program.setEnableConvenience(enableConvenience);
+      }
+   }
+
    /**
     * Enable loop head constant optimization. It identified whenever a while()/for() has a constant condition on the first iteration and rewrites it.
     * Currently the optimization is flaky and results in NPE's and wrong values in some programs.
@@ -161,6 +174,15 @@ public class Compiler {
       for(Path cFile : cFiles) {
          final TokenSource cFileTokens = cParser.loadCFile(cFile.toString(), currentPath, program.getIncludePaths(), false);
          cParser.addSourceLast(cFileTokens);
+      }
+      if(program.isEnableConvenience()) {
+         try {
+            cParser.includeCFile("division.h", true);
+            cParser.includeCFile("multiply.h", true);
+
+         } catch(Exception e) {
+            // standard headers already present or not in include path
+         }
       }
       return cParser;
    }
@@ -272,6 +294,7 @@ public class Compiler {
       new PassNTypeIdSimplification(program).execute();
       new Pass1StructTypeSizeFix(program).execute();
       new Pass1PrintfIntrinsicRewrite(program).execute();
+      new Pass1ConvenienceMathRewrite(program).execute();
       new Pass1AssertReturn(program).execute();
       new Pass1AssertUsedVars(program).execute();
       new Pass1AssertNoModifyVars(program).execute();
@@ -545,14 +568,7 @@ public class Compiler {
       constantOptimizations.add(new Pass2ConstantSimplification(program));
       constantOptimizations.addAll(getPass2Optimizations());
       pass2Execute(constantOptimizations);
-      for(Map.Entry<Long, Integer> entry : Pass2MultiplyToShiftRewriting.inlinedDivCounts.entrySet()) {
-         if(entry.getValue() >= 6) {
-            long constVal = entry.getKey();
-            int count = entry.getValue();
-            int estimatedBytes = count * 20;
-            System.out.println(String.format("   [PERF HINT] Division by constant '%d' was inlined %d times (~%d bytes generated). Consider using 'div%du(x)' or defining a shared helper function to save code space.", constVal, count, estimatedBytes, constVal));
-         }
-      }
+
 
    }
 
