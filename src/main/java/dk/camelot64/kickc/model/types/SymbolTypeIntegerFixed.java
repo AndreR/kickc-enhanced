@@ -49,6 +49,8 @@ public class SymbolTypeIntegerFixed implements SymbolTypeInteger {
       types.add(SBYTE);
       types.add(WORD);
       types.add(SWORD);
+      types.add(TRIBYTE);
+      types.add(STRIBYTE);
       types.add(DWORD);
       types.add(SDWORD);
       return types;

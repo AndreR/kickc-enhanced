@@ -82,6 +82,10 @@ public class AsmFragmentBindings {
             return "wu";
         } else if (SymbolType.SWORD.equals(baseType)) {
             return "ws";
+        } else if (SymbolType.TRIBYTE.equals(baseType)) {
+            return "tu";
+        } else if (SymbolType.STRIBYTE.equals(baseType)) {
+            return "ts";
         } else if (SymbolType.DWORD.equals(baseType)) {
             return "du";
         } else if (SymbolType.SDWORD.equals(baseType)) {
@@ -272,6 +276,8 @@ public class AsmFragmentBindings {
                             val = new ConstantBinary(new ConstantInteger(0xffL, SymbolType.BYTE), Operators.BOOL_AND, val);
                         } else if (toType.getSizeBytes() == 2) {
                             val = new ConstantBinary(new ConstantInteger(0xffffL, SymbolType.WORD), Operators.BOOL_AND, val);
+                        } else if (toType.getSizeBytes() == 3) {
+                            val = new ConstantBinary(new ConstantInteger(0xffffffL, SymbolType.TRIBYTE), Operators.BOOL_AND, val);
                         } else if (toType.getSizeBytes() == 4) {
                             val = new ConstantBinary(new ConstantInteger(0xffffffffL, SymbolType.DWORD), Operators.BOOL_AND, val);
                         } else {

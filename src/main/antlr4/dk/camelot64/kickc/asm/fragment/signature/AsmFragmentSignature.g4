@@ -23,21 +23,21 @@ expr
     | expr ( 'rol' | 'ror' ) expr #binary
     | expr ( 'eq' | 'neq' | 'lt' | 'le' | 'gt' | 'ge' ) expr #binary
     | expr ( 'word' | 'dword' ) expr #binary
-    | expr ( 'plus' | 'minus' ) expr #binary
+    | expr ( 'plus' | 'minus' | 'mul' | 'div' ) expr #binary
     | 'neg' expr #unary
     | 'bnot' expr #unary
     | 'addr' expr #unary
     | ( 'inc' | 'dec' ) expr #unary
-    | ( 'byte' | 'sbyte' | 'word' | 'sword' | 'dword' | 'sdword' | 'ptr' ) expr #unary
+    | ( 'byte' | 'sbyte' | 'word' | 'sword' | 'tribyte' | 'stribyte' | 'dword' | 'sdword' | 'ptr' ) expr #unary
     | ( 'byte0' | 'byte1' | 'byte2' | 'byte3' | 'word0' | 'word1') expr #unary
     | expr ( 'setbyte0' | 'setbyte1' | 'setbyte2' | 'setbyte3' | 'setword0' | 'setword1' ) expr #binary
     | expr 'memcpy' expr #memcpy
     | 'memset' expr #memset
     | 'stackpushpadding' NUM #stackPushPadding
     | 'stackpullpadding' NUM #stackPullPadding
-    | ( 'stackidxbyte' | 'stackidxsbyte' | 'stackidxword' | 'stackidxsword' | 'stackidxdword' | 'stackidxsdword' | 'stackidxptr') expr #stackIdx
-    | ( 'stackpushbyte' | 'stackpushsbyte' | 'stackpushword' | 'stackpushsword' | 'stackpushdword' | 'stackpushsdword' | 'stackpushptr') #stackPush
-    | ( 'stackpullbyte' | 'stackpullsbyte' | 'stackpullword' | 'stackpullsword' | 'stackpulldword' | 'stackpullsdword' | 'stackpullptr') #stackPull
+    | ( 'stackidxbyte' | 'stackidxsbyte' | 'stackidxword' | 'stackidxsword' | 'stackidxtribyte' | 'stackidxstribyte' | 'stackidxdword' | 'stackidxsdword' | 'stackidxptr') expr #stackIdx
+    | ( 'stackpushbyte' | 'stackpushsbyte' | 'stackpushword' | 'stackpushsword' | 'stackpushtribyte' | 'stackpushstribyte' | 'stackpushdword' | 'stackpushsdword' | 'stackpushptr') #stackPush
+    | ( 'stackpullbyte' | 'stackpullsbyte' | 'stackpullword' | 'stackpullsword' | 'stackpulltribyte' | 'stackpullstribyte' | 'stackpulldword' | 'stackpullsdword' | 'stackpullptr') #stackPull
     | 'stackidxstruct' expr expr #stackIdxStruct
     | 'stackpushstruct' expr #stackPushStruct
     | 'stackpullstruct' expr #stackPullStruct
@@ -47,7 +47,7 @@ expr
     ;
 
 NUM     : [0-9][0-9]?;
-VAR     : [vpq][bwdpsv][usor][czmaxy][0-9axyz] ;
+VAR     : [vpq][bwtpsv][usor][czmaxy][0-9axyz] ;
 LABEL   : [l][a][0-9] ;
 NAME    : [a-z][a-z0-9]+ ;
 WHITESPACE : [_\n]+ -> skip ;

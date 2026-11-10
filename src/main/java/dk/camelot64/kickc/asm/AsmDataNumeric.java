@@ -40,13 +40,23 @@ public class AsmDataNumeric extends AsmLine {
       if(label != null) {
          asm.append(label + ": ");
       }
-      asm.append("." + type.asm + " ");
-      boolean first = true;
-      for(String value : values) {
+      if(type == Type.TRIBYTE) {
+         asm.append(".byte ");
+         boolean first = true;
+         for(String value : values) {
+            if(!first) asm.append(", ");
+            first = false;
+            asm.append("<(" + value + "), >(" + value + "), [(" + value + ") >> 16]");
+         }
+      } else {
+         asm.append("." + type.asm + " ");
+         boolean first = true;
+         for(String value : values) {
          if(!first)
             asm.append(", ");
          first = false;
          asm.append(value);
+         }
       }
       return asm.toString();
    }
@@ -54,6 +64,7 @@ public class AsmDataNumeric extends AsmLine {
    public enum Type {
       BYTE("byte", 1),
       WORD("word", 2),
+      TRIBYTE("tribyte", 3),
       DWORD("dword", 4);
 
       public final String asm;

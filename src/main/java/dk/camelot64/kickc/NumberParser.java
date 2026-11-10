@@ -56,6 +56,12 @@ public class NumberParser {
       }  else if(literal.endsWith("sb") || literal.endsWith("sc")) {
          type = SymbolType.SBYTE;
          literal = literal.substring(0, literal.length()-2);
+      }  else if(literal.endsWith("ut") || literal.endsWith("u24")) {
+         type = SymbolType.TRIBYTE;
+         literal = literal.substring(0, literal.length()-2);
+      }  else if(literal.endsWith("st") || literal.endsWith("s24")) {
+         type = SymbolType.STRIBYTE;
+         literal = literal.substring(0, literal.length()-2);
       }  else if(literal.endsWith("uw") || literal.endsWith("ui")|| literal.endsWith("us")) {
          type = SymbolType.WORD;
          literal = literal.substring(0, literal.length()-2);

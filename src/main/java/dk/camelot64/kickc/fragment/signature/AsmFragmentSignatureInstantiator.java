@@ -150,6 +150,10 @@ class AsmFragmentSignatureInstantiator extends AsmFragmentSignatureBaseVisitor {
                 return SymbolType.WORD;
             case "sword":
                 return SymbolType.SWORD;
+            case "tribyte":
+                return SymbolType.TRIBYTE;
+            case "stribyte":
+                return SymbolType.STRIBYTE;
             case "dword":
                 return SymbolType.DWORD;
             case "sdword":

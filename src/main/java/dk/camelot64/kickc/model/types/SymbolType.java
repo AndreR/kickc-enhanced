@@ -28,6 +28,10 @@ public interface SymbolType {
    SymbolTypeIntegerFixed WORD = new SymbolTypeIntegerFixed("word", "unsigned int", 0, 65_535, false, 16, false, false);
    /** Signed word (2 bytes, 16 bits). */
    SymbolTypeIntegerFixed SWORD = new SymbolTypeIntegerFixed("signed word", "int", -32_768, 32_767, true, 16, false, false);
+   /** Unsigned 24-bit tribyte (3 bytes, 24 bits). */
+   SymbolTypeIntegerFixed TRIBYTE = new SymbolTypeIntegerFixed("tribyte", "__uint24", 0, 16_777_215L, false, 24, false, false);
+   /** Signed 24-bit tribyte (3 bytes, 24 bits). */
+   SymbolTypeIntegerFixed STRIBYTE = new SymbolTypeIntegerFixed("signed tribyte", "__int24", -8_388_608L, 8_388_607L, true, 24, false, false);
    /** Unsigned double word (4 bytes, 32 bits). */
    SymbolTypeIntegerFixed DWORD = new SymbolTypeIntegerFixed("dword", "unsigned long", 0, 4_294_967_296L, false, 32, false, false);
    /** Signed double word (4 bytes, 32 bits). */
@@ -87,6 +91,16 @@ public interface SymbolType {
          case "signed short int":
          case "signed word":
             return SWORD;
+         case "__uint24":
+         case "uint24_t":
+         case "tribyte":
+         case "unsigned tribyte":
+            return TRIBYTE;
+         case "__int24":
+         case "int24_t":
+         case "signed tribyte":
+         case "stribyte":
+            return STRIBYTE;
          case "unsigned long":
          case "unsigned long int":
          case "dword":
@@ -121,7 +135,7 @@ public interface SymbolType {
     * @return true if the type is integer
     */
    static boolean isInteger(SymbolType type) {
-      return SDWORD.equals(type) || DWORD.equals(type) || SWORD.equals(type) || WORD.equals(type) || SBYTE.equals(type) || BYTE.equals(type) || NIBBLE.equals(type) || NUMBER.equals(type) || UNUMBER.equals(type) || SNUMBER.equals(type);
+      return SDWORD.equals(type) || DWORD.equals(type) || STRIBYTE.equals(type) || TRIBYTE.equals(type) || SWORD.equals(type) || WORD.equals(type) || SBYTE.equals(type) || BYTE.equals(type) || NIBBLE.equals(type) || NUMBER.equals(type) || UNUMBER.equals(type) || SNUMBER.equals(type);
    }
 
    default String toCDecl() {

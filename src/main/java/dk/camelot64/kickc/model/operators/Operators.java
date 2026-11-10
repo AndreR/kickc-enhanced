@@ -26,6 +26,8 @@ public class Operators {
    public static final OperatorUnary CAST_SBYTE = new OperatorCastSByte(2);
    public static final OperatorUnary CAST_WORD = new OperatorCastWord(2);
    public static final OperatorUnary CAST_SWORD = new OperatorCastSWord(2);
+   public static final OperatorUnary CAST_TRIBYTE = new OperatorCastTribyte(2);
+   public static final OperatorUnary CAST_STRIBYTE = new OperatorCastSTribyte(2);
    public static final OperatorUnary CAST_DWORD = new OperatorCastDWord(2);
    public static final OperatorUnary CAST_SDWORD = new OperatorCastSDWord(2);
    public static final OperatorUnary CAST_BOOL= new OperatorCastBool(2);
@@ -113,6 +115,10 @@ public class Operators {
             return PLUS;
          case "minus":
             return MINUS;
+         case "div":
+            return DIVIDE;
+         case "mul":
+            return MULTIPLY;
          case "eq":
             return EQ;
          case "neq":
@@ -249,6 +255,10 @@ public class Operators {
             return getCastUnary(SymbolType.DWORD);
          case "sdword":
             return getCastUnary(SymbolType.SDWORD);
+         case "tribyte":
+            return getCastUnary(SymbolType.TRIBYTE);
+         case "stribyte":
+            return getCastUnary(SymbolType.STRIBYTE);
          case "ptr":
             return getCastUnary(new SymbolTypePointer(SymbolType.VOID));
          default:
@@ -265,6 +275,10 @@ public class Operators {
          return CAST_WORD;
       } else if(SymbolType.SWORD.equals(castType)) {
          return CAST_SWORD;
+      } else if(SymbolType.TRIBYTE.equals(castType)) {
+         return CAST_TRIBYTE;
+      } else if(SymbolType.STRIBYTE.equals(castType)) {
+         return CAST_STRIBYTE;
       } else if(SymbolType.DWORD.equals(castType)) {
          return CAST_DWORD;
       } else if(SymbolType.SDWORD.equals(castType)) {

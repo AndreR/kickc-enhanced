@@ -185,6 +185,12 @@ public class AsmFormat {
          }
          // Cast is needed
          return getAsmConstant(program, new ConstantBinary(new ConstantInteger((long) 0xffff), Operators.BOOL_AND, operand), outerPrecedence, codeScope);
+      } else if(Operators.CAST_TRIBYTE.equals(operator) || Operators.CAST_STRIBYTE.equals(operator)) {
+         SymbolType operandType = SymbolTypeInference.inferType(program.getScope(), operand);
+         if(SymbolType.TRIBYTE.equals(operandType) || SymbolType.STRIBYTE.equals(operandType) || SymbolType.WORD.equals(operandType) || SymbolType.SWORD.equals(operandType) || SymbolType.BYTE.equals(operandType) || SymbolType.SBYTE.equals(operandType)) {
+            return getAsmConstant(program, operand, outerPrecedence, codeScope);
+         }
+         return getAsmConstant(program, new ConstantBinary(new ConstantInteger(0xffffffL), Operators.BOOL_AND, operand), outerPrecedence, codeScope);
       } else if(Operators.CAST_DWORD.equals(operator) || Operators.CAST_SDWORD.equals(operator)) {
          SymbolType operandType = SymbolTypeInference.inferType(program.getScope(), operand);
          if(SymbolType.DWORD.equals(operandType) || SymbolType.SDWORD.equals(operandType) || SymbolType.WORD.equals(operandType) || SymbolType.SWORD.equals(operandType) || SymbolType.BYTE.equals(operandType) || SymbolType.SBYTE.equals(operandType) || operandType instanceof SymbolTypePointer) {
@@ -232,6 +238,8 @@ public class AsmFormat {
             return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger((long) 0xff)), outerPrecedence, codeScope);
          } else if(SymbolType.WORD.equals(operandType) || SymbolType.SWORD.equals(operandType) || operandType instanceof SymbolTypePointer) {
             return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger((long) 0xffff)), outerPrecedence, codeScope);
+         } else if(SymbolType.TRIBYTE.equals(operandType) || SymbolType.STRIBYTE.equals(operandType)) {
+            return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger(0xffffffL)), outerPrecedence, codeScope);
          } else if(SymbolType.DWORD.equals(operandType) || SymbolType.SDWORD.equals(operandType)) {
             return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger(0xffffffffL)), outerPrecedence, codeScope);
          } else if(SymbolType.NUMBER.equals(operandType) || SymbolType.UNUMBER.equals(operandType) || SymbolType.NIBBLE.equals(operandType)) {
