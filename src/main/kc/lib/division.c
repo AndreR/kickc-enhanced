@@ -227,3 +227,95 @@ char mod10u(char val) {
     return (char)(val - div10u(val) * 10);
 }
 
+
+
+// Remainder after unsigned 32-bit division
+unsigned long rem32u = 0;
+
+// Performs division on two 32 bit unsigned longs
+unsigned long div32u(unsigned long dividend, unsigned long divisor) {
+    if (divisor > dividend) {
+        rem32u = dividend;
+        return 0;
+    }
+    if (WORD1(divisor) == 0) {
+        unsigned long q = div32u16u(dividend, (unsigned int)divisor);
+        rem32u = (unsigned long)rem16u;
+        return q;
+    }
+    unsigned long rem = 0;
+    for(char i = 0; i < 32; i++) {
+        rem = (rem << 1) | (unsigned long)((dividend >> 31) & 1);
+        dividend = dividend << 1;
+        if(rem >= divisor) {
+            rem = rem - divisor;
+            dividend = dividend | 1;
+        }
+    }
+    rem32u = rem;
+    return dividend;
+}
+
+// Performs modulo on two 32 bit unsigned longs
+unsigned long mod32u(unsigned long dividend, unsigned long divisor) {
+    div32u(dividend, divisor);
+    return rem32u;
+}
+
+// Performs division on two 32 bit signed longs
+signed long div32s(signed long dividend, signed long divisor) {
+    char neg = 0;
+    unsigned long dividendu;
+    if(dividend < 0) {
+        dividendu = (unsigned long)-dividend;
+        neg = 1;
+    } else {
+        dividendu = (unsigned long)dividend;
+    }
+    unsigned long divisoru;
+    if(divisor < 0) {
+        divisoru = (unsigned long)-divisor;
+        neg = neg ^ 1;
+    } else {
+        divisoru = (unsigned long)divisor;
+    }
+    unsigned long resultu = div32u(dividendu, divisoru);
+    if(neg == 0) {
+        return (signed long)resultu;
+    } else {
+        return -(signed long)resultu;
+    }
+}
+
+// Performs modulo on two 32 bit signed longs
+signed long mod32s(signed long dividend, signed long divisor) {
+    char neg = (dividend < 0) ? 1 : 0;
+    unsigned long dividendu = (dividend < 0) ? (unsigned long)-dividend : (unsigned long)dividend;
+    unsigned long divisoru = (divisor < 0) ? (unsigned long)-divisor : (unsigned long)divisor;
+    div32u(dividendu, divisoru);
+    if(neg == 0) {
+        return (signed long)rem32u;
+    } else {
+        return -(signed long)rem32u;
+    }
+}
+
+// Performs division on two 24 bit unsigned tribytes
+__uint24 div24u(__uint24 dividend, __uint24 divisor) {
+    return (__uint24)div32u((unsigned long)dividend, (unsigned long)divisor);
+}
+
+// Performs modulo on two 24 bit unsigned tribytes
+__uint24 mod24u(__uint24 dividend, __uint24 divisor) {
+    return (__uint24)mod32u((unsigned long)dividend, (unsigned long)divisor);
+}
+
+// Performs division on two 24 bit signed tribytes
+__int24 div24s(__int24 dividend, __int24 divisor) {
+    return (__int24)div32s((signed long)dividend, (signed long)divisor);
+}
+
+// Performs modulo on two 24 bit signed tribytes
+__int24 mod24s(__int24 dividend, __int24 divisor) {
+    return (__int24)mod32s((signed long)dividend, (signed long)divisor);
+}

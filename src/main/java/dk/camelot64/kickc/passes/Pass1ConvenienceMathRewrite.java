@@ -57,7 +57,7 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
             || scope.equals("div16u8u") || scope.equals("div8s") || scope.equals("div16s")
             || scope.equals("div10u") || scope.equals("mod10u")
             || scope.equals("mod8u") || scope.equals("mod8s") || scope.equals("mod16u") || scope.equals("mod16s")
-            || scope.equals("modr16u") || scope.equals("div32u16u")
+            || scope.equals("modr16u") || scope.equals("div32u16u") || scope.equals("div32u") || scope.equals("mod32u") || scope.equals("div32s") || scope.equals("mod32s") || scope.equals("div24u") || scope.equals("mod24u") || scope.equals("div24s") || scope.equals("mod24s")
             || scope.equals("mul8u") || scope.equals("mul8s") || scope.equals("mul8su")
             || scope.equals("mul16u") || scope.equals("mul16s");
    }
@@ -77,7 +77,7 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
       procedure.add(param);
       procedure.setParameters(Collections.singletonList(param));
 
-      Variable returnVar = new Variable("return", Variable.Kind.LOAD_STORE, SymbolType.WORD, procedure,
+      Variable returnVar = new Variable("return", Variable.Kind.PHI_MASTER, SymbolType.WORD, procedure,
             Variable.MemoryArea.MAIN_MEMORY, Scope.SEGMENT_DATA_DEFAULT, null);
       procedure.add(returnVar);
 
@@ -94,14 +94,18 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
             Operators.DIVIDE,
             new ConstantInteger(constant, SymbolType.WORD),
             true, StatementSource.NONE, Comment.NO_COMMENTS);
-
-      StatementReturn retStmt = new StatementReturn(returnVar.getRef(), StatementSource.NONE, Comment.NO_COMMENTS);
-
       procBlock.addStatement(assign);
-      procBlock.addStatement(retStmt);
       procBlock.setDefaultSuccessor(procExit.getRef());
 
-      ControlFlowGraph cfg = new ControlFlowGraph(Collections.singletonList(procBlock));
+      Graph.Block returnBlock = new ControlFlowBlock(procExit.getRef(), procedure.getRef());
+      returnBlock.addStatement(new StatementAssignment(returnVar.getVariableRef(), returnVar.getRef(), false, StatementSource.NONE, Comment.NO_COMMENTS));
+      returnBlock.addStatement(new StatementReturn(returnVar.getRef(), StatementSource.NONE, Comment.NO_COMMENTS));
+
+      List<Graph.Block> blocks = new ArrayList<>();
+      blocks.add(procBlock);
+      blocks.add(returnBlock);
+
+      ControlFlowGraph cfg = new ControlFlowGraph(blocks);
       pc.setGraph(cfg);
 
       return procedure;
@@ -122,7 +126,7 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
       procedure.add(param);
       procedure.setParameters(Collections.singletonList(param));
 
-      Variable returnVar = new Variable("return", Variable.Kind.LOAD_STORE, SymbolType.BYTE, procedure,
+      Variable returnVar = new Variable("return", Variable.Kind.PHI_MASTER, SymbolType.BYTE, procedure,
             Variable.MemoryArea.MAIN_MEMORY, Scope.SEGMENT_DATA_DEFAULT, null);
       procedure.add(returnVar);
 
@@ -139,14 +143,18 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
             Operators.DIVIDE,
             new ConstantInteger(constant, SymbolType.BYTE),
             true, StatementSource.NONE, Comment.NO_COMMENTS);
-
-      StatementReturn retStmt = new StatementReturn(returnVar.getRef(), StatementSource.NONE, Comment.NO_COMMENTS);
-
       procBlock.addStatement(assign);
-      procBlock.addStatement(retStmt);
       procBlock.setDefaultSuccessor(procExit.getRef());
 
-      ControlFlowGraph cfg = new ControlFlowGraph(Collections.singletonList(procBlock));
+      Graph.Block returnBlock = new ControlFlowBlock(procExit.getRef(), procedure.getRef());
+      returnBlock.addStatement(new StatementAssignment(returnVar.getVariableRef(), returnVar.getRef(), false, StatementSource.NONE, Comment.NO_COMMENTS));
+      returnBlock.addStatement(new StatementReturn(returnVar.getRef(), StatementSource.NONE, Comment.NO_COMMENTS));
+
+      List<Graph.Block> blocks = new ArrayList<>();
+      blocks.add(procBlock);
+      blocks.add(returnBlock);
+
+      ControlFlowGraph cfg = new ControlFlowGraph(blocks);
       pc.setGraph(cfg);
 
       return procedure;
@@ -343,14 +351,40 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
             }
          }
 
-         // 32-bit unsigned constant division
-         if(!isSigned && divBytes == 4 && c <= 65535) {
-            Procedure div32u16u = getProgramScope().getLocalProcedure("div32u16u");
-            if(div32u16u != null) {
-               StatementCall call = new StatementCall(assign.getlValue(), "div32u16u",
-                     list(dividend, new ConstantInteger(c, SymbolType.WORD)),
+         // 24-bit constant division (tribyte / const)
+         if(divBytes == 3) {
+            String procName = isSigned ? "div24s" : "div24u";
+            Procedure div24 = getProgramScope().getLocalProcedure(procName);
+            if(div24 != null) {
+               StatementCall call = new StatementCall(assign.getlValue(), procName,
+                     list(dividend, new ConstantInteger(c, isSigned ? SymbolType.STRIBYTE : SymbolType.TRIBYTE)),
                      assign.getSource(), assign.getComments());
-               call.setProcedure(div32u16u.getRef());
+               call.setProcedure(div24.getRef());
+               stmtIt.set(call);
+               return true;
+            }
+         }
+
+         // 32-bit constant division (dword / const)
+         if(divBytes == 4) {
+            if(!isSigned && c <= 65535) {
+               Procedure div32u16u = getProgramScope().getLocalProcedure("div32u16u");
+               if(div32u16u != null) {
+                  StatementCall call = new StatementCall(assign.getlValue(), "div32u16u",
+                        list(dividend, new ConstantInteger(c, SymbolType.WORD)),
+                        assign.getSource(), assign.getComments());
+                  call.setProcedure(div32u16u.getRef());
+                  stmtIt.set(call);
+                  return true;
+               }
+            }
+            String procName = isSigned ? "div32s" : "div32u";
+            Procedure div32 = getProgramScope().getLocalProcedure(procName);
+            if(div32 != null) {
+               StatementCall call = new StatementCall(assign.getlValue(), procName,
+                     list(dividend, new ConstantInteger(c, isSigned ? SymbolType.SDWORD : SymbolType.DWORD)),
+                     assign.getSource(), assign.getComments());
+               call.setProcedure(div32.getRef());
                stmtIt.set(call);
                return true;
             }
@@ -407,12 +441,33 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
                   return true;
                }
             }
-         } else if(divBytes == 4 && !isSigned && divisorBytes <= 2) {
-            Procedure div32u16u = getProgramScope().getLocalProcedure("div32u16u");
-            if(div32u16u != null) {
-               StatementCall call = new StatementCall(assign.getlValue(), "div32u16u",
+         } else if(divBytes == 3) {
+            String procName = isSigned ? "div24s" : "div24u";
+            Procedure div24 = getProgramScope().getLocalProcedure(procName);
+            if(div24 != null) {
+               StatementCall call = new StatementCall(assign.getlValue(), procName,
                      list(dividend, divisor), assign.getSource(), assign.getComments());
-               call.setProcedure(div32u16u.getRef());
+               call.setProcedure(div24.getRef());
+               stmtIt.set(call);
+               return true;
+            }
+         } else if(divBytes == 4) {
+            if(!isSigned && divisorBytes <= 2) {
+               Procedure div32u16u = getProgramScope().getLocalProcedure("div32u16u");
+               if(div32u16u != null) {
+                  StatementCall call = new StatementCall(assign.getlValue(), "div32u16u",
+                        list(dividend, divisor), assign.getSource(), assign.getComments());
+                  call.setProcedure(div32u16u.getRef());
+                  stmtIt.set(call);
+                  return true;
+               }
+            }
+            String procName = isSigned ? "div32s" : "div32u";
+            Procedure div32 = getProgramScope().getLocalProcedure(procName);
+            if(div32 != null) {
+               StatementCall call = new StatementCall(assign.getlValue(), procName,
+                     list(dividend, divisor), assign.getSource(), assign.getComments());
+               call.setProcedure(div32.getRef());
                stmtIt.set(call);
                return true;
             }
@@ -485,6 +540,26 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
                stmtIt.set(call);
                return true;
             }
+         }
+      } else if(modBytes == 3) {
+         String procName = isSigned ? "mod24s" : "mod24u";
+         Procedure mod24 = getProgramScope().getLocalProcedure(procName);
+         if(mod24 != null) {
+            StatementCall call = new StatementCall(assign.getlValue(), procName,
+                  list(dividend, divisor), assign.getSource(), assign.getComments());
+            call.setProcedure(mod24.getRef());
+            stmtIt.set(call);
+            return true;
+         }
+      } else if(modBytes == 4) {
+         String procName = isSigned ? "mod32s" : "mod32u";
+         Procedure mod32 = getProgramScope().getLocalProcedure(procName);
+         if(mod32 != null) {
+            StatementCall call = new StatementCall(assign.getlValue(), procName,
+                  list(dividend, divisor), assign.getSource(), assign.getComments());
+            call.setProcedure(mod32.getRef());
+            stmtIt.set(call);
+            return true;
          }
       }
       return false;

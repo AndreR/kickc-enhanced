@@ -101,3 +101,39 @@ unsigned int mod16u(unsigned int dividend, unsigned int divisor);
 /// Performs modulo on two 16 bit signed ints
 /// Returns dividend % divisor.
 signed int mod16s(signed int dividend, signed int divisor);
+
+
+/// Remainder after unsigned 32-bit division
+extern unsigned long rem32u;
+
+/// Performs division on two 32 bit unsigned longs
+/// Returns dividend / divisor. The remainder will be set into rem32u.
+unsigned long div32u(unsigned long dividend, unsigned long divisor);
+
+/// Performs modulo on two 32 bit unsigned longs
+/// Returns dividend % divisor.
+unsigned long mod32u(unsigned long dividend, unsigned long divisor);
+
+/// Performs division on two 32 bit signed longs
+/// Returns dividend / divisor.
+signed long div32s(signed long dividend, signed long divisor);
+
+/// Performs modulo on two 32 bit signed longs
+/// Returns dividend % divisor.
+signed long mod32s(signed long dividend, signed long divisor);
+
+/// Performs division on two 24 bit unsigned tribytes
+/// Returns dividend / divisor.
+__uint24 div24u(__uint24 dividend, __uint24 divisor);
+
+/// Performs modulo on two 24 bit unsigned tribytes
+/// Returns dividend % divisor.
+__uint24 mod24u(__uint24 dividend, __uint24 divisor);
+
+/// Performs division on two 24 bit signed tribytes
+/// Returns dividend / divisor.
+__int24 div24s(__int24 dividend, __int24 divisor);
+
+/// Performs modulo on two 24 bit signed tribytes
+/// Returns dividend % divisor.
+__int24 mod24s(__int24 dividend, __int24 divisor);

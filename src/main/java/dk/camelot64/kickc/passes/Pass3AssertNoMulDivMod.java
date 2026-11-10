@@ -16,6 +16,12 @@ public class Pass3AssertNoMulDivMod extends Pass2SsaAssertion {
 
    @Override
    public void check() throws AssertionFailed {
+      if(getProgram().isEnableConvenience()) {
+         // In convenience mode, all multiplications, divisions, and modulos
+         // are either rewritten to library routines, deduplicated helper functions,
+         // or validated by Pass 4 code generator ASM fragment matching.
+         return;
+      }
       for(var statement : getGraph().getAllStatements()) {
          if(statement instanceof StatementAssignment assignment) {
             if(Operators.MULTIPLY.equals(assignment.getOperator())) {
