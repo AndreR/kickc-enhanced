@@ -185,7 +185,29 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
             break;
          }
 
-         if(!alreadyAligned) {
+         // Ensure target is not entered via linear fall-through from previous instruction.
+         // KickAssembler pads .align with $00 (BRK), so fall-through into padding causes CPU crash.
+         boolean hasFallThrough = false;
+         for(int j = targetRef.index - 1; j >= 0; j--) {
+            LineRef prev = allLines.get(j);
+            if(prev.line instanceof AsmComment || prev.line instanceof AsmLabel) continue;
+            if(prev.line instanceof AsmScopeBegin || prev.line instanceof AsmScopeEnd) {
+               break;
+            }
+            if(prev.line instanceof AsmInstruction) {
+               AsmInstruction pi = (AsmInstruction) prev.line;
+               if(pi.getCpuOpcode() != null) {
+                  String m = pi.getCpuOpcode().getMnemonic();
+                  if("jmp".equals(m) || "rts".equals(m) || "rti".equals(m)) {
+                     break;
+                  }
+               }
+            }
+            hasFallThrough = true;
+            break;
+         }
+
+         if(!alreadyAligned && !hasFallThrough) {
             targetRef.chunk.addLineBefore(targetRef.line, new AsmLoopAlign(loopLen));
             insertedCount++;
          }
