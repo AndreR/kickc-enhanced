@@ -1,0 +1,9 @@
+lda {z2}
+ora {m3}
+sta {z1}
+lda {z2}+1
+ora {m3}+1
+sta {z1}+1
+lda {z2}+2
+ora {m3}+2
+sta {z1}+2

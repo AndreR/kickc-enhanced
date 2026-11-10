@@ -1,0 +1,9 @@
+lda {m2}
+and {m3}
+sta {z1}
+lda {m2}+1
+and {m3}+1
+sta {z1}+1
+lda {m2}+2
+and {m3}+2
+sta {z1}+2

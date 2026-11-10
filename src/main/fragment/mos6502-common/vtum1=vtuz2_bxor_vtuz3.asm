@@ -1,0 +1,9 @@
+lda {z2}
+eor {z3}
+sta {m1}
+lda {z2}+1
+eor {z3}+1
+sta {m1}+1
+lda {z2}+2
+eor {z3}+2
+sta {m1}+2

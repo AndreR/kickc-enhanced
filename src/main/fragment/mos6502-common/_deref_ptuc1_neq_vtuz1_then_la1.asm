@@ -1,0 +1,9 @@
+lda {c1}+2
+cmp {z1}+2
+bne {la1}
+lda {c1}+1
+cmp {z1}+1
+bne {la1}
+lda {c1}
+cmp {z1}
+bne {la1}

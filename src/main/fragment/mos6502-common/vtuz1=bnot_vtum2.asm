@@ -1,0 +1,9 @@
+lda {m2}
+eor #$ff
+sta {z1}
+lda {m2}+1
+eor #$ff
+sta {z1}+1
+lda {m2}+2
+eor #$ff
+sta {z1}+2

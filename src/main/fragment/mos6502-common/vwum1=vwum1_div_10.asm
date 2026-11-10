@@ -1,0 +1,15 @@
+lda #0
+ldx #16
+clc
+!:
+rol {m1}
+rol {m1}+1
+rol
+cmp #10
+bcc !+
+sbc #10
+!:
+dex
+bne !--
+rol {m1}
+rol {m1}+1
