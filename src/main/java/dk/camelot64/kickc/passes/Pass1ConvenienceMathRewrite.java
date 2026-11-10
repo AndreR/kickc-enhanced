@@ -42,8 +42,7 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
       if(scope.startsWith("::")) scope = scope.substring(2);
       return scope.equals("div8u") || scope.equals("divr8u") || scope.equals("div16u")
             || scope.equals("div16u8u") || scope.equals("div8s") || scope.equals("div16s")
-            || scope.equals("div10u") || scope.equals("mod10u") || scope.equals("div16u10") || scope.equals("mod16u10")
-            || scope.equals("mod8u") || scope.equals("mod8s") || scope.equals("mod16u") || scope.equals("mod16s")
+            || scope.equals("div10u") || scope.equals("mod10u") || scope.equals("mod8u") || scope.equals("mod8s") || scope.equals("mod16u") || scope.equals("mod16s")
             || scope.equals("modr16u") || scope.equals("div32u16u")
             || scope.equals("mul8u") || scope.equals("mul8s") || scope.equals("mul8su")
             || scope.equals("mul16u") || scope.equals("mul16s");
@@ -217,30 +216,13 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
 
          // 16-bit unsigned constant division (uint16 / const)
          // Heuristic:
-         // - If c == 10:
-         //     If occurrences >= 3: redirect to div16u10() (24-byte specialized helper, ~340 cycles)
-         //     Else: individual code (inline KickC fragment vwuz1_div_10)
-         // - If c <= 255:
-         //     If occurrences >= 3: redirect to div16u8u(dividend, c) to avoid repeating 22 bytes per site
-         //     Else: individual code (inline KickC fragment vwuz1_div_vbuc1)
-         // - If c > 255:
-         //     Redirect to div16u(dividend, c)
+         // - If occurrences >= 3: redirect to standard library function to prevent multi-call footprint bloat
+         //     If c <= 255: redirect to div16u8u(dividend, c)
+         //     If c > 255: redirect to div16u(dividend, c)
+         // - If occurrences < 3: build individual inline code (fragment vwuz1_div_10 / vwuz1_div_vbuc1)
          if(!isSigned && divBytes == 2) {
-            if(c == 10) {
-               if(occurrences >= 3) {
-                  Procedure div16u10 = getProgramScope().getLocalProcedure("div16u10");
-                  if(div16u10 != null) {
-                     StatementCall call = new StatementCall(assign.getlValue(), "div16u10",
-                           list(dividend),
-                           assign.getSource(), assign.getComments());
-                     call.setProcedure(div16u10.getRef());
-                     stmtIt.set(call);
-                     return true;
-                  }
-               }
-               return false; // Individual code (inline fragment)
-            } else if(c <= 255) {
-               if(occurrences >= 3) {
+            if(occurrences >= 3) {
+               if(c <= 255) {
                   Procedure div16u8u = getProgramScope().getLocalProcedure("div16u8u");
                   if(div16u8u != null) {
                      StatementCall call = new StatementCall(assign.getlValue(), "div16u8u",
@@ -250,18 +232,20 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
                      stmtIt.set(call);
                      return true;
                   }
+               } else {
+                  Procedure div16u = getProgramScope().getLocalProcedure("div16u");
+                  if(div16u != null) {
+                     StatementCall call = new StatementCall(assign.getlValue(), "div16u",
+                           list(dividend, new ConstantInteger(c, SymbolType.WORD)),
+                           assign.getSource(), assign.getComments());
+                     call.setProcedure(div16u.getRef());
+                     stmtIt.set(call);
+                     return true;
+                  }
                }
-               return false; // Individual code (inline fragment)
             } else {
-               Procedure div16u = getProgramScope().getLocalProcedure("div16u");
-               if(div16u != null) {
-                  StatementCall call = new StatementCall(assign.getlValue(), "div16u",
-                        list(dividend, new ConstantInteger(c, SymbolType.WORD)),
-                        assign.getSource(), assign.getComments());
-                  call.setProcedure(div16u.getRef());
-                  stmtIt.set(call);
-                  return true;
-               }
+               // Individual code: allow KickC Pass 4 to inline dedicated shift-subtract loop
+               return false;
             }
          }
 
@@ -362,27 +346,15 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
             return false; // Power of 2 bitwise AND in Pass 2
          }
          int occurrences = divConstCounts.getOrDefault(c, 0);
-         if(c == 10 && !isSigned) {
-            if(modBytes == 1 && occurrences >= 3) {
-               Procedure mod10u = getProgramScope().getLocalProcedure("mod10u");
-               if(mod10u != null) {
-                  StatementCall call = new StatementCall(assign.getlValue(), "mod10u",
-                        list(dividend),
-                        assign.getSource(), assign.getComments());
-                  call.setProcedure(mod10u.getRef());
-                  stmtIt.set(call);
-                  return true;
-               }
-            } else if(modBytes == 2 && occurrences >= 3) {
-               Procedure mod16u10 = getProgramScope().getLocalProcedure("mod16u10");
-               if(mod16u10 != null) {
-                  StatementCall call = new StatementCall(assign.getlValue(), "mod16u10",
-                        list(dividend),
-                        assign.getSource(), assign.getComments());
-                  call.setProcedure(mod16u10.getRef());
-                  stmtIt.set(call);
-                  return true;
-               }
+         if(c == 10 && !isSigned && modBytes == 1 && occurrences >= 3) {
+            Procedure mod10u = getProgramScope().getLocalProcedure("mod10u");
+            if(mod10u != null) {
+               StatementCall call = new StatementCall(assign.getlValue(), "mod10u",
+                     list(dividend),
+                     assign.getSource(), assign.getComments());
+               call.setProcedure(mod10u.getRef());
+               stmtIt.set(call);
+               return true;
             }
          }
       }

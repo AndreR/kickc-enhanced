@@ -227,12 +227,3 @@ char mod10u(char val) {
     return (char)(val - div10u(val) * 10);
 }
 
-// High-speed division by 10 for unsigned 16-bit integers
-unsigned int div16u10(unsigned int val) {
-    return val / 10;
-}
-
-// High-speed modulo by 10 for unsigned 16-bit integers
-unsigned int mod16u10(unsigned int val) {
-    return val % 10;
-}

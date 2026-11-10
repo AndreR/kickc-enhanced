@@ -85,11 +85,6 @@ char div10u(char val);
 /// Uses reciprocal multiplication in ~26 CPU cycles.
 char mod10u(char val);
 
-/// High-speed division by 10 for unsigned 16-bit integers.
-unsigned int div16u10(unsigned int val);
-
-/// High-speed modulo by 10 for unsigned 16-bit integers.
-unsigned int mod16u10(unsigned int val);
 
 /// Performs modulo on two 8 bit unsigned chars
 /// Returns dividend % divisor.
