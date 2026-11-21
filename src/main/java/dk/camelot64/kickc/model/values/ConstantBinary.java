@@ -72,7 +72,7 @@ public class ConstantBinary implements ConstantValue {
       SymbolType leftType = SymbolTypeInference.inferType(scope, left);
       SymbolType rightType = SymbolTypeInference.inferType(scope, right);
       SymbolType binaryType = operator.inferType(leftType, rightType);
-      if(operator instanceof dk.camelot64.kickc.model.operators.OperatorShiftLeft) {
+      if(operator instanceof dk.camelot64.kickc.model.operators.OperatorShiftLeft && leftType instanceof dk.camelot64.kickc.model.types.SymbolTypeIntegerAuto) {
          try {
             ConstantLiteral lit = operator.calculateLiteral(left.calculateLiteral(scope), right.calculateLiteral(scope));
             if(lit instanceof ConstantInteger) {

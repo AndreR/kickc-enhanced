@@ -44,6 +44,21 @@ public class PassNAddTypeConversionAssignment extends Pass2SsaOptimization {
             } catch(CompileError e) {
                throw new CompileError(e.getMessage(), currentStmt.getSource());
             }
+            if(dk.camelot64.kickc.model.operators.Operators.BOOL_AND.equals(binary.getOperator())
+                  && leftType instanceof dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed leftFixed
+                  && rightType instanceof dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed rightFixed) {
+               if(leftFixed.getSizeBytes() > rightFixed.getSizeBytes() && rightFixed.isSigned()) {
+                  SymbolType commonType = SymbolTypeConversion.convertedMathType(leftFixed, rightFixed);
+                  binary.addRightCast(commonType, stmtIt, currentBlock.getScope(), getProgram());
+                  modified.set(true);
+                  return;
+               } else if(rightFixed.getSizeBytes() > leftFixed.getSizeBytes() && leftFixed.isSigned()) {
+                  SymbolType commonType = SymbolTypeConversion.convertedMathType(leftFixed, rightFixed);
+                  binary.addLeftCast(commonType, stmtIt, currentBlock.getScope(), getProgram());
+                  modified.set(true);
+                  return;
+               }
+            }
             if(!SymbolTypeConversion.assignmentTypeMatch(leftType, rightType) || SymbolType.VAR.equals(rightType)) {
                // Assigning a pointer from an unsigned word
                if(programExpression instanceof ProgramExpressionBinary.ProgramExpressionBinaryAssignmentLValue || programExpression instanceof ProgramExpressionBinary.ProgramExpressionBinaryCallParameter) {

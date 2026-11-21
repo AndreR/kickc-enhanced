@@ -64,6 +64,18 @@ public class PassNSimplifyExpressionWithZero extends Pass2SsaOptimization {
                   }
                   modified.set(true);
                }
+            } else if(Operators.SHIFT_LEFT.equals(operator) || Operators.SHIFT_RIGHT.equals(operator)) {
+               if(isZero(right)) {
+                  // x << 0 -> x, x >> 0 -> x
+                  getLog().append("Simplifying shift by zero " + binary.getLeft().toString() + " in " + (currentStmt == null ? "" : currentStmt.toString(getProgram(), false)));
+                  programExpression.set(binary.getLeft());
+                  modified.set(true);
+               } else if(isZero(left)) {
+                  // 0 << y -> 0, 0 >> y -> 0
+                  getLog().append("Simplifying shift of zero in " + (currentStmt == null ? "" : currentStmt.toString(getProgram(), false)));
+                  programExpression.set(binary.getLeft());
+                  modified.set(true);
+               }
             }
          }
       });

@@ -43,7 +43,7 @@ public class SymbolTypeInference {
          if(SymbolTypeConversion.isInt24(leftType)) leftType = SymbolType.DWORD;
          if(SymbolTypeConversion.isInt24(rightType)) rightType = SymbolType.DWORD;
          SymbolType binaryType = constBin.getOperator().inferType(leftType, rightType);
-         if(constBin.getOperator() instanceof dk.camelot64.kickc.model.operators.OperatorShiftLeft) {
+         if(constBin.getOperator() instanceof dk.camelot64.kickc.model.operators.OperatorShiftLeft && leftType instanceof SymbolTypeIntegerAuto) {
             try {
                ConstantLiteral lit = constBin.calculateLiteral(symbols);
                if(lit instanceof ConstantInteger) {

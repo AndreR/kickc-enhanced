@@ -35,10 +35,13 @@ public class OperatorBitwiseAnd extends OperatorBinary {
       }
       // Handle numeric types
       if(SymbolType.isInteger(type1) && SymbolType.isInteger(type2)) {
-         if(type1.getSizeBytes()<type2.getSizeBytes())
+         if(type1.getSizeBytes() < type2.getSizeBytes() && type1 instanceof SymbolTypeIntegerFixed && !((SymbolTypeIntegerFixed) type1).isSigned()) {
             return type1;
-         else
+         } else if(type2.getSizeBytes() < type1.getSizeBytes() && type2 instanceof SymbolTypeIntegerFixed && !((SymbolTypeIntegerFixed) type2).isSigned()) {
             return type2;
+         } else {
+            return SymbolTypeConversion.convertedMathType((SymbolTypeInteger) type1, (SymbolTypeInteger) type2);
+         }
       }
 
       throw new CompileError("Type inference case not handled " + type1 + " " + getOperator() + " " + type2);

@@ -27,6 +27,14 @@ public class ControlFlowGraph implements Graph {
    }
 
    public Graph.Block getBlock(LabelRef symbol) {
+      Graph.Block block = blockMap.get(symbol);
+      if(block != null && Objects.equals(block.getLabel(), symbol)) {
+         return block;
+      }
+      blockMap.clear();
+      for(Graph.Block b : blocks) {
+         blockMap.put(b.getLabel(), b);
+      }
       return blockMap.get(symbol);
    }
 

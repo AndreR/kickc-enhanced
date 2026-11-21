@@ -201,7 +201,6 @@ public class Compiler {
    }
 
    public void compile(List<Path> cFiles, Map<String, String> defines) {
-      Pass2MultiplyToShiftRewriting.inlinedDivCounts.clear();
       if(cFiles.size() == 0)
          throw new CompileError("Error! You must supply at least one file to compile!");
 

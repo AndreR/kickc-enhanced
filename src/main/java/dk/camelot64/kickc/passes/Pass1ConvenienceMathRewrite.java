@@ -173,13 +173,41 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
       return modified;
    }
 
+   private SymbolType resolveOperandType(RValue val) {
+      SymbolType t = SymbolTypeInference.inferType(getProgramScope(), val);
+      if(t instanceof dk.camelot64.kickc.model.types.SymbolTypeIntegerAuto && val instanceof ConstantInteger ci) {
+         long v = ci.getInteger();
+         SymbolType fixed = v < 0
+               ? dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed.getSmallestSigned(v)
+               : dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed.getSmallestUnsigned(v);
+         if(fixed != null) return fixed;
+      }
+      return t;
+   }
+
+   private SymbolType resolveCommonType(RValue left, RValue right) {
+      SymbolType lt = resolveOperandType(left);
+      SymbolType rt = resolveOperandType(right);
+      if(lt instanceof dk.camelot64.kickc.model.types.SymbolTypeInteger && rt instanceof dk.camelot64.kickc.model.types.SymbolTypeInteger) {
+         SymbolType common = dk.camelot64.kickc.model.types.SymbolTypeConversion.convertedMathType(
+               (dk.camelot64.kickc.model.types.SymbolTypeInteger) lt,
+               (dk.camelot64.kickc.model.types.SymbolTypeInteger) rt);
+         if(common != null) return common;
+      }
+      return lt.getSizeBytes() >= rt.getSizeBytes() ? lt : rt;
+   }
+
+   private static boolean isPowerOfTwo(long c) {
+      return c > 0 && (c & (c - 1L)) == 0L;
+   }
+
    private boolean rewriteDivide(StatementAssignment assign, ListIterator<Statement> stmtIt, Map<Long, Integer> divConstCounts) {
       RValue dividend = assign.getrValue1();
       RValue divisor = assign.getrValue2();
-      SymbolType divType = SymbolTypeInference.inferType(getProgramScope(), dividend);
-      SymbolType divisorType = SymbolTypeInference.inferType(getProgramScope(), divisor);
-      boolean isSigned = isSigned(divType) || isSigned(divisorType);
-      int divBytes = divType.getSizeBytes();
+      SymbolType commonType = resolveCommonType(dividend, divisor);
+      SymbolType divisorType = resolveOperandType(divisor);
+      boolean isSigned = isSigned(commonType);
+      int divBytes = commonType.getSizeBytes();
       int divisorBytes = divisorType.getSizeBytes();
 
       if(divisor instanceof ConstantInteger constInt) {
@@ -187,8 +215,7 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
          if(c == 1) {
             return false; // Identity, handled in Pass 2
          }
-         double pow2 = Math.log(c) / Math.log(2);
-         if(pow2 >= 0.0 && Math.round(pow2) == pow2) {
+         if(isPowerOfTwo(c)) {
             if(!isSigned) {
                return false; // Power of 2 unsigned, optimal shift in Pass 2
             }
@@ -202,13 +229,33 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
                   stmtIt.set(call);
                   return true;
                }
-            } else {
+            } else if(divBytes == 2) {
                Procedure div16s = getProgramScope().getLocalProcedure("div16s");
                if(div16s != null) {
                   StatementCall call = new StatementCall(assign.getlValue(), "div16s",
                         list(dividend, new ConstantInteger(c, SymbolType.SWORD)),
                         assign.getSource(), assign.getComments());
                   call.setProcedure(div16s.getRef());
+                  stmtIt.set(call);
+                  return true;
+               }
+            } else if(divBytes == 3) {
+               Procedure div24s = getProgramScope().getLocalProcedure("div24s");
+               if(div24s != null) {
+                  StatementCall call = new StatementCall(assign.getlValue(), "div24s",
+                        list(dividend, new ConstantInteger(c, SymbolType.STRIBYTE)),
+                        assign.getSource(), assign.getComments());
+                  call.setProcedure(div24s.getRef());
+                  stmtIt.set(call);
+                  return true;
+               }
+            } else if(divBytes == 4) {
+               Procedure div32s = getProgramScope().getLocalProcedure("div32s");
+               if(div32s != null) {
+                  StatementCall call = new StatementCall(assign.getlValue(), "div32s",
+                        list(dividend, new ConstantInteger(c, SymbolType.SDWORD)),
+                        assign.getSource(), assign.getComments());
+                  call.setProcedure(div32s.getRef());
                   stmtIt.set(call);
                   return true;
                }
@@ -435,15 +482,13 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
    private boolean rewriteModulo(StatementAssignment assign, ListIterator<Statement> stmtIt, Map<Long, Integer> divConstCounts) {
       RValue dividend = assign.getrValue1();
       RValue divisor = assign.getrValue2();
-      SymbolType modType = SymbolTypeInference.inferType(getProgramScope(), dividend);
-      SymbolType divisorType = SymbolTypeInference.inferType(getProgramScope(), divisor);
-      boolean isSigned = isSigned(modType) || isSigned(divisorType);
-      int modBytes = modType.getSizeBytes();
+      SymbolType commonType = resolveCommonType(dividend, divisor);
+      boolean isSigned = isSigned(commonType);
+      int modBytes = commonType.getSizeBytes();
 
       if(divisor instanceof ConstantInteger constInt) {
          long c = constInt.getInteger();
-         double pow2 = Math.log(c) / Math.log(2);
-         if(pow2 >= 0.0 && Math.round(pow2) == pow2 && !isSigned) {
+         if(isPowerOfTwo(c) && !isSigned) {
             return false; // Power of 2 bitwise AND in Pass 2
          }
       }
@@ -524,17 +569,17 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
    private boolean rewriteMultiply(StatementAssignment assign, ListIterator<Statement> stmtIt, Map<Long, Integer> mulConstCounts) {
       RValue left = assign.getrValue1();
       RValue right = assign.getrValue2();
-      SymbolType mulType = SymbolTypeInference.inferType(getProgramScope(), left);
-      SymbolType rightType = SymbolTypeInference.inferType(getProgramScope(), right);
-      boolean isSigned = isSigned(mulType) || isSigned(rightType);
+      SymbolType commonType = resolveCommonType(left, right);
+      SymbolType mulType = resolveOperandType(left);
+      SymbolType rightType = resolveOperandType(right);
+      boolean isSigned = isSigned(commonType);
       int leftBytes = mulType.getSizeBytes();
       int rightBytes = rightType.getSizeBytes();
 
       if(right instanceof ConstantInteger constInt) {
          long c = constInt.getInteger();
          if(c <= 1) return false;
-         double pow2 = Math.log(c) / Math.log(2);
-         if(pow2 >= 0.0 && Math.round(pow2) == pow2) {
+         if(isPowerOfTwo(c)) {
             return false; // Power of 2 shift
          }
 
