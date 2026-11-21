@@ -33,6 +33,8 @@ import java.util.*;
  */
 public class Pass5PreIndexedAddressingOptimization extends Pass5AsmOptimization {
 
+   private static final java.util.regex.Pattern WHITESPACE_PATTERN = java.util.regex.Pattern.compile("\\s+");
+
    private static class LineRef {
       final int index;
       final AsmChunk chunk;
@@ -205,7 +207,7 @@ public class Pass5PreIndexedAddressingOptimization extends Pass5AsmOptimization 
    private static boolean isTablePlusOne(String table, String op2) {
       if(table == null || op2 == null) return false;
       String t0 = table.trim();
-      String t2 = op2.trim().replaceAll("\\s+", "");
+      String t2 = WHITESPACE_PATTERN.matcher(op2.trim()).replaceAll("");
       return t2.equals(t0 + "+1") || t2.equals(t0 + "+SIZEOF_CHAR") || t2.equals(t0 + "+$1");
    }
 

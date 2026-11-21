@@ -511,17 +511,8 @@ public class Compiler {
       loopUnrolling.add(() -> {
          program.clearVariableReferenceInfos();
          program.clearControlFlowBlockSuccessorClosure();
-         return false;
-      });
-      loopUnrolling.add(() -> {
          program.clearStatementInfos();
-         return false;
-      });
-      loopUnrolling.add(() -> {
          program.clearDominators();
-         return false;
-      });
-      loopUnrolling.add(() -> {
          program.clearLoopSet();
          return false;
       });
@@ -686,7 +677,6 @@ public class Compiler {
       program.clearStatementInfos();
       program.clearVariableReferenceInfos();
       program.clearControlFlowBlockSuccessorClosure();
-      pass2AssertSSA();
 
       // Phi mem coalesce removes as many variables introduced by phi lifting as possible - as long as their live ranges do not overlap
       CompilerProgress.status("Pass 3 (CFG & Live Ranges): Phi memory coalesce...");
@@ -712,7 +702,6 @@ public class Compiler {
       }
       new PassNBlockSequencePlanner(program).step();
       new Pass3AddNopBeforeCallOns(program).generate();
-      new PassNStatementIndices(program).execute();
 
       program.clearCallGraph();
       program.clearStatementIndices();
@@ -885,13 +874,11 @@ public class Compiler {
    }
 
    private int pass5GenerateAndOptimizeAsm() {
-      long t0 = System.currentTimeMillis();
       if(getLog().isSysOut() || getLog().isVerboseAsmOptimize()) {
          getLog().append("\nASSEMBLER BEFORE OPTIMIZATION");
          getLog().append(program.getAsm().toString(new AsmProgram.AsmPrintState(true), program));
          getLog().append("ASSEMBLER OPTIMIZATIONS");
       }
-      long tLogBefore = System.currentTimeMillis() - t0;
 
       long tOptStart = System.currentTimeMillis();
       List<Pass5AsmOptimization> pass5Optimizations = new ArrayList<>();
@@ -982,7 +969,6 @@ public class Compiler {
          System.out.println(String.format("   [PASS5] Fix Long Branches:            %6.2f s", tBranchElapsed / 1000.0));
       }
 
-      long tLogAfterStart = System.currentTimeMillis();
       if(getLog().isSysOut() || getLog().isVerboseAsmOptimize()) {
          getLog().append("\nFINAL SYMBOL TABLE");
          getLog().append(program.getScope().toStringVars(program, false));

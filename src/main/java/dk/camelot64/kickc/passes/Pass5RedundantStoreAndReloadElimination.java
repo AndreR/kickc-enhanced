@@ -20,6 +20,8 @@ import java.util.*;
  */
 public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimization {
 
+   private static final java.util.regex.Pattern WHITESPACE_PATTERN = java.util.regex.Pattern.compile("\\s+");
+
 
 
    public Pass5RedundantStoreAndReloadElimination(Program program) {
@@ -82,7 +84,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
          return resolveAlias(trimmed, scopeAliases, globalAliases);
       } else {
          String base = trimmed.substring(0, splitIdx).trim();
-         String suffix = trimmed.substring(splitIdx).replaceAll("\\s+", "");
+         String suffix = WHITESPACE_PATTERN.matcher(trimmed.substring(splitIdx)).replaceAll("");
          return resolveAlias(base, scopeAliases, globalAliases) + suffix;
       }
    }

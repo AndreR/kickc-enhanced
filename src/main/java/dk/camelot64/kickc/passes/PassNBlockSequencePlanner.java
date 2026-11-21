@@ -34,18 +34,19 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
       }
 
       List<LabelRef> sequence = new ArrayList<>();
+      Set<LabelRef> visited = new HashSet<>();
       while(hasTodo()) {
          Graph.Block block = popTodo();
          if(block == null) {
             break;
          }
-         if(sequence.contains(block.getLabel())) {
+         if(!visited.add(block.getLabel())) {
             // already handled - move on
             continue;
          }
          sequence.add(block.getLabel());
          if(block.getCallSuccessor() != null) {
-            pushCallTodo(getGraph().getCallSuccessor(block));
+            pushCallTodo(blockCache.get(block.getCallSuccessor()));
          }
          Graph.Block conditionalSuccessor = getConditionalSuccessorFast(block);
          Graph.Block defaultSuccessor = getDefaultSuccessorFast(block);
@@ -98,22 +99,23 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
          throw new CompileError("ERROR! Sequence does not contain all blocks from the program. Sequence: " + sequence.size() + " Blocks: " + getGraph().getAllBlocks().size());
       }
 
-      // First re-order the procedureCompilations
-      List<ProcedureCompilation> updatedProgramSequence = new ArrayList<>();
+      // First re-order the procedureCompilations and group blocks in a single O(B) pass
+      Set<ProcedureCompilation> updatedProgramSet = new LinkedHashSet<>();
+      Map<ProcedureCompilation, List<Graph.Block>> procBlocks = new LinkedHashMap<>();
       for(LabelRef labelRef : sequence) {
          final Procedure procedure = getProgramScope().getSymbol(labelRef).getContainingProcedure();
          final ProcedureCompilation procedureCompilation = getProgram().getProcedureCompilation(procedure.getRef());
-         if(!updatedProgramSequence.contains(procedureCompilation)) {
-            updatedProgramSequence.add(procedureCompilation);
-         }
+         updatedProgramSet.add(procedureCompilation);
+         procBlocks.computeIfAbsent(procedureCompilation, k -> new ArrayList<>())
+               .add(procedureCompilation.getGraph().getBlock(labelRef));
       }
+      List<ProcedureCompilation> updatedProgramSequence = new ArrayList<>(updatedProgramSet);
       getProgram().setProcedureCompilations(updatedProgramSequence);
 
       // Now re-order the blocks for each procedure
-      for(var procedureCompilation : getProgram().getProcedureCompilations()) {
+      for(var procedureCompilation : updatedProgramSequence) {
          final ControlFlowGraph procedureGraph = procedureCompilation.getGraph();
-         final List<LabelRef> procedureLabels = procedureGraph.getAllBlocks().stream().map(Graph.Block::getLabel).toList();
-         final List<Graph.Block> updatedProcedureSequence = sequence.stream().filter(procedureLabels::contains).map(procedureGraph::getBlock).toList();
+         final List<Graph.Block> updatedProcedureSequence = procBlocks.getOrDefault(procedureCompilation, Collections.emptyList());
          if(updatedProcedureSequence.size() != procedureGraph.getAllBlocks().size()) {
             throw new CompileError("ERROR! Sequence does not contain all blocks for "+procedureCompilation.getProcedureRef()+". Sequence: " + updatedProcedureSequence.size() + " Blocks: " + procedureGraph.getAllBlocks().size());
          }

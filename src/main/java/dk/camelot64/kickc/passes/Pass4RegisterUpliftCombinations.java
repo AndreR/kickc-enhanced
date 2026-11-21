@@ -176,13 +176,8 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          cache = new CachedBlockScores();
          cache.init(program);
       }
-      long tBlk = System.nanoTime();
       Set<Graph.Block> blocksToRegenerate = getBlocksToRegenerate(program, scope, combinationIterator.getEquivalenceClasses());
-      long tBlkEnd = System.nanoTime();
       int outsideScore = cache.getOutsideScore(blocksToRegenerate);
-      long tOutEnd = System.nanoTime();
-      timeBlocksNs += (tBlkEnd - tBlk);
-      timeOutsideNs += (tOutEnd - tBlkEnd);
 
       List<RegisterCombination> combinationsToTest = new ArrayList<>();
       while(combinationIterator.hasNext() && combinationsToTest.size() < maxCombinations) {
@@ -232,9 +227,7 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          bestCombination.allocate(program);
          if(program.getLiveRangeInterference() != null) program.getLiveRangeInterference().updateCombination(bestCombination);
          program.getLog().append("Uplifting [" + scope + "] best " + bestScore + " combination " + bestCombination.toString());
-         long tUp = System.nanoTime();
          cache.updateBlocks(blocksToRegenerate, program);
-         timeUpdateNs += (System.nanoTime() - tUp);
       }
       if(combinationIterator.hasNext()) {
          program.getLog().append("Limited combination testing to " + countCombinations + " combinations of " + combinationIterator.getNumIterations() + " possible.");
@@ -257,15 +250,7 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       public volatile Map<dk.camelot64.kickc.model.values.LabelRef, Graph.Block> blocksByLabel;
    }
 
-   public static long timeOverlapNs = 0;
-   public static long timeCodeGenNs = 0;
-   public static long timeClobberNs = 0;
    public static final AtomicLong countAttempts = new AtomicLong(0);
-   public static long timeBlocksNs = 0;
-   public static long timeIteratorNs = 0;
-   public static long timeScoreNs = 0;
-   public static long timeUpdateNs = 0;
-   public static long timeOutsideNs = 0;
 
    public static boolean generateCombinationAsm(
          RegisterCombination combination,
@@ -601,8 +586,7 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          }
       }
       if(getLog().isVerboseUplift()) {
-         System.out.printf("      [Uplift Breakdown] %d attempts: blks=%.2fs, outScore=%.2fs, iter=%.2fs, overlap=%.2fs, codegen=%.2fs, clobber=%.2fs, score=%.2fs, update=%.2fs%n",
-               countAttempts.get(), timeBlocksNs/1e9, timeOutsideNs/1e9, timeIteratorNs/1e9, timeOverlapNs/1e9, timeCodeGenNs/1e9, timeClobberNs/1e9, timeScoreNs/1e9, timeUpdateNs/1e9);
+         System.out.printf("      [Uplift Breakdown] %d attempts%n", countAttempts.get());
       }
       return cache;
    }

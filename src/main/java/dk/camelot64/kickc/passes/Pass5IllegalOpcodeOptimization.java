@@ -321,7 +321,6 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                      instE.getCpuOpcode() != null) {
 
                      Map<String, String> aliases = scopeAliasMap.get(currentScope);
-                     String base1 = getBaseVar(inst1.getOperand1());
                      String baseA = getBaseVar(instA.getOperand1());
                      String baseC = getBaseVar(instC.getOperand1());
                      String baseD = getBaseVar(instD.getOperand1());

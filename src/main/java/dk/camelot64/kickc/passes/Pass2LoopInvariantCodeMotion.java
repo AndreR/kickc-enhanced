@@ -94,8 +94,7 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
       if(op == null) {
          return false;
       }
-      if(op != null) {
-         if(Operators.DIVIDE.equals(op) || Operators.MODULO.equals(op)) {
+      if(Operators.DIVIDE.equals(op) || Operators.MODULO.equals(op)) {
             // Only safe if divisor is a non-zero constant
             if(assignment.getrValue2() instanceof ConstantInteger) {
                Long divVal = ((ConstantInteger) assignment.getrValue2()).getInteger();
@@ -121,7 +120,6 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
                    !Operators.WORD1.equals(op)) {
             return false;
          }
-      }
 
       // Check for volatile or memory reads
       if(isVolatile(assignment)) return false;
@@ -172,23 +170,16 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
             if(stmt instanceof StatementAssignment) {
                LValue lVal = ((StatementAssignment) stmt).getlValue();
                if(varRef.equals(lVal)) return true;
-            } else if(stmt instanceof dk.camelot64.kickc.model.statements.StatementCall) {
-               ProcedureRef callee = ((dk.camelot64.kickc.model.statements.StatementCall) stmt).getProcedure();
-               if(varRef.getFullName().startsWith(callee.getFullName() + "::")) return true;
-               if(procModVars != null) {
-                  Set<VariableRef> mods = procModVars.getModifiedVars(callee);
-                  if(mods != null && mods.contains(varRef)) return true;
-               } else {
-                  return true;
-               }
-            } else if(stmt instanceof dk.camelot64.kickc.model.statements.StatementCallExecute) {
-               ProcedureRef callee = ((dk.camelot64.kickc.model.statements.StatementCallExecute) stmt).getProcedure();
-               if(varRef.getFullName().startsWith(callee.getFullName() + "::")) return true;
-               if(procModVars != null) {
-                  Set<VariableRef> mods = procModVars.getModifiedVars(callee);
-                  if(mods != null && mods.contains(varRef)) return true;
-               } else {
-                  return true;
+            } else if(stmt instanceof dk.camelot64.kickc.model.statements.StatementCalling calling) {
+               ProcedureRef callee = calling.getProcedure();
+               if(callee != null) {
+                  if(varRef.getFullName().startsWith(callee.getFullName() + "::")) return true;
+                  if(procModVars != null) {
+                     Set<VariableRef> mods = procModVars.getModifiedVars(callee);
+                     if(mods != null && mods.contains(varRef)) return true;
+                  } else {
+                     return true;
+                  }
                }
             } else if(stmt instanceof dk.camelot64.kickc.model.statements.StatementAsm) {
                return true; // Inline assembly might modify memory
@@ -242,7 +233,7 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
       AtomicBoolean isVol = new AtomicBoolean(false);
       ProgramValueIterator.execute(statement, (programValue, currentStmt, stmtIt, currentBlock) -> {
          Value val = programValue.get();
-         if(val instanceof PointerDereference || val instanceof PointerDereferenceIndexed) {
+         if(val instanceof PointerDereference) {
             isVol.set(true);
          }
          if(val instanceof VariableRef) {

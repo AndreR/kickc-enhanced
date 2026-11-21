@@ -63,70 +63,29 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
    }
 
    private Procedure getOrCreateHelperProcedure16uDiv(long constant) {
-      String procName = "__div16u_const_" + constant;
-      Procedure existing = getProgramScope().getLocalProcedure(procName);
-      if(existing != null) return existing;
-
-      Procedure procedure = new Procedure(procName,
-            new SymbolTypeProcedure(SymbolType.WORD, Collections.singletonList(SymbolType.WORD)),
-            getProgramScope(), Scope.SEGMENT_CODE_DEFAULT, Scope.SEGMENT_DATA_DEFAULT,
-            Procedure.CallingConvention.PHI_CALL, Bank.COMMON);
-
-      Variable param = new Variable("val", Variable.Kind.PHI_MASTER, SymbolType.WORD, procedure,
-            Variable.MemoryArea.MAIN_MEMORY, Scope.SEGMENT_DATA_DEFAULT, null);
-      procedure.add(param);
-      procedure.setParameters(Collections.singletonList(param));
-
-      Variable returnVar = new Variable("return", Variable.Kind.PHI_MASTER, SymbolType.WORD, procedure,
-            Variable.MemoryArea.MAIN_MEMORY, Scope.SEGMENT_DATA_DEFAULT, null);
-      procedure.add(returnVar);
-
-      getProgramScope().add(procedure);
-
-      ProcedureCompilation pc = getProgram().createProcedureCompilation(procedure.getRef());
-
-      Label procExit = procedure.addLabel(SymbolRef.PROCEXIT_BLOCK_NAME);
-      Graph.Block procBlock = new ControlFlowBlock(procedure.getLabel().getRef(), procedure.getRef());
-
-      StatementAssignment assign = new StatementAssignment(
-            (LValue) returnVar.getRef(),
-            param.getRef(),
-            Operators.DIVIDE,
-            new ConstantInteger(constant, SymbolType.WORD),
-            true, StatementSource.NONE, Comment.NO_COMMENTS);
-      procBlock.addStatement(assign);
-      procBlock.setDefaultSuccessor(procExit.getRef());
-
-      Graph.Block returnBlock = new ControlFlowBlock(procExit.getRef(), procedure.getRef());
-      returnBlock.addStatement(new StatementAssignment(returnVar.getVariableRef(), returnVar.getRef(), false, StatementSource.NONE, Comment.NO_COMMENTS));
-      returnBlock.addStatement(new StatementReturn(returnVar.getRef(), StatementSource.NONE, Comment.NO_COMMENTS));
-
-      List<Graph.Block> blocks = new ArrayList<>();
-      blocks.add(procBlock);
-      blocks.add(returnBlock);
-
-      ControlFlowGraph cfg = new ControlFlowGraph(blocks);
-      pc.setGraph(cfg);
-
-      return procedure;
+      return getOrCreateHelperProcedureDiv(constant, SymbolType.WORD, "__div16u_const_");
    }
 
    private Procedure getOrCreateHelperProcedure8uDiv(long constant) {
-      String procName = "__div8u_const_" + constant;
+      return getOrCreateHelperProcedureDiv(constant, SymbolType.BYTE, "__div8u_const_");
+   }
+
+   private Procedure getOrCreateHelperProcedureDiv(long constant, SymbolType type, String prefix) {
+      String procName = prefix + constant;
       Procedure existing = getProgramScope().getLocalProcedure(procName);
       if(existing != null) return existing;
 
       Procedure procedure = new Procedure(procName,
-            new SymbolTypeProcedure(SymbolType.BYTE, Collections.singletonList(SymbolType.BYTE)),
+            new SymbolTypeProcedure(type, Collections.singletonList(type)),
             getProgramScope(), Scope.SEGMENT_CODE_DEFAULT, Scope.SEGMENT_DATA_DEFAULT,
             Procedure.CallingConvention.PHI_CALL, Bank.COMMON);
 
-      Variable param = new Variable("val", Variable.Kind.PHI_MASTER, SymbolType.BYTE, procedure,
+      Variable param = new Variable("val", Variable.Kind.PHI_MASTER, type, procedure,
             Variable.MemoryArea.MAIN_MEMORY, Scope.SEGMENT_DATA_DEFAULT, null);
       procedure.add(param);
       procedure.setParameters(Collections.singletonList(param));
 
-      Variable returnVar = new Variable("return", Variable.Kind.PHI_MASTER, SymbolType.BYTE, procedure,
+      Variable returnVar = new Variable("return", Variable.Kind.PHI_MASTER, type, procedure,
             Variable.MemoryArea.MAIN_MEMORY, Scope.SEGMENT_DATA_DEFAULT, null);
       procedure.add(returnVar);
 
@@ -141,7 +100,7 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
             (LValue) returnVar.getRef(),
             param.getRef(),
             Operators.DIVIDE,
-            new ConstantInteger(constant, SymbolType.BYTE),
+            new ConstantInteger(constant, type),
             true, StatementSource.NONE, Comment.NO_COMMENTS);
       procBlock.addStatement(assign);
       procBlock.setDefaultSuccessor(procExit.getRef());
@@ -179,9 +138,6 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
             if(statement instanceof StatementAssignment assign) {
                Operator op = assign.getOperator();
                if(Operators.DIVIDE.equals(op) && assign.getrValue2() instanceof ConstantInteger constInt) {
-                  long c = constInt.getInteger();
-                  divConstCounts.put(c, divConstCounts.getOrDefault(c, 0) + 1);
-               } else if(Operators.MODULO.equals(op) && assign.getrValue2() instanceof ConstantInteger constInt) {
                   long c = constInt.getInteger();
                   divConstCounts.put(c, divConstCounts.getOrDefault(c, 0) + 1);
                } else if(Operators.MULTIPLY.equals(op) && assign.getrValue2() instanceof ConstantInteger constInt) {

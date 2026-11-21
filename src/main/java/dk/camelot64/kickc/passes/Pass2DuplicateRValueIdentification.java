@@ -2,7 +2,6 @@ package dk.camelot64.kickc.passes;
 
 import dk.camelot64.kickc.model.*;
 import dk.camelot64.kickc.model.iterator.ProgramValue;
-import dk.camelot64.kickc.model.iterator.ProgramValueHandler;
 import dk.camelot64.kickc.model.iterator.ProgramValueIterator;
 import dk.camelot64.kickc.model.operators.Operator;
 import dk.camelot64.kickc.model.operators.OperatorCast;
@@ -14,9 +13,8 @@ import dk.camelot64.kickc.model.types.SymbolType;
 import dk.camelot64.kickc.model.types.SymbolTypeInference;
 import dk.camelot64.kickc.model.values.*;
 
-import java.lang.InternalError;
+import dk.camelot64.kickc.model.InternalError;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Compiler Pass identifying R-values that are duplicates of each other - and consolidates them to a single RValue.
@@ -386,8 +384,11 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
       // Collect all blocks in the procedure that write to any operand
       ScopeRef scope = first.block.getScope();
       Set<LabelRef> writeBlocks = new HashSet<>();
-      for(Graph.Block b : getGraph().getAllBlocks()) {
-         if(scope.equals(b.getScope()) && !b.equals(first.block) && !b.equals(second.block)) {
+      List<Graph.Block> procBlocks = (scope instanceof ProcedureRef procRef)
+            ? getProgram().getProcedureCompilation(procRef).getGraph().getAllBlocks()
+            : getGraph().getScopeBlocks(scope);
+      for(Graph.Block b : procBlocks) {
+         if(!b.equals(first.block) && !b.equals(second.block)) {
             for(Statement s : b.getStatements()) {
                if(s instanceof StatementAssignment sa) {
                   if(sa.getlValue() instanceof VariableRef vr && operands.contains(vr)) {

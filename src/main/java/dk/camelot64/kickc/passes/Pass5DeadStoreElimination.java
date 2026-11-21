@@ -18,6 +18,9 @@ import java.util.*;
  */
 public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
 
+   private static final java.util.regex.Pattern SSA_TEMP_PATTERN = java.util.regex.Pattern.compile("__\\d+");
+   private static final java.util.regex.Pattern DIGITS_PATTERN = java.util.regex.Pattern.compile("\\d+");
+
    private static class LineRef {
       final AsmChunk chunk;
       final AsmLine line;
@@ -65,7 +68,7 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
       if(dotIdx != -1) {
          base = base.substring(dotIdx + 1);
       }
-      return base.matches("__\\d+");
+      return SSA_TEMP_PATTERN.matcher(base).matches();
    }
 
    private static boolean doesInstructionModifyA(AsmInstruction inst) {
@@ -285,7 +288,7 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
             return Integer.parseInt(t.substring(1), 16);
          } else if(t.startsWith("0x") || t.startsWith("0X")) {
             return Integer.parseInt(t.substring(2), 16);
-         } else if(t.matches("\\d+")) {
+         } else if(DIGITS_PATTERN.matcher(t).matches()) {
             return Integer.parseInt(t);
          }
       } catch(Exception e) {}
@@ -418,7 +421,6 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
             // Must be __\d+, must map to a raw hardware address ($xx or decimal),
             // must NOT collide with any global/parameter address, and must uniquely own that hardware address in this scope!
             Set<String> ssaCandidates = new LinkedHashSet<>();
-            Map<String, String> candToAddress = new LinkedHashMap<>();
 
             for(Map.Entry<String, String> entryVal : labelToVal.entrySet()) {
                String name = entryVal.getKey();
@@ -428,7 +430,6 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                   boolean isRawAddress = addr != null;
                   if(isRawAddress && !protectedAddrs.contains(addr) && valToLabels.containsKey(val) && valToLabels.get(val).size() == 1) {
                      ssaCandidates.add(name);
-                     candToAddress.put(name, val.toLowerCase());
                   }
                }
             }
