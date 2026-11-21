@@ -892,6 +892,16 @@ public class AsmFragmentTemplateSynthesisRuleRegexManager {
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vd[su]..)=(vd[su]..)_(plus|minus)_(vd[su]..)", null, null, "$1=$2_$3_$4", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vbu..)=_(lo|hi)_vws(z[0-9]|c[0-9]|m[0-9])", null, null, "$1=_$2_vwu$3", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vb[su]..)=_byte([0-3])_v([wtd])s(z[0-9]|c[0-9]|m[0-9])", null, null, "$1=_byte$2_v$3u$4", null, mapSToU));
+       // GEN-02: Little-endian low-byte extraction: _byte_/_byte0_/_sbyte_ on multi-byte memory/ZP values maps directly to the byte at the base address
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vb[su]..)=_neg__(s?byte)_v([wtd])s([zm][1-4])", null, null, "$1=_neg__$2_v$3u$4", null, null));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)_(?:byte|byte0)_v[wtd][su]([zm])1(.*)", twoZM1, null, "$1vbu$21$3", null, null));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)_(?:byte|byte0)_v[wtd][su]([zm])2(.*)", twoZM2, null, "$1vbu$22$3", null, null));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)_(?:byte|byte0)_v[wtd][su]([zm])3(.*)", twoZM3, null, "$1vbu$23$3", null, null));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)_(?:byte|byte0)_v[wtd][su]([zm])4(.*)", twoZM4, null, "$1vbu$24$3", null, null));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)_sbyte_v[wtd][su]([zm])1(.*)", twoZM1, null, "$1vbs$21$3", null, null));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)_sbyte_v[wtd][su]([zm])2(.*)", twoZM2, null, "$1vbs$22$3", null, null));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)_sbyte_v[wtd][su]([zm])3(.*)", twoZM3, null, "$1vbs$23$3", null, null));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)_sbyte_v[wtd][su]([zm])4(.*)", twoZM4, null, "$1vbs$24$3", null, null));
 
        // Use Z1/Z2 ASM to synthesize Z1-only code ( ...z1...z1... -> ...z1...z2... )
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(v..[zm])1=(v..[zm])1_(plus|minus|band|bxor|bor)_(.*)", oneZM2, null, "$11=$22_$3_$4", null, mapZM1, false));

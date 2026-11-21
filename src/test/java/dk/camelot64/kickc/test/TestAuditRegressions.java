@@ -474,4 +474,43 @@ public class TestAuditRegressions {
       assertTrue(asm.contains("$12c") || asm.contains("300"),
             "200 + 100 must evaluate to 300 ($12c), not truncated 44! ASM:\n" + asm);
    }
+
+   @Test
+   void testNegByteOfMultiByteAndLittleEndianExtractionSynthesis() throws Exception {
+      String code = """
+            #include <stdint.h>
+            volatile uint8_t out_split;
+            volatile uint8_t out_bnot;
+            volatile int8_t out_sneg;
+            volatile uint8_t out_dneg;
+            volatile uint16_t in_w;
+            volatile int16_t in_sw;
+            volatile uint32_t in_d;
+            volatile char *in_ptr;
+
+            void test_ptr_split(char *ptr) {
+                if (ptr > (char *)(0xA000 - 40)) {
+                    uint8_t split = (uint8_t)(0xA000 - (uint16_t)ptr);
+                    out_split = split;
+                }
+            }
+
+            void main(void) {
+                test_ptr_split(in_ptr);
+                test_ptr_split((char *)0x9FE0);
+                uint16_t w = in_w;
+                int16_t sw = in_sw;
+                uint32_t d = in_d;
+                out_bnot = ~(uint8_t)w;
+                out_sneg = -(int8_t)sw;
+                out_dneg = (uint8_t)(0x100u - (uint32_t)d);
+            }
+            """;
+      Program program = compileC(code);
+      String asm = program.getAsm().toString();
+      assertTrue(asm.contains("sbc") && asm.contains("out_split") && asm.contains("out_sneg") && asm.contains("out_dneg"),
+            "GEN-02: _neg__byte_vwu/vdu and _neg__sbyte_vws must synthesize cleanly with optimal sec/lda #0/sbc! ASM:\n" + asm);
+      assertTrue(asm.contains("eor #$ff") && asm.contains("out_bnot"),
+            "GEN-02: General little-endian low-byte extraction must synthesize ~(uint8_t)w cleanly! ASM:\n" + asm);
+   }
 }

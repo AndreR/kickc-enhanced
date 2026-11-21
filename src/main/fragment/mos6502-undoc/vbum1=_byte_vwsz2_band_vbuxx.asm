@@ -1,2 +1,2 @@
-lda {m2}
+lda {z2}
 sax {m1}
