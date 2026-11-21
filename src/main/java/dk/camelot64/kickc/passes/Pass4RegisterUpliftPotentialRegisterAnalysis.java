@@ -57,6 +57,8 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
       }
    }
 
+   private Set<LiveRangeEquivalenceClass> dirtyClasses = null;
+
    /***
     * For each statement - try out all potential register combinations and examine the clobber
     *
@@ -65,6 +67,7 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
    public boolean findPotentialRegisters() {
 
       boolean modified = false;
+      Set<LiveRangeEquivalenceClass> nextDirtyClasses = new HashSet<>();
       LiveRangeEquivalenceClassSet liveRangeEquivalenceClassSet = getProgram().getLiveRangeEquivalenceClassSet();
 
       RegisterPotentials registerPotentials = getProgram().getRegisterPotentials();
@@ -83,8 +86,16 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
                assignedClasses.add(liveRangeEquivalenceClassSet.getEquivalenceClass(var));
             }
             Set<LiveRangeEquivalenceClass> referencedClasses = new LinkedHashSet<>();
+            boolean touchesDirty = (dirtyClasses == null);
             for(VariableRef var : referencedVars) {
-               referencedClasses.add(liveRangeEquivalenceClassSet.getEquivalenceClass(var));
+               LiveRangeEquivalenceClass ec = liveRangeEquivalenceClassSet.getEquivalenceClass(var);
+               referencedClasses.add(ec);
+               if(!touchesDirty && dirtyClasses.contains(ec)) {
+                  touchesDirty = true;
+               }
+            }
+            if(!touchesDirty) {
+               continue;
             }
 
             // Generate all combinations of potential register allocations for the referenced equivalence classes
@@ -122,6 +133,7 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
                      StringBuilder msg = new StringBuilder();
                      msg.append("Removing always clobbered register " + clobberedRegister + " as potential for " + aliveClass);
                      getLog().append(msg.toString());
+                     nextDirtyClasses.add(aliveClass);
                      modified = true;
                   }
                }
@@ -129,6 +141,7 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
          }
       }
 
+      dirtyClasses = nextDirtyClasses;
       getProgram().setRegisterPotentials(registerPotentials);
 
       return modified;

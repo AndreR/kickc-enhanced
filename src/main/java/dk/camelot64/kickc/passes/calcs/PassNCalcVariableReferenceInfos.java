@@ -29,31 +29,31 @@ public class PassNCalcVariableReferenceInfos extends PassNCalcBase<VariableRefer
       Map<Integer, Collection<VariableReferenceInfos.ReferenceToSymbolVar>> statementVarReferences = new LinkedHashMap<>();
 
       for(var block : getProgram().getGraph().getAllBlocks()) {
-         blockVarReferences.putIfAbsent(block.getLabel(), new ArrayList<>());
-         Collection<VariableReferenceInfos.ReferenceToSymbolVar> blockSymbols = blockVarReferences.get(block.getLabel());
+         Collection<VariableReferenceInfos.ReferenceToSymbolVar> blockSymbols =
+               blockVarReferences.computeIfAbsent(block.getLabel(), k -> new LinkedHashSet<>());
          for(Statement statement : block.getStatements()) {
             Collection<SymbolVariableRef> stmtUsedVars = getUsedVars(statement);
             Collection<VariableRef> stmtDefinedVars = getDefinedVars(statement);
             // Add variable definitions to the statement
-            statementVarReferences.putIfAbsent(statement.getIndex(), new ArrayList<>());
-            Collection<VariableReferenceInfos.ReferenceToSymbolVar> stmtSymbols = statementVarReferences.get(statement.getIndex());
+            Collection<VariableReferenceInfos.ReferenceToSymbolVar> stmtSymbols =
+                  statementVarReferences.computeIfAbsent(statement.getIndex(), k -> new ArrayList<>());
             // Identify statement defining variables
             for(VariableRef variableRef : stmtDefinedVars) {
-               symbolVarReferences.putIfAbsent(variableRef, new ArrayList<>());
-               Collection<VariableReferenceInfos.ReferenceToSymbolVar> varReferences = symbolVarReferences.get(variableRef);
+               Collection<VariableReferenceInfos.ReferenceToSymbolVar> varReferences =
+                     symbolVarReferences.computeIfAbsent(variableRef, k -> new ArrayList<>());
                VariableReferenceInfos.ReferenceInStatement referenceInStmt = new VariableReferenceInfos.ReferenceInStatement(statement.getIndex(), VariableReferenceInfos.ReferenceToSymbolVar.ReferenceType.DEFINE, variableRef);
                varReferences.add(referenceInStmt);
                stmtSymbols.add(referenceInStmt);
-               if(!blockSymbols.contains(referenceInStmt)) blockSymbols.add(referenceInStmt);
+               blockSymbols.add(referenceInStmt);
             }
             // Gather statements referencing variables/constants
             for(SymbolVariableRef referencedVarRef : stmtUsedVars) {
-               symbolVarReferences.putIfAbsent(referencedVarRef, new ArrayList<>());
-               Collection<VariableReferenceInfos.ReferenceToSymbolVar> references = symbolVarReferences.get(referencedVarRef);
+               Collection<VariableReferenceInfos.ReferenceToSymbolVar> references =
+                     symbolVarReferences.computeIfAbsent(referencedVarRef, k -> new ArrayList<>());
                VariableReferenceInfos.ReferenceInStatement referenceInStmt = new VariableReferenceInfos.ReferenceInStatement(statement.getIndex(), VariableReferenceInfos.ReferenceToSymbolVar.ReferenceType.USE, referencedVarRef);
                references.add(referenceInStmt);
                stmtSymbols.add(referenceInStmt);
-               if(!blockSymbols.contains(referenceInStmt)) blockSymbols.add(referenceInStmt);
+               blockSymbols.add(referenceInStmt);
             }
          }
       }
@@ -66,18 +66,19 @@ public class PassNCalcVariableReferenceInfos extends PassNCalcBase<VariableRefer
                   Value rValue = programValue.get();
                   if(rValue instanceof SymbolVariableRef) {
                      SymbolVariableRef referencedVar = (SymbolVariableRef) rValue;
-                     symbolVarReferences.putIfAbsent(referencedVar, new ArrayList<>());
-                     Collection<VariableReferenceInfos.ReferenceToSymbolVar> references = symbolVarReferences.get(referencedVar);
+                     Collection<VariableReferenceInfos.ReferenceToSymbolVar> references =
+                           symbolVarReferences.computeIfAbsent(referencedVar, k -> new ArrayList<>());
                      references.add(new VariableReferenceInfos.ReferenceInSymbol((SymbolVariableRef) referencingVar.getRef(), VariableReferenceInfos.ReferenceToSymbolVar.ReferenceType.USE, referencedVar));
                   }
                });
       }
       // Gather symbols referenced in static assertions
       for(StaticAssert staticAssert : getProgram().getStaticAsserts()) {
-         Collection<SymbolVariableRef> referencedInAssert = getReferenced(staticAssert.getCondition());
+         Collection<SymbolVariableRef> referencedInAssert = new LinkedHashSet<>();
+         collectReferenced(staticAssert.getCondition(), referencedInAssert);
          for(SymbolVariableRef ref : referencedInAssert) {
-            symbolVarReferences.putIfAbsent(ref, new ArrayList<>());
-            Collection<VariableReferenceInfos.ReferenceToSymbolVar> references = symbolVarReferences.get(ref);
+            Collection<VariableReferenceInfos.ReferenceToSymbolVar> references =
+                  symbolVarReferences.computeIfAbsent(ref, k -> new ArrayList<>());
             references.add(new VariableReferenceInfos.ReferenceInSymbol(ref, VariableReferenceInfos.ReferenceToSymbolVar.ReferenceType.USE, ref));
          }
       }
@@ -102,25 +103,25 @@ public class PassNCalcVariableReferenceInfos extends PassNCalcBase<VariableRefer
                root = ((StructMemberRef) root).getStruct();
             }
             if(!(root instanceof VariableRef)) {
-               usedVars.addAll(getReferenced(root));
+               collectReferenced(root, usedVars);
             }
          } else if(!(lValue instanceof VariableRef)) {
             // No assignments - find all vars referenced
-            usedVars.addAll(getReferenced(lValue));
+            collectReferenced(lValue, usedVars);
          }
          if(statementLValue instanceof StatementAssignment) {
-            usedVars.addAll(getReferenced(((StatementAssignment) statementLValue).getrValue1()));
-            usedVars.addAll(getReferenced(((StatementAssignment) statementLValue).getrValue2()));
+            collectReferenced(((StatementAssignment) statementLValue).getrValue1(), usedVars);
+            collectReferenced(((StatementAssignment) statementLValue).getrValue2(), usedVars);
          } else if(statementLValue instanceof StatementCall) {
             if(((StatementCall) statement).getParameters() != null)
                for(RValue parameter : ((StatementCall) statementLValue).getParameters()) {
-                  usedVars.addAll(getReferenced(parameter));
+                  collectReferenced(parameter, usedVars);
                }
          } else if(statementLValue instanceof StatementCallPointer) {
-            usedVars.addAll(getReferenced(((StatementCallPointer) statementLValue).getProcedure()));
+            collectReferenced(((StatementCallPointer) statementLValue).getProcedure(), usedVars);
             if(((StatementCallPointer) statement).getParameters() != null)
                for(RValue parameter : ((StatementCallPointer) statementLValue).getParameters()) {
-                  usedVars.addAll(getReferenced(parameter));
+                  collectReferenced(parameter, usedVars);
                }
          } else if(statementLValue instanceof StatementCallFinalize) {
             // No vars
@@ -130,7 +131,7 @@ public class PassNCalcVariableReferenceInfos extends PassNCalcBase<VariableRefer
       } else if(statement instanceof StatementPhiBlock) {
          for(StatementPhiBlock.PhiVariable phiVariable : ((StatementPhiBlock) statement).getPhiVariables()) {
             for(StatementPhiBlock.PhiRValue value : phiVariable.getValues()) {
-               usedVars.addAll(getReferenced(value.getrValue()));
+               collectReferenced(value.getrValue(), usedVars);
             }
          }
       } else {
@@ -185,13 +186,22 @@ public class PassNCalcVariableReferenceInfos extends PassNCalcBase<VariableRefer
     */
    private static Collection<SymbolVariableRef> getReferenced(RValue rValue) {
       Collection<SymbolVariableRef> referenced = new LinkedHashSet<>();
-      if(rValue != null)
+      collectReferenced(rValue, referenced);
+      return referenced;
+   }
+
+   private static void collectReferenced(RValue rValue, Collection<SymbolVariableRef> referenced) {
+      if(rValue != null) {
+         if(rValue instanceof SymbolVariableRef) {
+            referenced.add((SymbolVariableRef) rValue);
+            return;
+         }
          ProgramValueIterator.execute(new ProgramValue.GenericValue(rValue), (programValue, currentStmt, stmtIt, currentBlock) -> {
             if(programValue.get() instanceof SymbolVariableRef) {
                referenced.add((SymbolVariableRef) programValue.get());
             }
          }, null, null, null);
-      return referenced;
+      }
    }
 
    /**

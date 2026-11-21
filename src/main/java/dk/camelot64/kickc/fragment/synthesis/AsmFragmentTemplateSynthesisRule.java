@@ -26,6 +26,16 @@ public interface AsmFragmentTemplateSynthesisRule {
     List<String> getSubSignatures(String signature);
 
     /**
+     * Match the signature and return sub-signatures in a single pass.
+     *
+     * @param signature The fragment template signature
+     * @return Sub-signatures if the rule matches, or null if it does not match.
+     */
+    default List<String> matchAndGetSubSignatures(String signature) {
+        return matches(signature) ? getSubSignatures(signature) : null;
+    }
+
+    /**
      * Synthesize a fragment template from a sub fragment template.
      *
      * @param signature   The signature to synthesize

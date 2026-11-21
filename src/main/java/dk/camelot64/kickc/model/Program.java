@@ -13,6 +13,7 @@ import dk.camelot64.kickc.model.values.StringEncoding;
 import dk.camelot64.kickc.passes.calcs.*;
 import dk.camelot64.kickc.passes.utils.ProcedureUtils;
 import dk.camelot64.kickc.passes.Pass2ConstantIdentification;
+import dk.camelot64.kickc.passes.Pass4RegisterUpliftCombinations;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -114,6 +115,9 @@ public class Program {
    /** Cached live range interference matrix. PASS 4 (CACHED ON-DEMAND) */
    private volatile LiveRangeInterference liveRangeInterference;
 
+   /** Per-program cache for Pass 4 register uplift analysis. */
+   private volatile Pass4RegisterUpliftCombinations.UpliftProgramCache upliftProgramCache;
+
    /** Custom string encodings registered for this program (via #pragma charmap). */
    private final Map<String, StringEncoding> customStringEncodings = new LinkedHashMap<>();
    /** Custom string encoding suffixes registered for this program. */
@@ -162,27 +166,43 @@ public class Program {
       this.registerUpliftProgram = null;
    }
 
+   private final Graph totalGraph = new Graph() {
+      @Override
+      public Block getBlock(LabelRef symbol) {
+         for(ProcedureCompilation pc : procedureCompilations) {
+            ControlFlowGraph g = pc.getGraph();
+            if(g != null) {
+               Block b = g.getBlock(symbol);
+               if(b != null) return b;
+            }
+         }
+         return null;
+      }
+
+      @Override
+      public List<Block> getAllBlocks() {
+         List<Block> all = new ArrayList<>();
+         for(ProcedureCompilation pc : procedureCompilations) {
+            ControlFlowGraph g = pc.getGraph();
+            if(g != null) {
+               all.addAll(g.getAllBlocks());
+            }
+         }
+         return Collections.unmodifiableList(all);
+      }
+
+      @Override
+      public void addBlock(Block block) {
+         throw new CompileError("Internal Error! Cannot add blocks to the read-only total control flow graph!");
+      }
+   };
+
    /**
     * Get a read-only control flow graph for the entire program.
     * @return The control flow graph
     */
    public Graph getGraph() {
-      return new Graph() {
-         @Override
-         public Block getBlock(LabelRef symbol) {
-            return getProcedureCompilations().stream().map(ProcedureCompilation::getGraph).filter(Objects::nonNull).map(graph -> graph.getBlock(symbol)).filter(Objects::nonNull).findFirst().orElse(null);
-         }
-
-         @Override
-         public List<Block> getAllBlocks() {
-            return getProcedureCompilations().stream().map(ProcedureCompilation::getGraph).filter(Objects::nonNull).map(ControlFlowGraph::getAllBlocks).flatMap(Collection::stream).toList();
-         }
-
-         @Override
-         public void addBlock(Block block) {
-            throw new CompileError("Internal Error! Cannot add blocks to the read-only total control flow graph!");
-         }
-      };
+      return totalGraph;
    }
 
    public List<ProcedureCompilation> getProcedureCompilations() {
@@ -641,6 +661,20 @@ public class Program {
 
    public void clearLiveRangeInterference() {
       this.liveRangeInterference = null;
+   }
+
+   public Pass4RegisterUpliftCombinations.UpliftProgramCache getUpliftProgramCache() {
+      Pass4RegisterUpliftCombinations.UpliftProgramCache result = upliftProgramCache;
+      if(result == null) {
+         synchronized(this) {
+            result = upliftProgramCache;
+            if(result == null) {
+               result = new Pass4RegisterUpliftCombinations.UpliftProgramCache();
+               upliftProgramCache = result;
+            }
+         }
+      }
+      return result;
    }
 
    public void registerCustomStringEncoding(StringEncoding encoding) {

@@ -10,6 +10,7 @@ import dk.camelot64.kickc.model.values.ScopeRef;
 import dk.camelot64.kickc.model.values.VariableRef;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 
 /*** Attempt to uplift live range equivalence classes to registers (instead of ZP) in each scope */
 public class Pass4RegisterUpliftCombinations extends Pass2Base {
@@ -114,7 +115,18 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          ScopeRef scope,
          Set<Graph.Block> blocksToRegenerate,
          int outsideScore) {
-      countAttempts++;
+      return evaluateCombination(combination, program, unknownFragments, scope, blocksToRegenerate, outsideScore, getLoopMultipliers(program));
+   }
+
+   public static UpliftTrialResult evaluateCombination(
+         RegisterCombination combination,
+         Program program,
+         Set<String> unknownFragments,
+         ScopeRef scope,
+         Set<Graph.Block> blocksToRegenerate,
+         int outsideScore,
+         Map<Integer, Double> multipliers) {
+      countAttempts.incrementAndGet();
       // Check the register allocation for whether any register is being allocated to two variables with overlapping live ranges
       if(isAllocationOverlapping(program, combination)) {
          return new UpliftTrialResult(combination, Integer.MAX_VALUE, false);
@@ -146,7 +158,7 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
             return new UpliftTrialResult(combination, Integer.MAX_VALUE, false);
          }
 
-         int combinationScore = outsideScore + getAsmScore(program, asm);
+         int combinationScore = outsideScore + getAsmScore(program, asm, multipliers);
          return new UpliftTrialResult(combination, combinationScore, true);
       } finally {
          Variable.setThreadAllocationOverride(null);
@@ -184,6 +196,7 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       RegisterCombination bestCombination = null;
 
       List<UpliftTrialResult> results;
+      Map<Integer, Double> multipliers = getLoopMultipliers(program);
       if(combinationsToTest.size() > 1) {
          // Pre-initialize lazy analyses on the main thread before parallel evaluation
          program.getLiveRangeInterference();
@@ -195,10 +208,10 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          program.getVariableReferenceInfos();
          program.getCallGraph();
          results = combinationsToTest.parallelStream()
-               .map(c -> evaluateCombination(c, program, unknownFragments, scope, blocksToRegenerate, outsideScore))
+               .map(c -> evaluateCombination(c, program, unknownFragments, scope, blocksToRegenerate, outsideScore, multipliers))
                .toList();
       } else {
-         results = Collections.singletonList(evaluateCombination(combinationsToTest.get(0), program, unknownFragments, scope, blocksToRegenerate, outsideScore));
+         results = Collections.singletonList(evaluateCombination(combinationsToTest.get(0), program, unknownFragments, scope, blocksToRegenerate, outsideScore, multipliers));
       }
 
       for(UpliftTrialResult res : results) {
@@ -236,10 +249,18 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       return generateCombinationAsm(combination, program, unknownFragments, scope, null, null);
    }
 
+   public static class UpliftProgramCache {
+      public volatile Map<Integer, Double> loopMultipliers;
+      public volatile Map<VariableRef, List<Statement>> varStatements;
+      public volatile Map<ScopeRef, List<Graph.Block>> blocksByScope;
+      public volatile Map<dk.camelot64.kickc.model.values.LabelRef, List<Graph.Block>> predecessors;
+      public volatile Map<dk.camelot64.kickc.model.values.LabelRef, Graph.Block> blocksByLabel;
+   }
+
    public static long timeOverlapNs = 0;
    public static long timeCodeGenNs = 0;
    public static long timeClobberNs = 0;
-   public static long countAttempts = 0;
+   public static final AtomicLong countAttempts = new AtomicLong(0);
    public static long timeBlocksNs = 0;
    public static long timeIteratorNs = 0;
    public static long timeScoreNs = 0;
@@ -260,23 +281,27 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       return res.success;
    }
 
-   private static Map<Integer, Double> loopMultipliersCache = null;
-   private static Program loopMultipliersProgram = null;
-
-   private static synchronized Map<Integer, Double> getLoopMultipliers(Program program) {
-      if(loopMultipliersProgram == program && loopMultipliersCache != null) {
-         return loopMultipliersCache;
+   private static Map<Integer, Double> getLoopMultipliers(Program program) {
+      UpliftProgramCache cache = program.getUpliftProgramCache();
+      Map<Integer, Double> map = cache.loopMultipliers;
+      if(map != null) {
+         return map;
       }
-      Map<Integer, Double> map = new HashMap<>();
-      NaturalLoopSet loopSet = program.getLoopSet();
-      for(Statement stmt : program.getGraph().getAllStatements()) {
-         Graph.Block block = program.getStatementInfos().getBlock(stmt.getIndex());
-         int depth = loopSet.getMaxLoopDepth(block.getLabel());
-         map.put(stmt.getIndex(), Math.pow(10, depth));
+      synchronized(cache) {
+         map = cache.loopMultipliers;
+         if(map != null) {
+            return map;
+         }
+         map = new HashMap<>();
+         NaturalLoopSet loopSet = program.getLoopSet();
+         for(Statement stmt : program.getGraph().getAllStatements()) {
+            Graph.Block block = program.getStatementInfos().getBlock(stmt.getIndex());
+            int depth = loopSet.getMaxLoopDepth(block.getLabel());
+            map.put(stmt.getIndex(), Math.pow(10, depth));
+         }
+         cache.loopMultipliers = map;
+         return map;
       }
-      loopMultipliersProgram = program;
-      loopMultipliersCache = map;
-      return map;
    }
 
    /**
@@ -293,9 +318,12 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
    }
 
    public static int getAsmScore(Program program, AsmProgram asm) {
+      return getAsmScore(program, asm, getLoopMultipliers(program));
+   }
+
+   public static int getAsmScore(Program program, AsmProgram asm, Map<Integer, Double> multipliers) {
       int score = 0;
       if(asm == null) asm = program.getAsm();
-      Map<Integer, Double> multipliers = getLoopMultipliers(program);
       for(AsmChunk asmChunk : asm.getChunks()) {
          double asmChunkCycles = asmChunk.getCycles();
          if(asmChunkCycles > 0) {
@@ -307,92 +335,108 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       return score;
    }
 
-   private static Map<VariableRef, List<Statement>> varStatementsCache = null;
-   private static Program varStatementsProgram = null;
-
-   private static synchronized Map<VariableRef, List<Statement>> getVarStatements(Program program) {
-      if(varStatementsProgram == program && varStatementsCache != null) {
-         return varStatementsCache;
+   private static Map<VariableRef, List<Statement>> getVarStatements(Program program) {
+      UpliftProgramCache cache = program.getUpliftProgramCache();
+      Map<VariableRef, List<Statement>> map = cache.varStatements;
+      if(map != null) {
+         return map;
       }
-      Map<VariableRef, List<Statement>> map = new HashMap<>();
-      VariableReferenceInfos refInfos = program.getVariableReferenceInfos();
-      LiveRangeVariablesEffective liveRanges = program.getLiveRangeVariablesEffective();
-      for(Statement statement : program.getGraph().getAllStatements()) {
-         Set<VariableRef> stmVars = new HashSet<>();
-         stmVars.addAll(refInfos.getReferencedVars(statement));
-         stmVars.addAll(liveRanges.getAliveEffective(statement));
-         for(VariableRef v : stmVars) {
-            map.computeIfAbsent(v, k -> new ArrayList<>()).add(statement);
+      synchronized(cache) {
+         map = cache.varStatements;
+         if(map != null) {
+            return map;
          }
+         map = new HashMap<>();
+         VariableReferenceInfos refInfos = program.getVariableReferenceInfos();
+         LiveRangeVariablesEffective liveRanges = program.getLiveRangeVariablesEffective();
+         for(Statement statement : program.getGraph().getAllStatements()) {
+            Set<VariableRef> stmVars = new HashSet<>();
+            stmVars.addAll(refInfos.getReferencedVars(statement));
+            stmVars.addAll(liveRanges.getAliveEffective(statement));
+            for(VariableRef v : stmVars) {
+               map.computeIfAbsent(v, k -> new ArrayList<>()).add(statement);
+            }
+         }
+         cache.varStatements = map;
+         return map;
       }
-      varStatementsProgram = program;
-      varStatementsCache = map;
-      return map;
    }
 
-   private static Map<ScopeRef, List<Graph.Block>> blocksByScopeCache = null;
-   private static Program blocksByScopeProgram = null;
-
-   private static synchronized Map<ScopeRef, List<Graph.Block>> getBlocksByScope(Program program) {
-      if(blocksByScopeProgram == program && blocksByScopeCache != null) {
-         return blocksByScopeCache;
+   private static Map<ScopeRef, List<Graph.Block>> getBlocksByScope(Program program) {
+      UpliftProgramCache cache = program.getUpliftProgramCache();
+      Map<ScopeRef, List<Graph.Block>> map = cache.blocksByScope;
+      if(map != null) {
+         return map;
       }
-      Map<ScopeRef, List<Graph.Block>> map = new HashMap<>();
-      for(Graph.Block b : program.getGraph().getAllBlocks()) {
-         if(b.getScope() != null) {
-            map.computeIfAbsent(b.getScope(), k -> new ArrayList<>()).add(b);
+      synchronized(cache) {
+         map = cache.blocksByScope;
+         if(map != null) {
+            return map;
          }
+         map = new HashMap<>();
+         for(Graph.Block b : program.getGraph().getAllBlocks()) {
+            if(b.getScope() != null) {
+               map.computeIfAbsent(b.getScope(), k -> new ArrayList<>()).add(b);
+            }
+         }
+         cache.blocksByScope = map;
+         return map;
       }
-      blocksByScopeProgram = program;
-      blocksByScopeCache = map;
-      return map;
    }
 
-   private static Map<dk.camelot64.kickc.model.values.LabelRef, List<Graph.Block>> predecessorsCache = null;
-   private static Program predecessorsProgram = null;
-
-   private static synchronized Map<dk.camelot64.kickc.model.values.LabelRef, List<Graph.Block>> getPredecessorsMap(Program program) {
-      if(predecessorsProgram == program && predecessorsCache != null) {
-         return predecessorsCache;
+   private static Map<dk.camelot64.kickc.model.values.LabelRef, List<Graph.Block>> getPredecessorsMap(Program program) {
+      UpliftProgramCache cache = program.getUpliftProgramCache();
+      Map<dk.camelot64.kickc.model.values.LabelRef, List<Graph.Block>> map = cache.predecessors;
+      if(map != null) {
+         return map;
       }
-      Map<dk.camelot64.kickc.model.values.LabelRef, List<Graph.Block>> map = new HashMap<>();
-      for(Graph.Block other : program.getGraph().getAllBlocks()) {
-         if(other.getDefaultSuccessor() != null) {
-            map.computeIfAbsent(other.getDefaultSuccessor(), k -> new ArrayList<>()).add(other);
+      synchronized(cache) {
+         map = cache.predecessors;
+         if(map != null) {
+            return map;
          }
-         if(other.getConditionalSuccessor() != null) {
-            map.computeIfAbsent(other.getConditionalSuccessor(), k -> new ArrayList<>()).add(other);
+         map = new HashMap<>();
+         for(Graph.Block other : program.getGraph().getAllBlocks()) {
+            if(other.getDefaultSuccessor() != null) {
+               map.computeIfAbsent(other.getDefaultSuccessor(), k -> new ArrayList<>()).add(other);
+            }
+            if(other.getConditionalSuccessor() != null) {
+               map.computeIfAbsent(other.getConditionalSuccessor(), k -> new ArrayList<>()).add(other);
+            }
+            if(other.getCallSuccessor() != null) {
+               map.computeIfAbsent(other.getCallSuccessor(), k -> new ArrayList<>()).add(other);
+            }
          }
-         if(other.getCallSuccessor() != null) {
-            map.computeIfAbsent(other.getCallSuccessor(), k -> new ArrayList<>()).add(other);
-         }
+         cache.predecessors = map;
+         return map;
       }
-      predecessorsProgram = program;
-      predecessorsCache = map;
-      return map;
    }
 
-   private static Map<dk.camelot64.kickc.model.values.LabelRef, Graph.Block> blocksByLabelCache = null;
-   private static Program blocksByLabelProgram = null;
-
-   private static synchronized Map<dk.camelot64.kickc.model.values.LabelRef, Graph.Block> getBlocksByLabel(Program program) {
-      if(blocksByLabelProgram == program && blocksByLabelCache != null) {
-         return blocksByLabelCache;
+   private static Map<dk.camelot64.kickc.model.values.LabelRef, Graph.Block> getBlocksByLabel(Program program) {
+      UpliftProgramCache cache = program.getUpliftProgramCache();
+      Map<dk.camelot64.kickc.model.values.LabelRef, Graph.Block> map = cache.blocksByLabel;
+      if(map != null) {
+         return map;
       }
-      Map<dk.camelot64.kickc.model.values.LabelRef, Graph.Block> map = new HashMap<>();
-      for(Graph.Block b : program.getGraph().getAllBlocks()) {
-         map.put(b.getLabel(), b);
+      synchronized(cache) {
+         map = cache.blocksByLabel;
+         if(map != null) {
+            return map;
+         }
+         map = new HashMap<>();
+         for(Graph.Block b : program.getGraph().getAllBlocks()) {
+            map.put(b.getLabel(), b);
+         }
+         cache.blocksByLabel = map;
+         return map;
       }
-      blocksByLabelProgram = program;
-      blocksByLabelCache = map;
-      return map;
    }
 
    public static Set<Graph.Block> getBlocksToRegenerate(
          Program program,
          ScopeRef scope,
          Collection<LiveRangeEquivalenceClass> equivalenceClasses) {
-      Set<Graph.Block> blocks = new HashSet<>();
+      Set<Graph.Block> blocks = new LinkedHashSet<>();
       if(equivalenceClasses != null && !equivalenceClasses.isEmpty()) {
          Map<VariableRef, List<Statement>> varStatements = getVarStatements(program);
          for(LiveRangeEquivalenceClass ec : equivalenceClasses) {
@@ -417,7 +461,7 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       }
       Map<dk.camelot64.kickc.model.values.LabelRef, List<Graph.Block>> predMap = getPredecessorsMap(program);
       Map<dk.camelot64.kickc.model.values.LabelRef, Graph.Block> blockMap = getBlocksByLabel(program);
-      Set<Graph.Block> neighbors = new HashSet<>();
+      Set<Graph.Block> neighbors = new LinkedHashSet<>();
       for(Graph.Block b : blocks) {
          List<Graph.Block> preds = predMap.get(b.getLabel());
          if(preds != null) {
@@ -550,13 +594,15 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
 
       if(unknownFragments.size() > 0) {
          getLog().append("MISSING FRAGMENTS");
-         for(String unknownFragment : unknownFragments) {
+         List<String> sortedUnknown = new ArrayList<>(unknownFragments);
+         Collections.sort(sortedUnknown);
+         for(String unknownFragment : sortedUnknown) {
             getLog().append("  " + unknownFragment);
          }
       }
       if(getLog().isVerboseUplift()) {
          System.out.printf("      [Uplift Breakdown] %d attempts: blks=%.2fs, outScore=%.2fs, iter=%.2fs, overlap=%.2fs, codegen=%.2fs, clobber=%.2fs, score=%.2fs, update=%.2fs%n",
-               countAttempts, timeBlocksNs/1e9, timeOutsideNs/1e9, timeIteratorNs/1e9, timeOverlapNs/1e9, timeCodeGenNs/1e9, timeClobberNs/1e9, timeScoreNs/1e9, timeUpdateNs/1e9);
+               countAttempts.get(), timeBlocksNs/1e9, timeOutsideNs/1e9, timeIteratorNs/1e9, timeOverlapNs/1e9, timeCodeGenNs/1e9, timeClobberNs/1e9, timeScoreNs/1e9, timeUpdateNs/1e9);
       }
       return cache;
    }

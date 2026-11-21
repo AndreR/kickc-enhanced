@@ -12,6 +12,7 @@ import dk.camelot64.kickc.passes.utils.ProcedureUtils;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -58,8 +59,8 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
                   canCoalesceCompatible(ec1, ec2, program) &&
                   canCoalesceSegments(ec1, ec2, program) &&
                   canCoalesceVolatile(ec1, ec2, program) &&
-                  canCoalesceThreads(ec1, ec2, threadHeads, program) &&
                   canCoalesceInterference(ec1, ec2, program) &&
+                  canCoalesceThreads(ec1, ec2, threadHeads, program) &&
                   canCoalesceClobber(ec1, ec2, unknownFragments, program);
    }
 
@@ -131,23 +132,19 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
     * @param callGraph The call graph
     * @return All threads containing variables in the equivalence class.
     */
-   private static Collection<ScopeRef> getEquivalenceClassThreads(LiveRangeEquivalenceClass equivalenceClass, Program program, Collection<ScopeRef> threadHeads, CallGraph callGraph) {
-      Collection<ScopeRef> threads = new ArrayList<>();
+   private static Set<ScopeRef> getEquivalenceClassThreads(LiveRangeEquivalenceClass equivalenceClass, Program program, Collection<ScopeRef> threadHeads, CallGraph callGraph) {
+      Set<ScopeRef> threads = new LinkedHashSet<>();
       for(VariableRef varRef : equivalenceClass.getVariables()) {
          Variable variable = program.getScope().getVariable(varRef);
          ScopeRef scopeRef = variable.getScope().getRef();
          if(scopeRef.equals(ScopeRef.ROOT)) {
             ProcedureRef mainThreadHead = program.getScope().getLocalProcedure(SymbolRef.MAIN_PROC_NAME).getRef();
-            if(!threads.contains(mainThreadHead)) {
-               threads.add(mainThreadHead);
-            }
+            threads.add(mainThreadHead);
          } else {
             Collection<ScopeRef> recursiveCallers = callGraph.getRecursiveCallerProcs(scopeRef);
             for(ScopeRef threadHead : threadHeads) {
                if(recursiveCallers.contains(threadHead)) {
-                  if(!threads.contains(threadHead)) {
-                     threads.add(threadHead);
-                  }
+                  threads.add(threadHead);
                }
             }
          }

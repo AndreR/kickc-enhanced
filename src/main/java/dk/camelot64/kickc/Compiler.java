@@ -804,10 +804,9 @@ public class Compiler {
          tStep = System.currentTimeMillis();
          new Pass4RegisterUpliftPotentialInitialize(program).initPotentialRegisters();
          boolean change;
-         int iter = 0;
+         Pass4RegisterUpliftPotentialRegisterAnalysis potentialRegAnalysis = new Pass4RegisterUpliftPotentialRegisterAnalysis(program);
          do {
-            iter++;
-            change = new Pass4RegisterUpliftPotentialRegisterAnalysis(program).findPotentialRegisters();
+            change = potentialRegAnalysis.findPotentialRegisters();
          } while(change);
          if(getLog().isVerboseUplift()) {
             System.out.println(String.format("   [PASS4] Total Potential Reg Analysis: %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));

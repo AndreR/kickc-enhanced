@@ -209,13 +209,13 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
          }
 
          // Group lines by scope and collect aliases
-         Map<String, Map<String, String>> scopeAliases = new HashMap<>();
-         Map<String, List<LineRef>> scopeLines = new HashMap<>();
+         Map<String, Map<String, String>> scopeAliases = new LinkedHashMap<>();
+         Map<String, List<LineRef>> scopeLines = new LinkedHashMap<>();
          for(LineRef ref : allLines) {
             if(ref.scope != null) {
                scopeLines.computeIfAbsent(ref.scope, k -> new ArrayList<>()).add(ref);
                if(ref.line instanceof AsmLabelDecl decl) {
-                  scopeAliases.computeIfAbsent(ref.scope, k -> new HashMap<>()).put(decl.getName(), decl.getValue());
+                  scopeAliases.computeIfAbsent(ref.scope, k -> new LinkedHashMap<>()).put(decl.getName(), decl.getValue());
                }
             }
          }

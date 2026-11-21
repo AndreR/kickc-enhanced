@@ -104,46 +104,24 @@ public class AsmFragmentTemplate {
          // Generate a dummy instance to find clobber & cycles
          ProgramScope scope = new ProgramScope();
          LinkedHashMap<String, Value> bindings = new LinkedHashMap<>();
-         {
+         if(signature.contains("z1") || signature.contains("z2") || signature.contains("z3")
+               || signature.contains("z4") || signature.contains("z5") || signature.contains("z6")) {
             Variable master = createPhiMaster("z", SymbolType.BYTE, scope, Variable.MemoryArea.ZEROPAGE_MEMORY, null);
-            Variable v1 = Variable.createPhiVersion(master, 1); v1.setName("z1");
-            Variable v2 = Variable.createPhiVersion(master, 2); v2.setName("z2");
-            Variable v3 = Variable.createPhiVersion(master, 3); v3.setName("z3");
-            Variable v4 = Variable.createPhiVersion(master, 4); v4.setName("z4");
-            Variable v5 = Variable.createPhiVersion(master, 5); v5.setName("z5");
-            Variable v6 = Variable.createPhiVersion(master, 6); v6.setName("z6");
-            v1.setAllocation(new Registers.RegisterZpMem(2, 1));
-            v2.setAllocation(new Registers.RegisterZpMem(4, 1));
-            v3.setAllocation(new Registers.RegisterZpMem(6, 1));
-            v4.setAllocation(new Registers.RegisterZpMem(8, 1));
-            v5.setAllocation(new Registers.RegisterZpMem(9, 1));
-            v6.setAllocation(new Registers.RegisterZpMem(10, 1));
-            if(signature.contains("z1")) bindings.put("z1", v1);
-            if(signature.contains("z2")) bindings.put("z2", v2);
-            if(signature.contains("z3")) bindings.put("z3", v3);
-            if(signature.contains("z4")) bindings.put("z4", v4);
-            if(signature.contains("z5")) bindings.put("z5", v5);
-            if(signature.contains("z6")) bindings.put("z6", v6);
+            if(signature.contains("z1")) { Variable v = Variable.createPhiVersion(master, 1); v.setName("z1"); v.setAllocation(new Registers.RegisterZpMem(2, 1)); bindings.put("z1", v); }
+            if(signature.contains("z2")) { Variable v = Variable.createPhiVersion(master, 2); v.setName("z2"); v.setAllocation(new Registers.RegisterZpMem(4, 1)); bindings.put("z2", v); }
+            if(signature.contains("z3")) { Variable v = Variable.createPhiVersion(master, 3); v.setName("z3"); v.setAllocation(new Registers.RegisterZpMem(6, 1)); bindings.put("z3", v); }
+            if(signature.contains("z4")) { Variable v = Variable.createPhiVersion(master, 4); v.setName("z4"); v.setAllocation(new Registers.RegisterZpMem(8, 1)); bindings.put("z4", v); }
+            if(signature.contains("z5")) { Variable v = Variable.createPhiVersion(master, 5); v.setName("z5"); v.setAllocation(new Registers.RegisterZpMem(9, 1)); bindings.put("z5", v); }
+            if(signature.contains("z6")) { Variable v = Variable.createPhiVersion(master, 6); v.setName("z6"); v.setAllocation(new Registers.RegisterZpMem(10, 1)); bindings.put("z6", v); }
          }
-         {
-            Variable v1 = createLoadStore("m1", SymbolType.BYTE, scope, Variable.MemoryArea.MAIN_MEMORY, null);
-            Variable v2 = createLoadStore("m2", SymbolType.BYTE, scope, Variable.MemoryArea.MAIN_MEMORY, null);
-            Variable v3 = createLoadStore("m3", SymbolType.BYTE, scope, Variable.MemoryArea.MAIN_MEMORY, null);
-            Variable v4 = createLoadStore("m4", SymbolType.BYTE, scope, Variable.MemoryArea.MAIN_MEMORY, null);
-            Variable v5 = createLoadStore("m5", SymbolType.BYTE, scope, Variable.MemoryArea.MAIN_MEMORY, null);
-            Variable v6 = createLoadStore("m6", SymbolType.BYTE, scope, Variable.MemoryArea.MAIN_MEMORY, null);
-            v1.setAllocation(new Registers.RegisterMainMem(v1.getVariableRef(), 1, null, false));
-            v2.setAllocation(new Registers.RegisterMainMem(v2.getVariableRef(), 1, null, false));
-            v3.setAllocation(new Registers.RegisterMainMem(v3.getVariableRef(), 1, null, false));
-            v4.setAllocation(new Registers.RegisterMainMem(v4.getVariableRef(), 1, null, false));
-            v5.setAllocation(new Registers.RegisterMainMem(v5.getVariableRef(), 1, null, false));
-            v6.setAllocation(new Registers.RegisterMainMem(v6.getVariableRef(), 1, null, false));
-            if(signature.contains("m1")) bindings.put("m1", v1);
-            if(signature.contains("m2")) bindings.put("m2", v2);
-            if(signature.contains("m3")) bindings.put("m3", v3);
-            if(signature.contains("m4")) bindings.put("m4", v4);
-            if(signature.contains("m5")) bindings.put("m5", v5);
-            if(signature.contains("m6")) bindings.put("m6", v6);
+         if(signature.contains("m1") || signature.contains("m2") || signature.contains("m3")
+               || signature.contains("m4") || signature.contains("m5") || signature.contains("m6")) {
+            if(signature.contains("m1")) { Variable v = createLoadStore("m1", SymbolType.BYTE, scope, Variable.MemoryArea.MAIN_MEMORY, null); v.setAllocation(new Registers.RegisterMainMem(v.getVariableRef(), 1, null, false)); bindings.put("m1", v); }
+            if(signature.contains("m2")) { Variable v = createLoadStore("m2", SymbolType.BYTE, scope, Variable.MemoryArea.MAIN_MEMORY, null); v.setAllocation(new Registers.RegisterMainMem(v.getVariableRef(), 1, null, false)); bindings.put("m2", v); }
+            if(signature.contains("m3")) { Variable v = createLoadStore("m3", SymbolType.BYTE, scope, Variable.MemoryArea.MAIN_MEMORY, null); v.setAllocation(new Registers.RegisterMainMem(v.getVariableRef(), 1, null, false)); bindings.put("m3", v); }
+            if(signature.contains("m4")) { Variable v = createLoadStore("m4", SymbolType.BYTE, scope, Variable.MemoryArea.MAIN_MEMORY, null); v.setAllocation(new Registers.RegisterMainMem(v.getVariableRef(), 1, null, false)); bindings.put("m4", v); }
+            if(signature.contains("m5")) { Variable v = createLoadStore("m5", SymbolType.BYTE, scope, Variable.MemoryArea.MAIN_MEMORY, null); v.setAllocation(new Registers.RegisterMainMem(v.getVariableRef(), 1, null, false)); bindings.put("m5", v); }
+            if(signature.contains("m6")) { Variable v = createLoadStore("m6", SymbolType.BYTE, scope, Variable.MemoryArea.MAIN_MEMORY, null); v.setAllocation(new Registers.RegisterMainMem(v.getVariableRef(), 1, null, false)); bindings.put("m6", v); }
          }
          if(signature.contains("c1")) bindings.put("c1", new ConstantInteger(310L));
          if(signature.contains("c2")) bindings.put("c2", new ConstantInteger(320L));

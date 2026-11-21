@@ -89,18 +89,32 @@ class AsmFragmentTemplateSynthesisRuleRegex implements AsmFragmentTemplateSynthe
    }
 
    public List<String> getSubSignatures(String signature) {
-      if(matches(signature)) {
-         String subSignature = regexpRewriteSignature(signature, sigMatch, sigReplace);
-         if(mapSignature && bindMappings != null) {
-            // When mapping the signature we do the map replacement in the signature
-            for(String bound : bindMappings.keySet()) {
-               subSignature = subSignature.replace(bound, bindMappings.get(bound));
-            }
-         }
-         return Collections.singletonList(subSignature);
-      } else {
+      return matchAndGetSubSignatures(signature);
+   }
+
+   @Override
+   public List<String> matchAndGetSubSignatures(String signature) {
+      if(sigMatchPattern == null)
+         sigMatchPattern = Pattern.compile(sigMatch);
+      Matcher m = sigMatchPattern.matcher(signature);
+      if(!m.matches()) {
          return null;
       }
+      if(sigAvoid != null) {
+         if(sigAvoidPattern == null)
+            sigAvoidPattern = Pattern.compile(sigAvoid);
+         if(sigAvoidPattern.matcher(signature).matches()) {
+            return null;
+         }
+      }
+      String subSignature = m.replaceAll(sigReplace);
+      if(mapSignature && bindMappings != null) {
+         // When mapping the signature we do the map replacement in the signature
+         for(Map.Entry<String, String> entry : bindMappings.entrySet()) {
+            subSignature = subSignature.replace(entry.getKey(), entry.getValue());
+         }
+      }
+      return Collections.singletonList(subSignature);
    }
 
    public AsmFragmentTemplate synthesize(String signature, List<AsmFragmentTemplate> subTemplates) {

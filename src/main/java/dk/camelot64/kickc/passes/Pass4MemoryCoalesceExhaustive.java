@@ -3,11 +3,10 @@ package dk.camelot64.kickc.passes;
 import dk.camelot64.kickc.model.LiveRangeEquivalenceClass;
 import dk.camelot64.kickc.model.LiveRangeEquivalenceClassSet;
 import dk.camelot64.kickc.model.Program;
+import dk.camelot64.kickc.model.Registers;
 import dk.camelot64.kickc.model.values.ScopeRef;
 
-import java.util.Collection;
-import java.util.LinkedHashSet;
-import java.util.Set;
+import java.util.*;
 
 /**
  * Exhaustive attempt to coalesces memory registers where live ranges do not overlap.
@@ -46,16 +45,30 @@ public class Pass4MemoryCoalesceExhaustive extends Pass2Base {
     * @return true if any classes were coalesced. False otherwise.
     */
    private boolean coalesce(LiveRangeEquivalenceClassSet liveRangeEquivalenceClassSet, Collection<ScopeRef> threadHeads, Set<String> unknownFragments) {
-      for(LiveRangeEquivalenceClass thisEquivalenceClass : liveRangeEquivalenceClassSet.getEquivalenceClasses()) {
-         for(LiveRangeEquivalenceClass otherEquivalenceClass : liveRangeEquivalenceClassSet.getEquivalenceClasses()) {
-            Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate candidate = new Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate(thisEquivalenceClass, otherEquivalenceClass, null);
-            boolean modified = Pass4MemoryCoalesce.attemptCoalesce(candidate, threadHeads, unknownFragments, getProgram());
-            if(modified) {
-               return true;
+      boolean anyModified = false;
+      Map<String, List<LiveRangeEquivalenceClass>> buckets = new LinkedHashMap<>();
+      for(LiveRangeEquivalenceClass ec : liveRangeEquivalenceClassSet.getEquivalenceClasses()) {
+         Registers.Register reg = ec.getRegister();
+         if(reg == null || !reg.isMem()) continue;
+         String key = reg.getType().name() + ":" + reg.getBytes();
+         buckets.computeIfAbsent(key, k -> new ArrayList<>()).add(ec);
+      }
+      for(List<LiveRangeEquivalenceClass> bucket : buckets.values()) {
+         for(int i = 0; i < bucket.size(); i++) {
+            LiveRangeEquivalenceClass ec1 = bucket.get(i);
+            if(!liveRangeEquivalenceClassSet.contains(ec1)) continue;
+            for(int j = i + 1; j < bucket.size(); j++) {
+               LiveRangeEquivalenceClass ec2 = bucket.get(j);
+               if(!liveRangeEquivalenceClassSet.contains(ec2)) continue;
+               Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate candidate =
+                     new Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate(ec1, ec2, null);
+               if(Pass4MemoryCoalesce.attemptCoalesce(candidate, threadHeads, unknownFragments, getProgram())) {
+                  anyModified = true;
+               }
             }
          }
       }
-      return false;
+      return anyModified;
    }
 
 

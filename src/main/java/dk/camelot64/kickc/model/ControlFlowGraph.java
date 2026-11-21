@@ -12,6 +12,7 @@ import java.util.*;
 public class ControlFlowGraph implements Graph {
 
    private List<Graph.Block> blocks;
+   private final Map<LabelRef, Graph.Block> blockMap = new HashMap<>();
 
    /**
     * Sequence of blocks used when generating ASM
@@ -20,19 +21,18 @@ public class ControlFlowGraph implements Graph {
 
    public ControlFlowGraph(List<Graph.Block> blocks) {
       this.blocks = blocks;
+      for(Graph.Block block : blocks) {
+         this.blockMap.put(block.getLabel(), block);
+      }
    }
 
    public Graph.Block getBlock(LabelRef symbol) {
-      for(var block : blocks) {
-         if(block.getLabel().equals(symbol)) {
-            return block;
-         }
-      }
-      return null;
+      return blockMap.get(symbol);
    }
 
    public void addBlock(Graph.Block block) {
       blocks.add(block);
+      blockMap.put(block.getLabel(), block);
    }
 
    public List<Block> getAllBlocks() {
@@ -40,6 +40,7 @@ public class ControlFlowGraph implements Graph {
    }
 
    public void remove(LabelRef label) {
+      blockMap.remove(label);
       ListIterator<Graph.Block> blocksIt = blocks.listIterator();
       while(blocksIt.hasNext()) {
          var block = blocksIt.next();

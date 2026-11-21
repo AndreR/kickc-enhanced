@@ -11,6 +11,9 @@ import java.util.concurrent.atomic.LongAdder;
 /** Statistics for usage of the ASM fragments. Also contains a methods for identifying redundant/unused files. */
 public class AsmFragmentTemplateUsages {
 
+   /** Enables tracking of fragment template usage statistics (disabled by default to avoid cache-hit allocations). */
+   public static volatile boolean TRACK_USAGES = false;
+
    /** Usage Statistics for fragment templates. */
    private final Map<AsmFragmentSynthesisResult, LongAdder> fragmentTemplateUsage = new ConcurrentHashMap<>();
 

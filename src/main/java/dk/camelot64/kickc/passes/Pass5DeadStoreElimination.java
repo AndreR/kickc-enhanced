@@ -383,8 +383,8 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
 
             // 1. Parse all .label declarations in this scope
             CanonicalResolver resolver = new CanonicalResolver(globalAliases);
-            Map<String, String> labelToVal = new HashMap<>();
-            Map<String, Set<String>> valToLabels = new HashMap<>();
+            Map<String, String> labelToVal = new LinkedHashMap<>();
+            Map<String, Set<String>> valToLabels = new LinkedHashMap<>();
             for(LineRef ref : sLines) {
                if(ref.line instanceof AsmLabelDecl) {
                   AsmLabelDecl decl = (AsmLabelDecl) ref.line;
@@ -417,8 +417,8 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
             // 2. Identify candidate procedure-local SSA temporaries:
             // Must be __\d+, must map to a raw hardware address ($xx or decimal),
             // must NOT collide with any global/parameter address, and must uniquely own that hardware address in this scope!
-            Set<String> ssaCandidates = new HashSet<>();
-            Map<String, String> candToAddress = new HashMap<>();
+            Set<String> ssaCandidates = new LinkedHashSet<>();
+            Map<String, String> candToAddress = new LinkedHashMap<>();
 
             for(Map.Entry<String, String> entryVal : labelToVal.entrySet()) {
                String name = entryVal.getKey();
@@ -437,7 +437,7 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
             // When an SSA variable (or byte offset) v is written (sta v) and read exactly once (lda v; sta TARGET)
             // within the same basic block, forward TARGET into the original store and remove the copy.
             if(!ssaCandidates.isEmpty()) {
-               Set<String> allSsaVarsInScope = new HashSet<>(ssaCandidates);
+               Set<String> allSsaVarsInScope = new LinkedHashSet<>(ssaCandidates);
                for(String cand : ssaCandidates) {
                   allSsaVarsInScope.add(cand + "+1");
                   allSsaVarsInScope.add(cand + "+2");

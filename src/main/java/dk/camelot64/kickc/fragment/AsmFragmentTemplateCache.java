@@ -4,14 +4,12 @@ import dk.camelot64.kickc.CompileLog;
 import dk.camelot64.kickc.fragment.synthesis.AsmFragmentTemplateSynthesizer;
 import dk.camelot64.kickc.model.InternalError;
 import dk.camelot64.kickc.model.TargetCpu;
-import org.antlr.v4.runtime.CharStream;
-import org.antlr.v4.runtime.CharStreams;
 
 import java.io.*;
 import java.nio.file.Path;
 import java.util.Date;
-import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Cache for ASM fragments. The cache remembers all synthesized fragments allowing for faster access after the first synthesis. */
 public class AsmFragmentTemplateCache {
@@ -29,10 +27,10 @@ public class AsmFragmentTemplateCache {
    private TargetCpu cpu;
 
    /** Cache for the best fragment templates. Maps signature to the best fragment template for the signature. Maps to NO_SYNTHESIS if synthesis was unsuccessful. */
-   private Map<String, AsmFragmentTemplate> cache;
+   private final Map<String, AsmFragmentTemplate> cache;
 
    /** Detects any modification of the cache. */
-   private boolean modified;
+   private volatile boolean modified;
 
    /**
     * Creates a cache
@@ -92,7 +90,7 @@ public class AsmFragmentTemplateCache {
     * @return The new empty cache
     */
    public static AsmFragmentTemplateCache memoryCache(TargetCpu cpu) {
-      return new AsmFragmentTemplateCache(null, cpu, new AsmFragmentSystemHash(0L, 0L, 0), new LinkedHashMap<>());
+      return new AsmFragmentTemplateCache(null, cpu, new AsmFragmentSystemHash(0L, 0L, 0), new ConcurrentHashMap<>());
    }
 
    /**
@@ -119,57 +117,59 @@ public class AsmFragmentTemplateCache {
          if(log.isVerboseFragmentLog())
             log.append("Creating fragment cache folder " + cacheFolder.toAbsolutePath().toString());
          cacheFolder.toFile().mkdir();
-         return diskCache(cacheFolder, cpu, fragmentSystemHash, new LinkedHashMap<>());
+         return diskCache(cacheFolder, cpu, fragmentSystemHash, new ConcurrentHashMap<>());
       }
       try {
          File cacheFile = cacheFolder.resolve(getCacheFileName(cpu)).toFile();
          if(!cacheFile.exists()) {
-            return diskCache(cacheFolder, cpu, fragmentSystemHash, new LinkedHashMap<>());
+            return diskCache(cacheFolder, cpu, fragmentSystemHash, new ConcurrentHashMap<>());
          }
          if(cacheFile.lastModified() < fragmentSystemHash.getLastModified()) {
             if(log.isVerboseFragmentLog())
                log.append("Deleting outdated fragment cache file " + cacheFile.getAbsolutePath());
             cacheFile.delete();
-            return diskCache(cacheFolder, cpu, fragmentSystemHash, new LinkedHashMap<>());
+            return diskCache(cacheFolder, cpu, fragmentSystemHash, new ConcurrentHashMap<>());
          }
-         LinkedHashMap<String, AsmFragmentTemplate> cache = new LinkedHashMap<>();
-         BufferedReader fragmentCacheReader = new BufferedReader(new FileReader(cacheFile));
-         String hashLine = fragmentCacheReader.readLine();
-         final String hashPayload = hashLine.substring(HASH_HEADER.length());
-         final String[] hashes = hashPayload.split(" ");
-         final String hashLF = hashes[0];
-         final String hashCRLF = (hashes.length > 1) ? hashes[1] : null;
-         // Compare cache file hash with fragment system hash
-         if(!fragmentSystemHash.matches(hashLF, hashCRLF)) {
-            // Cache file hash does not match fragment system hash
-            if(log.isVerboseFragmentLog())
-               log.append("Deleting hash mismatch fragment cache file " + cacheFile.getAbsolutePath());
-            cacheFile.delete();
-            // And make a new cache to hold the fragments
-            return diskCache(cacheFolder, cpu, fragmentSystemHash, new LinkedHashMap<>());
-         }
-         // Read the first "real" line
-         String cacheLine = fragmentCacheReader.readLine();
-         StringBuilder body = null;
-         String signature = null;
-         while(cacheLine != null) {
-            // Determine if the line is a new fragment or the continuation of the current fragment body
-            if(cacheLine.startsWith(FRAGMENT_HEADER)) {
-               // New fragment - first put the current one into the cache
-               if(signature != null)
-                  addFragment(cache, signature, body, cpu);
-               // Clear body and initialize signature
-               body = new StringBuilder();
-               signature = cacheLine.substring(FRAGMENT_HEADER.length());
-            } else {
-               // Continuation of body
-               body.append(cacheLine).append("\n");
+         Map<String, AsmFragmentTemplate> cache = new ConcurrentHashMap<>();
+         try(BufferedReader fragmentCacheReader = new BufferedReader(new FileReader(cacheFile))) {
+            String hashLine = fragmentCacheReader.readLine();
+            final String hashPayload = hashLine.substring(HASH_HEADER.length());
+            final String[] hashes = hashPayload.split(" ");
+            final String hashLF = hashes[0];
+            final String hashCRLF = (hashes.length > 1) ? hashes[1] : null;
+            // Compare cache file hash with fragment system hash
+            if(!fragmentSystemHash.matches(hashLF, hashCRLF)) {
+               // Cache file hash does not match fragment system hash
+               if(log.isVerboseFragmentLog())
+                  log.append("Deleting hash mismatch fragment cache file " + cacheFile.getAbsolutePath());
+               fragmentCacheReader.close();
+               cacheFile.delete();
+               // And make a new cache to hold the fragments
+               return diskCache(cacheFolder, cpu, fragmentSystemHash, new ConcurrentHashMap<>());
             }
-            cacheLine = fragmentCacheReader.readLine();
+            // Read the first "real" line
+            String cacheLine = fragmentCacheReader.readLine();
+            StringBuilder body = null;
+            String signature = null;
+            while(cacheLine != null) {
+               // Determine if the line is a new fragment or the continuation of the current fragment body
+               if(cacheLine.startsWith(FRAGMENT_HEADER)) {
+                  // New fragment - first put the current one into the cache
+                  if(signature != null)
+                     addFragment(cache, signature, body, cpu);
+                  // Clear body and initialize signature
+                  body = new StringBuilder();
+                  signature = cacheLine.substring(FRAGMENT_HEADER.length());
+               } else {
+                  // Continuation of body
+                  body.append(cacheLine).append("\n");
+               }
+               cacheLine = fragmentCacheReader.readLine();
+            }
+            // Put the last fragment into the cache
+            if(signature != null)
+               addFragment(cache, signature, body, cpu);
          }
-         // Put the last fragment into the cache
-         if(signature != null)
-            addFragment(cache, signature, body, cpu);
          final Date after = new Date();
          final long millis = after.getTime() - before.getTime();
          if(log.isVerboseFragmentLog())
@@ -182,13 +182,12 @@ public class AsmFragmentTemplateCache {
       }
    }
 
-   private static void addFragment(LinkedHashMap<String, AsmFragmentTemplate> cache, String signature, StringBuilder body, TargetCpu targetCpu) {
+   private static void addFragment(Map<String, AsmFragmentTemplate> cache, String signature, StringBuilder body, TargetCpu targetCpu) {
       final String bodyString = body.toString();
       if(bodyString.startsWith(NO_SYNTHESIS.getBody())) {
          cache.put(signature.intern(), NO_SYNTHESIS);
       } else {
-         CharStream fragmentCharStream = CharStreams.fromString(bodyString);
-         AsmFragmentTemplate template = new AsmFragmentTemplate(signature, AsmFragmentTemplateSynthesizer.fixNewlines(fragmentCharStream.toString()), targetCpu);
+         AsmFragmentTemplate template = new AsmFragmentTemplate(signature, AsmFragmentTemplateSynthesizer.fixNewlines(bodyString), targetCpu);
          cache.put(signature.intern(), template);
       }
    }

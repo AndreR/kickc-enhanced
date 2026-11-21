@@ -31,9 +31,17 @@ public class AsmFragmentSynthesisOption {
      * @param rule      The synthesis rule capable of synthesizing this template from the sub-fragment.
      */
     AsmFragmentSynthesisOption(String signature, AsmFragmentTemplateSynthesisRule rule) {
+        this(signature, rule, rule.getSubSignatures(signature));
+    }
+
+    AsmFragmentSynthesisOption(String signature, AsmFragmentTemplateSynthesisRule rule, List<String> rawSubSignatures) {
         this.signature = signature.intern();
         this.rule = rule;
-        this.subSignatures = rule.getSubSignatures(signature).stream().map(String::intern).collect(Collectors.toList());
+        if (rawSubSignatures.size() == 1) {
+            this.subSignatures = java.util.Collections.singletonList(rawSubSignatures.get(0).intern());
+        } else {
+            this.subSignatures = rawSubSignatures.stream().map(String::intern).collect(Collectors.toList());
+        }
     }
 
     public String getSignature() {
