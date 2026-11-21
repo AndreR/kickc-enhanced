@@ -738,6 +738,55 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                      }
                   }
                }
+
+               // GEN-04: Byte-granular DSE for unread sub-bytes (e.g. __NN+1) of read multi-byte SSA temporaries
+               if(!passModified && !readVars.isEmpty() && inlineKickAsmList.isEmpty()) {
+                  Set<String> exactReadCanon = new HashSet<>();
+                  Set<String> unsafeBaseVars = new HashSet<>();
+                  for(LineRef ref : sLines) {
+                     if(!(ref.line instanceof AsmInstruction inst)) continue;
+                     if(inst.getCpuOpcode() == null || inst.getOperand1() == null) continue;
+                     String mnem = inst.getCpuOpcode().getMnemonic();
+                     CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+                     String op = inst.getOperand1().trim();
+                     if(op.startsWith(".z ")) op = op.substring(3).trim();
+                     boolean isPlainStore = (mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty"))
+                           && (mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS));
+                     if(mode.equals(CpuAddressingMode.IZY) || mode.equals(CpuAddressingMode.IZX)
+                           || mode.equals(CpuAddressingMode.ZPX) || mode.equals(CpuAddressingMode.ZPY)
+                           || mode.equals(CpuAddressingMode.ABX) || mode.equals(CpuAddressingMode.ABY)
+                           || op.startsWith("#<") || op.startsWith("#>")) {
+                        unsafeBaseVars.add(getBaseVar(op));
+                     }
+                     if(!isPlainStore) {
+                        exactReadCanon.add(resolver.resolve(op));
+                     }
+                  }
+                  for(int i = 0; i < sLines.size(); i++) {
+                     LineRef ref = sLines.get(i);
+                     if(!(ref.line instanceof AsmInstruction inst)) continue;
+                     if(inst.isNoOptimize() || inst.getCpuOpcode() == null || inst.getOperand1() == null) continue;
+                     String mnem = inst.getCpuOpcode().getMnemonic();
+                     CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+                     if(!(mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty"))) continue;
+                     if(!(mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS))) continue;
+                     String op = inst.getOperand1().trim();
+                     String baseVar = getBaseVar(op);
+                     int dotIdx = baseVar.lastIndexOf('.');
+                     String simpleName = dotIdx != -1 ? baseVar.substring(dotIdx + 1) : baseVar;
+                     if(!(readVars.contains(baseVar) || readVars.contains(simpleName))) continue;
+                     if(unsafeBaseVars.contains(baseVar) || unsafeBaseVars.contains(simpleName)) continue;
+                     if(isVolatileOrHardwareOperand(op, ref.scope, resolver, getProgram())) continue;
+                     String canonByte = resolver.resolve(op);
+                     if(!canonByte.isEmpty() && !exactReadCanon.contains(canonByte)) {
+                        getLog().append("GEN-04: Eliminating dead byte store " + inst.getAsm() + " (canon " + canonByte + " never read)");
+                        ref.chunk.getLines().remove(inst);
+                        passModified = true;
+                        overallModified = true;
+                        break;
+                     }
+                  }
+               }
             }
             if(passModified) {
                break;

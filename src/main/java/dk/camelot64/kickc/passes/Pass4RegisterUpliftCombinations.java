@@ -99,11 +99,19 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
    public static class UpliftTrialResult {
       public final RegisterCombination combination;
       public final int score;
+      public final int bytes;
+      public final int upliftedRegCount;
       public final boolean success;
 
       public UpliftTrialResult(RegisterCombination combination, int score, boolean success) {
+         this(combination, score, Integer.MAX_VALUE, 0, success);
+      }
+
+      public UpliftTrialResult(RegisterCombination combination, int score, int bytes, int upliftedRegCount, boolean success) {
          this.combination = combination;
          this.score = score;
+         this.bytes = bytes;
+         this.upliftedRegCount = upliftedRegCount;
          this.success = success;
       }
    }
@@ -159,7 +167,14 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          }
 
          int combinationScore = outsideScore + getAsmScore(program, asm, multipliers);
-         return new UpliftTrialResult(combination, combinationScore, true);
+         int asmBytes = asm.getBytes();
+         int cpuRegs = 0;
+         for(Registers.Register r : combination.getAllocation().values()) {
+            if(r != null && !(r instanceof Registers.RegisterZpMem) && !(r instanceof Registers.RegisterMainMem)) {
+               cpuRegs++;
+            }
+         }
+         return new UpliftTrialResult(combination, combinationScore, asmBytes, cpuRegs, true);
       } finally {
          Variable.setThreadAllocationOverride(null);
       }
@@ -179,15 +194,25 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       Set<Graph.Block> blocksToRegenerate = getBlocksToRegenerate(program, scope, combinationIterator.getEquivalenceClasses());
       int outsideScore = cache.getOutsideScore(blocksToRegenerate);
 
+      // GEN-05: Pre-filter overlapping combinations so the maxCombinations budget is spent on conflict-free allocations
+      program.getLiveRangeInterference();
       List<RegisterCombination> combinationsToTest = new ArrayList<>();
-      while(combinationIterator.hasNext() && combinationsToTest.size() < maxCombinations) {
-         combinationsToTest.add(combinationIterator.next());
+      int maxScanned = Math.max(maxCombinations * 10, 200);
+      int scanned = 0;
+      while(combinationIterator.hasNext() && combinationsToTest.size() < maxCombinations && scanned < maxScanned) {
+         RegisterCombination cand = combinationIterator.next();
+         scanned++;
+         if(!isAllocationOverlapping(program, cand)) {
+            combinationsToTest.add(cand);
+         }
       }
 
       if(combinationsToTest.isEmpty()) return;
 
       int countCombinations = combinationsToTest.size();
       int bestScore = Integer.MAX_VALUE;
+      int bestBytes = Integer.MAX_VALUE;
+      int bestUpliftedCount = -1;
       RegisterCombination bestCombination = null;
 
       List<UpliftTrialResult> results;
@@ -215,8 +240,13 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
                program.getLog().append("Uplift attempt [" + scope + "] " + res.score + " allocation: " + res.combination.toString());
             }
          }
-         if(res.success && res.score < bestScore) {
+         // GEN-05: Break score ties by smaller code size (bytes), then higher CPU register count (saving ZP)
+         if(res.success && (res.score < bestScore
+               || (res.score == bestScore && (res.bytes < bestBytes
+                     || (res.bytes == bestBytes && res.upliftedRegCount > bestUpliftedCount))))) {
             bestScore = res.score;
+            bestBytes = res.bytes;
+            bestUpliftedCount = res.upliftedRegCount;
             bestCombination = res.combination;
          }
       }
