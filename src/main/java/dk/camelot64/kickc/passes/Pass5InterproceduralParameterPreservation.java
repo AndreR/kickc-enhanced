@@ -22,7 +22,8 @@ import java.util.*;
 public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimization {
 
    private static final Set<String> ZP_MODIFY_MNEMONICS = new HashSet<>(Arrays.asList(
-         "sta", "stx", "sty", "sax", "asl", "lsr", "rol", "ror", "inc", "dec", "dcp", "isc"
+         "sta", "stx", "sty", "sax", "asl", "lsr", "rol", "ror", "inc", "dec",
+         "dcp", "isc", "slo", "rla", "sre", "rra"
    ));
 
    public Pass5InterproceduralParameterPreservation(Program program) {
@@ -48,6 +49,8 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
          mnem.equals("tax") || mnem.equals("tay") || mnem.equals("cmp") ||
          mnem.equals("adc") || mnem.equals("sbc") || mnem.equals("and") ||
          mnem.equals("ora") || mnem.equals("eor") || mnem.equals("bit") ||
+         mnem.equals("dcp") || mnem.equals("isc") || mnem.equals("slo") ||
+         mnem.equals("rla") || mnem.equals("sre") || mnem.equals("rra") ||
          mnem.equals("alr") || mnem.equals("arr") || mnem.equals("anc") ||
          mnem.equals("axs") || mnem.equals("jsr") || mnem.equals("rts") ||
          mnem.equals("rti")) {
@@ -187,6 +190,16 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
          }
       }
 
+      // Pre-collect all procedure scope names so tail-call JMP targets are recognized as callees
+      Set<String> allProcNames = new HashSet<>();
+      for(AsmChunk chunk : getAsmProgram().getChunks()) {
+         for(AsmLine line : chunk.getLines()) {
+            if(line instanceof AsmScopeBegin sb && sb.getLabel() != null) {
+               allProcNames.add(sb.getLabel().trim());
+            }
+         }
+      }
+
       // 1. Collect all procedures and their direct writes & callees
       Map<String, ProcedureInfo> procMap = new HashMap<>();
       ProcedureInfo currentProc = null;
@@ -215,8 +228,21 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                         } else {
                            currentProc.hasUnknownWrites = true;
                         }
+                     } else if("jmp".equals(mnem)) {
+                        if(mode == CpuAddressingMode.IND || mode == CpuAddressingMode.IAX) {
+                           currentProc.hasUnknownWrites = true;
+                        } else {
+                           String target = inst.getOperand1();
+                           if(target != null) {
+                              String t = target.trim();
+                              if(allProcNames.contains(t) && !t.equals(currentProc.name)) {
+                                 // Interprocedural tail-call JMP -> inherit callee ZP writes!
+                                 currentProc.callees.add(t);
+                              }
+                           }
+                        }
                      } else if(ZP_MODIFY_MNEMONICS.contains(mnem)) {
-                        if(mode == CpuAddressingMode.ZP || mode == CpuAddressingMode.ZPX || mode == CpuAddressingMode.ZPY) {
+                        if(mode == CpuAddressingMode.ZP) {
                            String op = inst.getOperand1();
                            if(op != null) {
                               Map<String, String> currentScopeAliases = (currentProc != null) ? scopeAliasMap.get(currentProc.name) : null;
@@ -226,7 +252,8 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                               }
                               currentProc.directZpWrites.add(op.trim());
                            }
-                        } else if(mode == CpuAddressingMode.IZY || mode == CpuAddressingMode.IZX
+                        } else if(mode == CpuAddressingMode.ZPX || mode == CpuAddressingMode.ZPY
+                              || mode == CpuAddressingMode.IZY || mode == CpuAddressingMode.IZX
                               || mode == CpuAddressingMode.ABX || mode == CpuAddressingMode.ABY) {
                            currentProc.hasUnknownWrites = true;
                         }
@@ -301,18 +328,23 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                      }
                   }
                }
+            } else if(line instanceof AsmDataKickAsm || line instanceof AsmDataNumeric || line instanceof AsmInlineKickAsm) {
+               // Collect any jump-table or inline-ASM label references as jump targets
+               String asmText = line.getAsm();
+               if(asmText != null) {
+                  java.util.regex.Matcher m = java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_]*").matcher(asmText);
+                  while(m.find()) {
+                     jumpTargets.add(m.group());
+                  }
+               }
             }
          }
       }
 
       // 3. Scan lines across all chunks for redundant stores across JSR.
       // Notice: tracking persists across chunk boundaries within a procedure scope!
-      List<LineRef> allLines = new ArrayList<>();
-      for(AsmChunk chunk : getAsmProgram().getChunks()) {
-         for(AsmLine line : chunk.getLines()) {
-            allLines.add(new LineRef(chunk, line));
-         }
-      }
+      List<LineRef> allLines = flattenLines(getAsmProgram());
+      Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
 
       Map<String, String> knownZp = new HashMap<>();
       String currentValA = null;
@@ -424,8 +456,10 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                }
             }
 
+            CanonicalResolver resolver = scopeResolvers.getOrDefault(currentScope, scopeResolvers.get(""));
+
             // Loads of zero-page variables into registers (with ZP-04 constant read-forwarding)
-            if(mode == CpuAddressingMode.ZP && operand != null && !Pass5RedundantStoreAndReloadElimination.isHardwareAddress(operand)) {
+            if(mode == CpuAddressingMode.ZP && operand != null && !isVolatileOrHardwareOperand(inst, currentScope, resolver, getProgram())) {
                String canon = Pass5RedundantStoreAndReloadElimination.getCanonical(operand, currentScopeAliases, globalAliasMap);
                String varKey = (canon != null && !canon.isEmpty()) ? canon : operand.trim();
                String knownVal = knownZp.get(varKey);
@@ -480,7 +514,8 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
             // Register overwrites from memory or other sources
             if("lda".equals(mnem) || "pla".equals(mnem) || "lax".equals(mnem) ||
                "adc".equals(mnem) || "sbc".equals(mnem) || "and".equals(mnem) || "ora".equals(mnem) || "eor".equals(mnem) ||
-               "alr".equals(mnem) || "arr".equals(mnem) || "anc".equals(mnem)) {
+               "alr".equals(mnem) || "arr".equals(mnem) || "anc".equals(mnem) ||
+               "isc".equals(mnem) || "slo".equals(mnem) || "rla".equals(mnem) || "sre".equals(mnem) || "rra".equals(mnem)) {
                currentValA = null;
                loadRefA = null;
             }
@@ -501,7 +536,8 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
             }
 
             // Stores into Zero-Page
-            if(mode == CpuAddressingMode.ZP && operand != null && !Pass5RedundantStoreAndReloadElimination.isHardwareAddress(operand)) {
+            if(mode == CpuAddressingMode.ZP && operand != null && ("sta".equals(mnem) || "stx".equals(mnem) || "sty".equals(mnem)) &&
+               !isVolatileOrHardwareOperand(inst, currentScope, resolver, getProgram())) {
                String canon = Pass5RedundantStoreAndReloadElimination.getCanonical(operand, currentScopeAliases, globalAliasMap);
                String target = (canon != null && !canon.isEmpty()) ? canon : operand.trim();
                String storedVal = null;
@@ -545,19 +581,23 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                   if(zpTarget.equals(currentValY)) { currentValY = null; loadRefY = null; }
                }
             } else if(ZP_MODIFY_MNEMONICS.contains(mnem)) {
-               if(mode == CpuAddressingMode.IZY || mode == CpuAddressingMode.IZX
+               if(mode == CpuAddressingMode.ZPX || mode == CpuAddressingMode.ZPY
+                     || mode == CpuAddressingMode.IZY || mode == CpuAddressingMode.IZX
                      || mode == CpuAddressingMode.ABX || mode == CpuAddressingMode.ABY) {
                   knownZp.clear();
+                  if(currentValA != null && currentValA.startsWith("zp:")) { currentValA = null; loadRefA = null; }
+                  if(currentValX != null && currentValX.startsWith("zp:")) { currentValX = null; loadRefX = null; }
+                  if(currentValY != null && currentValY.startsWith("zp:")) { currentValY = null; loadRefY = null; }
                } else if(operand != null) {
-               // Any other instruction that modifies ZP memory invalidates that ZP location
-               String canon = Pass5RedundantStoreAndReloadElimination.getCanonical(operand, currentScopeAliases, globalAliasMap);
-               String modifiedZp = (canon != null && !canon.isEmpty()) ? canon : operand.trim();
-               knownZp.remove(modifiedZp);
-               final String zpMod = "zp:" + modifiedZp;
-               knownZp.values().removeIf(val -> val.equals(zpMod));
-               if(zpMod.equals(currentValA)) { currentValA = null; loadRefA = null; }
-               if(zpMod.equals(currentValX)) { currentValX = null; loadRefX = null; }
-               if(zpMod.equals(currentValY)) { currentValY = null; loadRefY = null; }
+                  // Any other instruction that modifies ZP memory invalidates that ZP location
+                  String canon = Pass5RedundantStoreAndReloadElimination.getCanonical(operand, currentScopeAliases, globalAliasMap);
+                  String modifiedZp = (canon != null && !canon.isEmpty()) ? canon : operand.trim();
+                  knownZp.remove(modifiedZp);
+                  final String zpMod = "zp:" + modifiedZp;
+                  knownZp.values().removeIf(val -> val.equals(zpMod));
+                  if(zpMod.equals(currentValA)) { currentValA = null; loadRefA = null; }
+                  if(zpMod.equals(currentValX)) { currentValX = null; loadRefX = null; }
+                  if(zpMod.equals(currentValY)) { currentValY = null; loadRefY = null; }
                }
             }
          }

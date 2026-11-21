@@ -147,6 +147,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
             // Pattern 1c: LDA <mem>; STA <dst>; TAX -> LAX <mem>; STA <dst>
             // -------------------------------------------------------------
             if(mnem1.equals("lda") && mnem2.equals("sta") &&
+               !CpuAddressingMode.ABX.equals(mode2) && !CpuAddressingMode.ZPX.equals(mode2) && !CpuAddressingMode.IZX.equals(mode2) &&
                (mode1.equals(CpuAddressingMode.ZP) || mode1.equals(CpuAddressingMode.ABS) ||
                 mode1.equals(CpuAddressingMode.IZY) || mode1.equals(CpuAddressingMode.ABY) ||
                 mode1.equals(CpuAddressingMode.ZPY) || mode1.equals(CpuAddressingMode.IZX))) {
@@ -297,8 +298,8 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                                      || (resolver != null && resolver.resolve(inst1.getOperand1()).equals(resolver.resolve(inst2.getOperand1()))));
 
             if(sameOperand &&
-               !isVolatileOrHardwareOperand(inst1.getOperand1(), currentScope, resolver, getProgram()) &&
-               !isVolatileOrHardwareOperand(inst2.getOperand1(), currentScope, resolver, getProgram())) {
+               !isVolatileOrHardwareOperand(inst1, currentScope, resolver, getProgram()) &&
+               !isVolatileOrHardwareOperand(inst2, currentScope, resolver, getProgram())) {
                String combinedMnemonic = null;
 
                if(mnem1.equals("dec") && mnem2.equals("cmp")) {
@@ -334,12 +335,13 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
             // -------------------------------------------------------------
             if((mnem1.equals("dec") || mnem1.equals("inc") || mnem1.equals("asl") || mnem1.equals("rol") || mnem1.equals("lsr") || mnem1.equals("ror")) &&
                !mode1.equals(CpuAddressingMode.NON) && mnem2.equals("lda") && inst1.getOperand1() != null &&
-               !isVolatileOrHardwareOperand(inst1.getOperand1(), currentScope, resolver, getProgram()) &&
-               !isVolatileOrHardwareOperand(inst2.getOperand1(), currentScope, resolver, getProgram())) {
+               !isVolatileOrHardwareOperand(inst1, currentScope, resolver, getProgram()) &&
+               !isVolatileOrHardwareOperand(inst2, currentScope, resolver, getProgram())) {
                int idx3 = findNextInstruction(allLines, nextIdx + 1);
                if(idx3 != -1) {
                   AsmInstruction inst3 = (AsmInstruction) allLines.get(idx3).line;
-                  if(inst3.getCpuOpcode() != null && !inst3.isNoOptimize()) {
+                  if(inst3.getCpuOpcode() != null && !inst3.isNoOptimize() &&
+                     !isVolatileOrHardwareOperand(inst3, currentScope, resolver, getProgram())) {
                      String mnem3 = inst3.getCpuOpcode().getMnemonic();
                      CpuAddressingMode mode3 = inst3.getCpuOpcode().getAddressingMode();
                      String combinedMnem = null;
@@ -351,11 +353,32 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                      else if(mnem1.equals("ror") && mnem3.equals("adc")) combinedMnem = "rra";
                      if(combinedMnem != null && mode1.equals(mode3) && inst3.getOperand1() != null &&
                         (inst1.getOperand1().equals(inst3.getOperand1()) || (resolver != null && resolver.resolve(inst1.getOperand1()).equals(resolver.resolve(inst3.getOperand1()))))) {
-                        // Ensure LDA src cannot alias m
-                        boolean srcDisjoint = mode2.equals(CpuAddressingMode.IMM) ||
-                           ((mode2.equals(CpuAddressingMode.ZP) || mode2.equals(CpuAddressingMode.ABS)) && inst2.getOperand1() != null &&
-                            !inst2.getOperand1().equals(inst1.getOperand1()) &&
-                            (resolver == null || !resolver.resolve(inst2.getOperand1()).equals(resolver.resolve(inst1.getOperand1()))));
+                        // KRIT-05: Strict pointer/index aliasing guard before hoisting LDA src before RMW m.
+                        // If mode1 is indexed or indirect (ZPX/ZPY/ABX/ABY/IZX/IZY), ONLY allow immediate mode2!
+                        boolean srcDisjoint = false;
+                        if(mode2.equals(CpuAddressingMode.IMM)) {
+                           srcDisjoint = true;
+                        } else if((mode1.equals(CpuAddressingMode.ZP) || mode1.equals(CpuAddressingMode.ABS)) &&
+                                  (mode2.equals(CpuAddressingMode.ZP) || mode2.equals(CpuAddressingMode.ABS)) &&
+                                  inst2.getOperand1() != null) {
+                           String canon1 = resolver != null ? resolver.resolve(inst1.getOperand1()) : inst1.getOperand1().trim();
+                           String canon2 = resolver != null ? resolver.resolve(inst2.getOperand1()) : inst2.getOperand1().trim();
+                           if(!inst2.getOperand1().equals(inst1.getOperand1()) && !canon2.equals(canon1)) {
+                              String base1 = getBaseVar(canon1);
+                              String base2 = getBaseVar(canon2);
+                              boolean num1 = parseHexOrDecAddress(base1) != null;
+                              boolean num2 = parseHexOrDecAddress(base2) != null;
+                              if(base1.equals(base2)) {
+                                 int off1 = getOffset(canon1);
+                                 int off2 = getOffset(canon2);
+                                 srcDisjoint = (off1 >= 0 && off2 >= 0 && off1 != off2);
+                              } else if(num1 == num2) {
+                                 // Both are distinct concrete numeric addresses OR both are distinct non-aliased symbols
+                                 // Guard against symbolic expressions like arr+x where offset isn't a plain integer
+                                 srcDisjoint = (getOffset(canon1) >= 0 && getOffset(canon2) >= 0);
+                              }
+                           }
+                        }
                         if(srcDisjoint) {
                            CpuOpcode combinedOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(combinedMnem, mode1, false);
                            if(combinedOp != null) {
@@ -458,6 +481,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                                             mode3.equals(CpuAddressingMode.ZPY) || mode3.equals(CpuAddressingMode.IZX);
                      if(validSaxMode &&
                         isRegDeadAlongPath("A", allLines, idx3 + 1, new HashSet<>(), currentScope, getProgram()) &&
+                        isZpFfDeadAlongPath(allLines, idx3 + 1, new HashSet<>(), currentScope, resolver) &&
                         (getLiveFlagsAfter(allLines, idx3, currentScope, getProgram()) & FLAG_NZ) == 0) {
                         CpuOpcode saxOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("sax", mode3, false);
                         if(saxOp != null) {
@@ -472,8 +496,9 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                      }
                   }
                }
-               // ILL-06C: STX $ff; AND $ff -> AXS #0; TXA (when X and C are dead after AND)
+               // ILL-06C: STX $ff; AND $ff -> AXS #0; TXA (when X, C, and $ff are dead after AND)
                if(isRegDeadAlongPath("X", allLines, nextIdx + 1, new HashSet<>(), currentScope, getProgram()) &&
+                  isZpFfDeadAlongPath(allLines, nextIdx + 1, new HashSet<>(), currentScope, resolver) &&
                   !isFlagCLiveAfter(allLines, nextIdx, currentScope, getProgram())) {
                   CpuOpcode axsOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("axs", CpuAddressingMode.IMM, false);
                   CpuOpcode txaOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("txa", CpuAddressingMode.NON, false);
@@ -552,7 +577,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                         int targetIdx = findLabelIndex(allLines, inst4.getOperand1(), idx4);
                         boolean aDeadTarget = targetIdx != -1 && isRegDeadAlongPath("A", allLines, targetIdx + 1, new HashSet<>(), currentScope, getProgram());
                         boolean aDeadFall = isRegDeadAlongPath("A", allLines, idx4 + 1, new HashSet<>(), currentScope, getProgram());
-                        if(aDeadTarget && aDeadFall && !isFlagCLiveAfter(allLines, idx4, currentScope, getProgram())) {
+                        if(aDeadTarget && aDeadFall && (getLiveFlagsAfter(allLines, idx4, currentScope, getProgram()) & (FLAG_C | FLAG_N)) == 0) {
                            CpuOpcode ldaImm = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lda", CpuAddressingMode.IMM, false);
                            CpuOpcode dcpOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("dcp", mode1, false);
                            if(ldaImm != null && dcpOp != null) {
@@ -577,6 +602,73 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
       }
 
       return overallModified;
+   }
+
+   private static boolean isZpFfDeadAlongPath(List<LineRef> allLines, int startIdx, Set<String> visitedLabels, String currentScope, CanonicalResolver resolver) {
+      for(int m = startIdx; m < allLines.size(); m++) {
+         LineRef cand = allLines.get(m);
+         if(cand.line instanceof AsmComment || cand.line instanceof AsmConstant || cand.line instanceof AsmLabelDecl) continue;
+         if(cand.line instanceof AsmLabel) continue;
+         if(cand.line instanceof AsmInstruction inst) {
+            CpuOpcode op = inst.getCpuOpcode();
+            if(op == null) return false;
+            String mnem = op.getMnemonic();
+            CpuAddressingMode mode = op.getAddressingMode();
+            String operand = inst.getOperand1();
+
+            if(mnem.equals("rts") || mnem.equals("rti")) {
+               return true; // $ff is transient scratch ZP, not live across procedure return
+            }
+            if(mnem.equals("jsr")) {
+               return false;
+            }
+            if(mnem.equals("jmp")) {
+               if(mode.equals(CpuAddressingMode.IND) || mode.equals(CpuAddressingMode.IAX)) return false;
+               String target = inst.getOperandJumpTarget();
+               if(target != null && visitedLabels.add(target)) {
+                  int targetIdx = findLabelIndex(allLines, target, m, currentScope);
+                  if(targetIdx != -1) {
+                     return isZpFfDeadAlongPath(allLines, targetIdx + 1, visitedLabels, currentScope, resolver);
+                  }
+               }
+               return false;
+            }
+            if(mnem.startsWith("b")) {
+               // Conditional branch: $ff must be dead on both fallthrough and branch target
+               String target = inst.getOperandJumpTarget();
+               if(target != null && visitedLabels.size() < 4 && visitedLabels.add(target)) {
+                  int targetIdx = findLabelIndex(allLines, target, m, currentScope);
+                  if(targetIdx != -1) {
+                     return isZpFfDeadAlongPath(allLines, m + 1, new HashSet<>(visitedLabels), currentScope, resolver)
+                         && isZpFfDeadAlongPath(allLines, targetIdx + 1, new HashSet<>(visitedLabels), currentScope, resolver);
+                  }
+               }
+               return false;
+            }
+            if(operand != null) {
+               String canon = resolver != null ? resolver.resolve(operand) : operand.trim();
+               boolean isFf = isZpAddressOperand(operand, "$ff") || isZpAddressOperand(canon, "$ff") || "255".equals(operand.trim());
+               boolean isFe = isZpAddressOperand(operand, "$fe") || isZpAddressOperand(canon, "$fe") || "254".equals(operand.trim());
+               // Indirect addressing through ($fe) reads both $fe and $ff!
+               if(isIndirectAddressingMode(mode) && (isFe || isFf)) {
+                  return false;
+               }
+               if(mode == CpuAddressingMode.ZPX || mode == CpuAddressingMode.ZPY) {
+                  return false;
+               }
+               if((mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty") || mnem.equals("sax")) &&
+                  mode == CpuAddressingMode.ZP && isFf) {
+                  return true; // $ff overwritten before read
+               }
+               if(isFf) {
+                  return false; // $ff read or RMW
+               }
+            }
+            continue;
+         }
+         break;
+      }
+      return false;
    }
 
    private static boolean isSameLocation(String op1, String op2, Map<String, String> scopeAliases) {

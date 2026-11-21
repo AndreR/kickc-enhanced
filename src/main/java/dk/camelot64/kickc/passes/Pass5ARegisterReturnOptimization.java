@@ -29,13 +29,16 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
       if(getProgram().getScope() == null) return false;
       List<LineRef> allLines = flattenLines(getAsmProgram());
       if(allLines.isEmpty()) return false;
+      Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
 
-      // Map procedure name -> scope range in allLines
+      // Map procedure name -> scope range in allLines, and collect per-scope .label declarations
       Map<String, int[]> scopeRanges = new LinkedHashMap<>();
+      Map<String, Map<String, String>> scopeLabelDecls = new HashMap<>();
       int scopeStart = -1;
       String curScope = null;
       for(int i = 0; i < allLines.size(); i++) {
-         AsmLine l = allLines.get(i).line;
+         LineRef ref = allLines.get(i);
+         AsmLine l = ref.line;
          if(l instanceof AsmScopeBegin sb) {
             curScope = sb.getLabel();
             scopeStart = i;
@@ -43,12 +46,18 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
             scopeRanges.put(curScope, new int[]{scopeStart, i});
             curScope = null;
             scopeStart = -1;
+         } else if(l instanceof AsmLabelDecl decl) {
+            String sc = ref.scope != null ? ref.scope : "";
+            String n = decl.getName().trim();
+            String v = decl.getValue().trim();
+            if(v.startsWith(".z ")) v = v.substring(3).trim();
+            scopeLabelDecls.computeIfAbsent(sc, k -> new LinkedHashMap<>()).put(n, v);
          }
       }
 
       boolean modified = false;
       for(Procedure proc : getProgram().getScope().getAllProcedures(true)) {
-         if(proc == null) continue;
+         if(proc == null || proc.isAReturn()) continue;
          String procName = proc.getLocalName();
          if("main".equals(procName) || "__start".equals(procName)) continue;
          if(proc.getInterruptType() != null) continue;
@@ -57,17 +66,21 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
          if(Pass2ConstantIdentification.isAddressOfUsed(proc.getRef(), getProgram())) continue;
 
          Variable retVar = proc.getLocalVariable("return");
-         if(retVar == null || !(retVar.getAllocation() instanceof Registers.RegisterZpMem)) continue;
+         if(retVar == null || !(retVar.getAllocation() instanceof Registers.RegisterZpMem zpReg)) continue;
 
          int[] range = scopeRanges.get(procName);
          if(range == null) continue;
 
          String retAsmName = retVar.getAsmName() != null ? retVar.getAsmName() : "return";
          String qualifiedRetName = procName + "." + retAsmName;
+         String retZpHex = String.format("$%02x", zpReg.getZp());
+         CanonicalResolver calleeResolver = scopeResolvers.getOrDefault(procName, scopeResolvers.get(""));
+         String retCanon = calleeResolver != null ? calleeResolver.resolve(retAsmName) : retZpHex;
 
          // 1. Verify callee: every RTS must be immediately preceded (without crossing labels/branches) by sta/stx/sty return
          List<Integer> calleeStoreIndices = new ArrayList<>();
          boolean calleeOk = true;
+         boolean calleeSetsNZForA = true;
          int rtsCount = 0;
          for(int i = range[0] + 1; i < range[1]; i++) {
             AsmLine l = allLines.get(i).line;
@@ -76,7 +89,14 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
                break;
             }
             if(l instanceof AsmInstruction inst && inst.getCpuOpcode() != null) {
-               if("rts".equals(inst.getCpuOpcode().getMnemonic())) {
+               String m = inst.getCpuOpcode().getMnemonic();
+               String op = inst.getOperand1();
+               // Reject recursive calls or tail-calls to self
+               if(("jsr".equals(m) || "jmp".equals(m)) && op != null && procName.equals(op.trim())) {
+                  calleeOk = false;
+                  break;
+               }
+               if("rts".equals(m)) {
                   rtsCount++;
                   int prevIdx = findPrevInstruction(allLines, i - 1);
                   if(prevIdx <= range[0]) {
@@ -102,10 +122,16 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
                   }
                   String pm = prevInst.getCpuOpcode().getMnemonic();
                   String pop = prevInst.getOperand1();
+                  String popCanon = (pop != null && calleeResolver != null) ? calleeResolver.resolve(pop) : null;
+                  boolean matchesRet = pop != null && (pop.equals(retAsmName) || pop.equals(qualifiedRetName)
+                        || (popCanon != null && (popCanon.equals(retCanon) || popCanon.equalsIgnoreCase(retZpHex))));
                   if((pm.equals("sta") || pm.equals("stx") || pm.equals("sty")) &&
                      prevInst.getCpuOpcode().getAddressingMode() == CpuAddressingMode.ZP &&
-                     pop != null && (pop.equals(retAsmName) || pop.equals(qualifiedRetName))) {
+                     matchesRet) {
                      calleeStoreIndices.add(prevIdx);
+                     if(pm.equals("sta") && !areFlagsEstablishedForReg(allLines, prevIdx, "A", procName)) {
+                        calleeSetsNZForA = false;
+                     }
                   } else {
                      calleeOk = false;
                      break;
@@ -115,13 +141,17 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
          }
          if(!calleeOk || rtsCount == 0) continue;
 
-         // Ensure callee itself does not read retAsmName anywhere
+         // Ensure callee itself does not read or otherwise access retAsmName (or any canonical alias) anywhere else
          for(int i = range[0] + 1; i < range[1]; i++) {
             if(calleeStoreIndices.contains(i)) continue;
             AsmLine l = allLines.get(i).line;
             if(l instanceof AsmInstruction inst && inst.getOperand1() != null) {
                String op = inst.getOperand1().trim();
-               if(op.equals(retAsmName) || op.equals(qualifiedRetName)) {
+               String opBase = getBaseVar(op);
+               String opCanon = calleeResolver != null ? calleeResolver.resolve(op) : op;
+               if(op.equals(retAsmName) || op.equals(qualifiedRetName) ||
+                  opBase.equals(retAsmName) || opBase.equals(qualifiedRetName) ||
+                  opCanon.equals(retCanon) || opCanon.equalsIgnoreCase(retZpHex)) {
                   calleeOk = false;
                   break;
                }
@@ -129,37 +159,89 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
          }
          if(!calleeOk) continue;
 
-         // 2. Verify all callers: every jsr procName must be followed by lda.z procName.return (or A dead & no read of return)
+         // Collect per-caller-scope transitive .label aliases pointing to qualifiedRetName (e.g. .label __3 = fn.return)
+         Map<String, Set<String>> callerRetAliases = new HashMap<>();
+         for(Map.Entry<String, Map<String, String>> scEntry : scopeLabelDecls.entrySet()) {
+            String sc = scEntry.getKey();
+            if(procName.equals(sc)) continue;
+            Map<String, String> decls = scEntry.getValue();
+            Set<String> aliases = new HashSet<>();
+            aliases.add(qualifiedRetName);
+            boolean grown = true;
+            while(grown) {
+               grown = false;
+               for(Map.Entry<String, String> d : decls.entrySet()) {
+                  String lhs = d.getKey();
+                  String rhsBase = getBaseVar(d.getValue());
+                  if(aliases.contains(rhsBase) && aliases.add(lhs)) {
+                     grown = true;
+                  }
+               }
+            }
+            if(aliases.size() > 1) {
+               callerRetAliases.put(sc, aliases);
+            }
+         }
+
+         // 2. Verify all callers across the entire program (including recursion / tail-calls / aliases / N&Z flags)
          List<Integer> callerLoadIndices = new ArrayList<>();
          boolean callersOk = true;
          int callCount = 0;
          for(int i = 0; i < allLines.size(); i++) {
             if(i >= range[0] && i <= range[1]) continue;
-            AsmLine l = allLines.get(i).line;
+            LineRef ref = allLines.get(i);
+            String refScope = ref.scope != null ? ref.scope : "";
+            AsmLine l = ref.line;
+            if(l instanceof AsmInlineKickAsm inlineAsm) {
+               String code = inlineAsm.getKickAsmCode();
+               if(code != null && (code.contains(procName) || code.contains(qualifiedRetName))) {
+                  callersOk = false;
+                  break;
+               }
+               continue;
+            }
             if(l instanceof AsmInstruction inst && inst.getCpuOpcode() != null) {
                String m = inst.getCpuOpcode().getMnemonic();
                String op = inst.getOperand1();
-               if("jsr".equals(m) && procName.equals(op)) {
+               String opTrim = op != null ? op.trim() : null;
+               Set<String> scopeAliases = callerRetAliases.get(refScope);
+
+               if("jmp".equals(m) && opTrim != null && procName.equals(opTrim)) {
+                  // Tail-call into procName: caller's callers still expect ZP return ABI -> abort
+                  callersOk = false;
+                  break;
+               }
+               if("jsr".equals(m) && opTrim != null && procName.equals(opTrim)) {
                   callCount++;
                   int nextIdx = findNextInstruction(allLines, i + 1);
                   if(nextIdx != -1) {
                      AsmInstruction nextInst = (AsmInstruction) allLines.get(nextIdx).line;
-                     if(nextInst.getCpuOpcode() != null && !nextInst.isNoOptimize() &&
+                     String nextOp = nextInst.getOperand1() != null ? nextInst.getOperand1().trim() : null;
+                     boolean isDirectRetLoad = nextInst.getCpuOpcode() != null && !nextInst.isNoOptimize() &&
                         "lda".equals(nextInst.getCpuOpcode().getMnemonic()) &&
                         nextInst.getCpuOpcode().getAddressingMode() == CpuAddressingMode.ZP &&
-                        qualifiedRetName.equals(nextInst.getOperand1())) {
+                        nextOp != null && (qualifiedRetName.equals(nextOp) || (scopeAliases != null && scopeAliases.contains(nextOp)));
+                     if(isDirectRetLoad) {
+                        // Ensure N/Z flags are either established in callee before RTS or dead after the eliminated LDA
+                        if(!calleeSetsNZForA && areNZFlagsLiveAfter(allLines, nextIdx, allLines.get(nextIdx).scope, getProgram())) {
+                           callersOk = false;
+                           break;
+                        }
                         callerLoadIndices.add(nextIdx);
                         continue;
                      }
                   }
                   // If not followed by lda.z procName.return, only safe if A is dead after jsr
-                  if(!isRegDeadAlongPath("A", allLines, i + 1, new HashSet<>(), allLines.get(i).scope, getProgram())) {
+                  if(!isRegDeadAlongPath("A", allLines, i + 1, new HashSet<>(), refScope, getProgram())) {
                      callersOk = false;
                      break;
                   }
-               } else if(op != null && op.trim().equals(qualifiedRetName)) {
-                  // Any other reference to procName.return outside the immediate post-jsr lda
-                  if(!callerLoadIndices.contains(i)) {
+               } else if(opTrim != null) {
+                  String opBase = getBaseVar(opTrim);
+                  boolean refsReturn = qualifiedRetName.equals(opTrim) || qualifiedRetName.equals(opBase)
+                        || (scopeAliases != null && (scopeAliases.contains(opTrim) || scopeAliases.contains(opBase)));
+                  if(refsReturn && !callerLoadIndices.contains(i)) {
+                     // Any other reference (including via .label alias) to procName.return -> abort
                      callersOk = false;
                      break;
                   }
@@ -187,6 +269,7 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
          for(int loadIdx : callerLoadIndices) {
             tombstoneLine(allLines, loadIdx);
          }
+         proc.setAReturn(true);
          getLog().append("GEN-06: Optimized 8-bit return of " + procName + " to A register (" + callerLoadIndices.size() + " call sites)");
          modified = true;
       }

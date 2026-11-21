@@ -107,6 +107,13 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
       if(caller.isAxConvention()) {
          return true;
       }
+      // Auto-A-register return ABI (GEN-06)
+      if(caller.isAReturn() != callee.isAReturn()) {
+         return false;
+      }
+      if(caller.isAReturn()) {
+         return true;
+      }
       // Allocation check for return variable
       Variable callerRet = caller.getLocalVar("return");
       Variable calleeRet = callee.getLocalVar("return");

@@ -31,6 +31,7 @@ public class Procedure extends Scope {
    private String interruptType;
    private boolean carryReturn;
    private boolean axConvention;
+   private boolean aReturn;
    /** Comments preceding the procedure in the source code. */
    private List<Comment> comments;
    /** Reserved zeropage addresses. */
@@ -241,6 +242,14 @@ public class Procedure extends Scope {
 
    public void setAxConvention(boolean axConvention) {
       this.axConvention = axConvention;
+   }
+
+   public boolean isAReturn() {
+      return aReturn;
+   }
+
+   public void setAReturn(boolean aReturn) {
+      this.aReturn = aReturn;
    }
 
    public String getInterruptType() {
