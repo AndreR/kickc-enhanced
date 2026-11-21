@@ -58,6 +58,11 @@ public class ConstantBinary implements ConstantValue {
          if(SymbolType.NUMBER.equals(literal.getType(scope)) || (currentType != null && currentType.getSizeBytes() > literal.getType(scope).getSizeBytes())) {
             ((ConstantInteger) literal).setType(currentType);
          }
+         SymbolType finalType = literal.getType(scope);
+         if(finalType instanceof dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed) {
+            dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed fixedType = (dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed) finalType;
+            return new ConstantInteger(fixedType.normalize(((ConstantInteger) literal).getValue()), fixedType);
+         }
       }
       return literal;
    }

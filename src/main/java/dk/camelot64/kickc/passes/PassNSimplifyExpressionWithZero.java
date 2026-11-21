@@ -31,13 +31,30 @@ public class PassNSimplifyExpressionWithZero extends Pass2SsaOptimization {
             Operator operator = programExpression.getOperator();
             if(Operators.PLUS.equals(operator) || Operators.MINUS.equals(operator) || Operators.BOOL_OR.equals(operator) || Operators.BOOL_XOR.equals(operator)) {
                if(isZero(left)) {
-                  getLog().append("Simplifying expression containing zero " + binary.getRight().toString() + " in " + (currentStmt == null ? "" : currentStmt.toString(getProgram(), false)));
-                  if(programExpression instanceof ProgramExpressionBinary.ProgramExpressionBinaryPointerDereferenceIndexed) {
-                     programExpression.set(new PointerDereferenceSimple(binary.getRight()));
+                  if(Operators.MINUS.equals(operator)) {
+                     // 0 - x == -x (never +x)
+                     if(programExpression instanceof ProgramExpressionBinary.ProgramExpressionBinaryConstant && binary.getRight() instanceof ConstantValue) {
+                        getLog().append("Simplifying 0 - constant to negation -" + binary.getRight().toString());
+                        programExpression.set(new ConstantUnary(Operators.NEG, (ConstantValue) binary.getRight()));
+                        modified.set(true);
+                     } else if(currentStmt instanceof dk.camelot64.kickc.model.statements.StatementAssignment) {
+                        dk.camelot64.kickc.model.statements.StatementAssignment assignment = (dk.camelot64.kickc.model.statements.StatementAssignment) currentStmt;
+                        if(assignment.getrValue1() == left && assignment.getrValue2() == right && Operators.MINUS.equals(assignment.getOperator())) {
+                           getLog().append("Simplifying 0 - x to unary negation in " + currentStmt.toString(getProgram(), false));
+                           assignment.setrValue1(null);
+                           assignment.setOperator(Operators.NEG);
+                           modified.set(true);
+                        }
+                     }
                   } else {
-                     programExpression.set(binary.getRight());
+                     getLog().append("Simplifying expression containing zero " + binary.getRight().toString() + " in " + (currentStmt == null ? "" : currentStmt.toString(getProgram(), false)));
+                     if(programExpression instanceof ProgramExpressionBinary.ProgramExpressionBinaryPointerDereferenceIndexed) {
+                        programExpression.set(new PointerDereferenceSimple(binary.getRight()));
+                     } else {
+                        programExpression.set(binary.getRight());
+                     }
+                     modified.set(true);
                   }
-                  modified.set(true);
                } else if(isZero(right)) {
                   getLog().append("Simplifying expression containing zero " + binary.getLeft().toString() + " in " + (currentStmt == null ? "" : currentStmt.toString(getProgram(), false)));
                   if(programExpression instanceof ProgramExpressionBinary.ProgramExpressionBinaryPointerDereferenceIndexed) {

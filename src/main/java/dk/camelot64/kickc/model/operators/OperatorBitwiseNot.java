@@ -17,7 +17,13 @@ public class OperatorBitwiseNot extends OperatorUnary {
    @Override
    public ConstantLiteral calculateLiteral(ConstantLiteral left, ProgramScope scope) {
       if(left instanceof ConstantEnumerable) {
-         return new ConstantInteger(Math.abs(~((ConstantEnumerable) left).getInteger()));
+         long val = ~((ConstantEnumerable) left).getInteger();
+         SymbolType leftType = left.getType(scope);
+         if(leftType instanceof dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed) {
+            dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed fixedType = (dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed) leftType;
+            return new ConstantInteger(fixedType.normalize(val), fixedType);
+         }
+         return new ConstantInteger(val);
       }
       throw new CompileError("Calculation not implemented " + getOperator() + " " + left );
    }

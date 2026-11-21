@@ -97,6 +97,22 @@ public class SymbolTypeIntegerFixed implements SymbolTypeInteger {
    }
 
    /**
+    * Normalizes a 64-bit long value to the exact bit width and signedness of this fixed-width integer type.
+    */
+   public long normalize(long value) {
+      if(bits >= 64) return value;
+      long mask = (1L << bits) - 1L;
+      long masked = value & mask;
+      if(signed) {
+         long signBit = 1L << (bits - 1);
+         if((masked & signBit) != 0) {
+            return masked | ~mask;
+         }
+      }
+      return masked;
+   }
+
+   /**
     * Determines if a value can be represented by the type without loss of information
     *
     * @param number The value to examine

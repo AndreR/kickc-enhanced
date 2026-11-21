@@ -247,49 +247,44 @@ public class AsmFragmentBindings {
         } else if (value instanceof ConstantCastValue) {
             ConstantCastValue castVal = (ConstantCastValue) value;
             ConstantValue val = castVal.getValue();
-            if (castType == null) {
-                SymbolType toType = castVal.getToType();
-                // If value literal not matching cast type then add expression code to transform it into the value space ( eg. value & 0xff )
-
-                if (toType instanceof SymbolTypeIntegerFixed) {
-                    SymbolTypeIntegerFixed integerFixed = (SymbolTypeIntegerFixed) toType;
-                    ConstantLiteral constantLiteral;
-                    Long integerValue;
-                    try {
-                        constantLiteral = val.calculateLiteral(program.getScope());
-                        if (constantLiteral instanceof ConstantInteger) {
-                            integerValue = ((ConstantInteger) constantLiteral).getValue();
-                        } else if (constantLiteral instanceof ConstantPointer) {
-                            integerValue = ((ConstantPointer) constantLiteral).getValue();
-                        } else if (constantLiteral instanceof ConstantChar) {
-                            integerValue = ((ConstantChar) constantLiteral).getInteger();
-                        } else {
-                            throw new InternalError("Not implemented " + constantLiteral);
-                        }
-                    } catch (ConstantNotLiteral e) {
-                        // Assume it is a word
-                        integerValue = 0xffffL;
+            SymbolType toType = castVal.getToType();
+            // If value literal not matching cast type then add expression code to transform it into the value space ( eg. value & 0xff )
+            if (toType instanceof SymbolTypeIntegerFixed) {
+                SymbolTypeIntegerFixed integerFixed = (SymbolTypeIntegerFixed) toType;
+                ConstantLiteral constantLiteral;
+                Long integerValue;
+                try {
+                    constantLiteral = val.calculateLiteral(program.getScope());
+                    if (constantLiteral instanceof ConstantInteger) {
+                        integerValue = ((ConstantInteger) constantLiteral).getValue();
+                    } else if (constantLiteral instanceof ConstantPointer) {
+                        integerValue = ((ConstantPointer) constantLiteral).getValue();
+                    } else if (constantLiteral instanceof ConstantChar) {
+                        integerValue = ((ConstantChar) constantLiteral).getInteger();
+                    } else {
+                        throw new InternalError("Not implemented " + constantLiteral);
                     }
-
-                    if (!integerFixed.contains(integerValue)) {
-                        if (toType.getSizeBytes() == 1) {
-                            val = new ConstantBinary(new ConstantInteger(0xffL, SymbolType.BYTE), Operators.BOOL_AND, val);
-                        } else if (toType.getSizeBytes() == 2) {
-                            val = new ConstantBinary(new ConstantInteger(0xffffL, SymbolType.WORD), Operators.BOOL_AND, val);
-                        } else if (toType.getSizeBytes() == 3) {
-                            val = new ConstantBinary(new ConstantInteger(0xffffffL, SymbolType.TRIBYTE), Operators.BOOL_AND, val);
-                        } else if (toType.getSizeBytes() == 4) {
-                            val = new ConstantBinary(new ConstantInteger(0xffffffffL, SymbolType.DWORD), Operators.BOOL_AND, val);
-                        } else {
-                            throw new InternalError("Not implemented " + toType);
-                        }
-                    }
+                } catch (ConstantNotLiteral e) {
+                    // Assume it is a word
+                    integerValue = 0xffffL;
                 }
 
-                return this.bind(val, toType);
-            } else {
-                return this.bind(val, castType);
+                if (!integerFixed.contains(integerValue)) {
+                    if (toType.getSizeBytes() == 1) {
+                        val = new ConstantBinary(new ConstantInteger(0xffL, SymbolType.BYTE), Operators.BOOL_AND, val);
+                    } else if (toType.getSizeBytes() == 2) {
+                        val = new ConstantBinary(new ConstantInteger(0xffffL, SymbolType.WORD), Operators.BOOL_AND, val);
+                    } else if (toType.getSizeBytes() == 3) {
+                        val = new ConstantBinary(new ConstantInteger(0xffffffL, SymbolType.TRIBYTE), Operators.BOOL_AND, val);
+                    } else if (toType.getSizeBytes() == 4) {
+                        val = new ConstantBinary(new ConstantInteger(0xffffffffL, SymbolType.DWORD), Operators.BOOL_AND, val);
+                    } else {
+                        throw new InternalError("Not implemented " + toType);
+                    }
+                }
             }
+
+            return this.bind(val, castType != null ? castType : toType);
         } else if (value instanceof PointerDereference) {
             PointerDereference deref = (PointerDereference) value;
             SymbolType ptrType = null;
