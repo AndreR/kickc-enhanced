@@ -320,10 +320,256 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                   if(combinedOpcode != null) {
                      getLog().append("Replacing " + inst1.getAsm() + "; " + inst2.getAsm() + " with " + combinedMnemonic.toUpperCase());
                      inst1.setCpuOpcode(combinedOpcode);
-                     ref2.chunk.getLines().remove(inst2);
+                     tombstoneLine(allLines, nextIdx);
                      passModified = true;
                      overallModified = true;
-                     break;
+                     continue;
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // ILL-04: RMW+ALU folding across intervening LDA src:
+            // RMW m; LDA src; ALU m -> LDA src; COMBINED m
+            // -------------------------------------------------------------
+            if((mnem1.equals("dec") || mnem1.equals("inc") || mnem1.equals("asl") || mnem1.equals("rol") || mnem1.equals("lsr") || mnem1.equals("ror")) &&
+               !mode1.equals(CpuAddressingMode.NON) && mnem2.equals("lda") && inst1.getOperand1() != null &&
+               !isVolatileOrHardwareOperand(inst1.getOperand1(), currentScope, resolver, getProgram()) &&
+               !isVolatileOrHardwareOperand(inst2.getOperand1(), currentScope, resolver, getProgram())) {
+               int idx3 = findNextInstruction(allLines, nextIdx + 1);
+               if(idx3 != -1) {
+                  AsmInstruction inst3 = (AsmInstruction) allLines.get(idx3).line;
+                  if(inst3.getCpuOpcode() != null && !inst3.isNoOptimize()) {
+                     String mnem3 = inst3.getCpuOpcode().getMnemonic();
+                     CpuAddressingMode mode3 = inst3.getCpuOpcode().getAddressingMode();
+                     String combinedMnem = null;
+                     if(mnem1.equals("dec") && mnem3.equals("cmp")) combinedMnem = "dcp";
+                     else if(mnem1.equals("inc") && mnem3.equals("sbc")) combinedMnem = "isc";
+                     else if(mnem1.equals("asl") && mnem3.equals("ora")) combinedMnem = "slo";
+                     else if(mnem1.equals("rol") && mnem3.equals("and")) combinedMnem = "rla";
+                     else if(mnem1.equals("lsr") && mnem3.equals("eor")) combinedMnem = "sre";
+                     else if(mnem1.equals("ror") && mnem3.equals("adc")) combinedMnem = "rra";
+                     if(combinedMnem != null && mode1.equals(mode3) && inst3.getOperand1() != null &&
+                        (inst1.getOperand1().equals(inst3.getOperand1()) || (resolver != null && resolver.resolve(inst1.getOperand1()).equals(resolver.resolve(inst3.getOperand1()))))) {
+                        // Ensure LDA src cannot alias m
+                        boolean srcDisjoint = mode2.equals(CpuAddressingMode.IMM) ||
+                           ((mode2.equals(CpuAddressingMode.ZP) || mode2.equals(CpuAddressingMode.ABS)) && inst2.getOperand1() != null &&
+                            !inst2.getOperand1().equals(inst1.getOperand1()) &&
+                            (resolver == null || !resolver.resolve(inst2.getOperand1()).equals(resolver.resolve(inst1.getOperand1()))));
+                        if(srcDisjoint) {
+                           CpuOpcode combinedOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(combinedMnem, mode1, false);
+                           if(combinedOp != null) {
+                              getLog().append("ILL-04: Folding " + inst1.getAsm() + "; " + inst2.getAsm() + "; " + inst3.getAsm() + " -> " + inst2.getAsm() + "; " + combinedMnem + " " + inst3.getOperand1());
+                              inst3.setCpuOpcode(combinedOp);
+                              tombstoneLine(allLines, i);
+                              passModified = true;
+                              overallModified = true;
+                              continue;
+                           }
+                        }
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // ILL-05: ANC #imm ($0B)
+            // Case A: AND #imm; CLC (with (imm & $80) == 0) -> ANC #imm
+            // Case B: AND #imm; CMP #$80; ROR -> ANC #imm; ROR
+            // -------------------------------------------------------------
+            if(mnem1.equals("and") && mode1.equals(CpuAddressingMode.IMM)) {
+               CpuOpcode ancOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("anc", CpuAddressingMode.IMM, false);
+               if(ancOp != null) {
+                  Integer immVal = AsmProgramStaticRegisterValues.getImmValue(inst1.getOperand1());
+                  if(immVal != null && (immVal & 0x80) == 0 && mnem2.equals("clc") && mode2.equals(CpuAddressingMode.NON)) {
+                     getLog().append("ILL-05A: Replacing " + inst1.getAsm() + "; CLC with ANC");
+                     inst1.setCpuOpcode(ancOp);
+                     tombstoneLine(allLines, nextIdx);
+                     passModified = true;
+                     overallModified = true;
+                     continue;
+                  }
+                  if(mnem2.equals("cmp") && mode2.equals(CpuAddressingMode.IMM)) {
+                     Integer cmpVal = AsmProgramStaticRegisterValues.getImmValue(inst2.getOperand1());
+                     if(cmpVal != null && cmpVal == 0x80) {
+                        int idx3 = findNextInstruction(allLines, nextIdx + 1);
+                        if(idx3 != -1) {
+                           AsmInstruction inst3 = (AsmInstruction) allLines.get(idx3).line;
+                           if(inst3.getCpuOpcode() != null && inst3.getCpuOpcode().getMnemonic().equals("ror") &&
+                              inst3.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.NON)) {
+                              getLog().append("ILL-05B: Replacing " + inst1.getAsm() + "; CMP #$80; ROR with ANC; ROR");
+                              inst1.setCpuOpcode(ancOp);
+                              tombstoneLine(allLines, nextIdx);
+                              passModified = true;
+                              overallModified = true;
+                              continue;
+                           }
+                        }
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // ILL-06: SAX ($87/$8F/$83/$97) - strictly ZP/ABS/ZPY/IZX only
+            // Case A: TXA; AND #imm; STA dst -> LDA #imm; SAX dst
+            // -------------------------------------------------------------
+            if(mnem1.equals("txa") && mode1.equals(CpuAddressingMode.NON) &&
+               mnem2.equals("and") && mode2.equals(CpuAddressingMode.IMM)) {
+               int idx3 = findNextInstruction(allLines, nextIdx + 1);
+               if(idx3 != -1) {
+                  AsmInstruction inst3 = (AsmInstruction) allLines.get(idx3).line;
+                  if(inst3.getCpuOpcode() != null && !inst3.isNoOptimize() && inst3.getCpuOpcode().getMnemonic().equals("sta")) {
+                     CpuAddressingMode mode3 = inst3.getCpuOpcode().getAddressingMode();
+                     boolean validSaxMode = mode3.equals(CpuAddressingMode.ZP) || mode3.equals(CpuAddressingMode.ABS) ||
+                                            mode3.equals(CpuAddressingMode.ZPY) || mode3.equals(CpuAddressingMode.IZX);
+                     if(validSaxMode &&
+                        isRegDeadAlongPath("A", allLines, idx3 + 1, new HashSet<>(), currentScope, getProgram()) &&
+                        (getLiveFlagsAfter(allLines, idx3, currentScope, getProgram()) & FLAG_NZ) == 0) {
+                        CpuOpcode ldaImm = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lda", CpuAddressingMode.IMM, false);
+                        CpuOpcode saxOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("sax", mode3, false);
+                        if(ldaImm != null && saxOp != null) {
+                           getLog().append("ILL-06A: Folding TXA; AND #" + inst2.getOperand1() + "; STA " + inst3.getOperand1() + " -> LDA; SAX");
+                           inst2.setCpuOpcode(ldaImm);
+                           inst3.setCpuOpcode(saxOp);
+                           tombstoneLine(allLines, i);
+                           passModified = true;
+                           overallModified = true;
+                           continue;
+                        }
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // ILL-06B & C: STX $ff; AND $ff [; STA dst]
+            // -------------------------------------------------------------
+            if(mnem1.equals("stx") && mode1.equals(CpuAddressingMode.ZP) &&
+               mnem2.equals("and") && mode2.equals(CpuAddressingMode.ZP) &&
+               inst1.getOperand1() != null && inst1.getOperand1().equals(inst2.getOperand1()) &&
+               ("$ff".equalsIgnoreCase(inst1.getOperand1().trim()) || "255".equals(inst1.getOperand1().trim()))) {
+               int idx3 = findNextInstruction(allLines, nextIdx + 1);
+               if(idx3 != -1) {
+                  AsmInstruction inst3 = (AsmInstruction) allLines.get(idx3).line;
+                  if(inst3.getCpuOpcode() != null && !inst3.isNoOptimize() && inst3.getCpuOpcode().getMnemonic().equals("sta")) {
+                     CpuAddressingMode mode3 = inst3.getCpuOpcode().getAddressingMode();
+                     boolean validSaxMode = mode3.equals(CpuAddressingMode.ZP) || mode3.equals(CpuAddressingMode.ABS) ||
+                                            mode3.equals(CpuAddressingMode.ZPY) || mode3.equals(CpuAddressingMode.IZX);
+                     if(validSaxMode &&
+                        isRegDeadAlongPath("A", allLines, idx3 + 1, new HashSet<>(), currentScope, getProgram()) &&
+                        (getLiveFlagsAfter(allLines, idx3, currentScope, getProgram()) & FLAG_NZ) == 0) {
+                        CpuOpcode saxOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("sax", mode3, false);
+                        if(saxOp != null) {
+                           getLog().append("ILL-06B: Folding STX $ff; AND $ff; STA " + inst3.getOperand1() + " -> SAX");
+                           inst3.setCpuOpcode(saxOp);
+                           tombstoneLine(allLines, i);
+                           tombstoneLine(allLines, nextIdx);
+                           passModified = true;
+                           overallModified = true;
+                           continue;
+                        }
+                     }
+                  }
+               }
+               // ILL-06C: STX $ff; AND $ff -> AXS #0; TXA (when X and C are dead after AND)
+               if(isRegDeadAlongPath("X", allLines, nextIdx + 1, new HashSet<>(), currentScope, getProgram()) &&
+                  !isFlagCLiveAfter(allLines, nextIdx, currentScope, getProgram())) {
+                  CpuOpcode axsOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("axs", CpuAddressingMode.IMM, false);
+                  CpuOpcode txaOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("txa", CpuAddressingMode.NON, false);
+                  if(axsOp != null && txaOp != null) {
+                     getLog().append("ILL-06C: Replacing STX $ff; AND $ff with AXS #0; TXA");
+                     inst1.setCpuOpcode(axsOp);
+                     inst1.setOperand1("0");
+                     inst2.setCpuOpcode(txaOp);
+                     inst2.setOperand1(null);
+                     passModified = true;
+                     overallModified = true;
+                     continue;
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // ILL-07: AXS #imm ($CB) for constant X stepping
+            // Case A: TXA; CLC; ADC #k; TAX (k in 3..255) -> TXA; AXS #(256 - k)
+            // Case B: TXA; SEC; SBC #k; TAX (k in 3..255) -> TXA; AXS #k
+            // -------------------------------------------------------------
+            if(mnem1.equals("txa") && mode1.equals(CpuAddressingMode.NON) &&
+               ((mnem2.equals("clc") || mnem2.equals("sec")) && mode2.equals(CpuAddressingMode.NON))) {
+               int idx3 = findNextInstruction(allLines, nextIdx + 1);
+               int idx4 = (idx3 != -1) ? findNextInstruction(allLines, idx3 + 1) : -1;
+               if(idx4 != -1) {
+                  AsmInstruction inst3 = (AsmInstruction) allLines.get(idx3).line;
+                  AsmInstruction inst4 = (AsmInstruction) allLines.get(idx4).line;
+                  if(inst3.getCpuOpcode() != null && !inst3.isNoOptimize() && inst4.getCpuOpcode() != null && !inst4.isNoOptimize() &&
+                     inst4.getCpuOpcode().getMnemonic().equals("tax") && inst4.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.NON)) {
+                     String mnem3 = inst3.getCpuOpcode().getMnemonic();
+                     boolean isAdd = mnem2.equals("clc") && mnem3.equals("adc") && inst3.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.IMM);
+                     boolean isSub = mnem2.equals("sec") && mnem3.equals("sbc") && inst3.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.IMM);
+                     if(isAdd || isSub) {
+                        Integer k = AsmProgramStaticRegisterValues.getImmValue(inst3.getOperand1());
+                        if(k != null && k >= 3 && k <= 255 &&
+                           isRegDeadAlongPath("A", allLines, idx4 + 1, new HashSet<>(), currentScope, getProgram()) &&
+                           (getLiveFlagsAfter(allLines, idx4, currentScope, getProgram()) & FLAG_V) == 0) {
+                           CpuOpcode axsOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("axs", CpuAddressingMode.IMM, false);
+                           if(axsOp != null) {
+                              int axsImm = isAdd ? ((256 - k) & 0xff) : (k & 0xff);
+                              getLog().append("ILL-07: Folding TXA; " + mnem2 + "; " + mnem3 + " #" + k + "; TAX -> TXA; AXS #$" + Integer.toHexString(axsImm));
+                              inst3.setCpuOpcode(axsOp);
+                              inst3.setOperand1("$" + Integer.toHexString(axsImm));
+                              tombstoneLine(allLines, nextIdx);
+                              tombstoneLine(allLines, idx4);
+                              passModified = true;
+                              overallModified = true;
+                              continue;
+                           }
+                        }
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // ILL-08A: Memory loop counter via DCP:
+            // DEC m; LDA m; CMP #c; BEQ/BNE target -> LDA #c; DCP m; BEQ/BNE target
+            // -------------------------------------------------------------
+            if(mnem1.equals("dec") && (mode1.equals(CpuAddressingMode.ZP) || mode1.equals(CpuAddressingMode.ABS)) &&
+               mnem2.equals("lda") && mode1.equals(mode2) &&
+               inst1.getOperand1() != null && inst2.getOperand1() != null &&
+               (inst1.getOperand1().equals(inst2.getOperand1()) || (resolver != null && resolver.resolve(inst1.getOperand1()).equals(resolver.resolve(inst2.getOperand1())))) &&
+               !isVolatileOrHardwareOperand(inst1.getOperand1(), currentScope, resolver, getProgram())) {
+               int idx3 = findNextInstruction(allLines, nextIdx + 1);
+               int idx4 = (idx3 != -1) ? findNextInstruction(allLines, idx3 + 1) : -1;
+               if(idx4 != -1) {
+                  AsmInstruction inst3 = (AsmInstruction) allLines.get(idx3).line;
+                  AsmInstruction inst4 = (AsmInstruction) allLines.get(idx4).line;
+                  if(inst3.getCpuOpcode() != null && !inst3.isNoOptimize() &&
+                     inst3.getCpuOpcode().getMnemonic().equals("cmp") && inst3.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.IMM) &&
+                     inst4.getCpuOpcode() != null && !inst4.isNoOptimize()) {
+                     String brMnem = inst4.getCpuOpcode().getMnemonic();
+                     if(brMnem.equals("beq") || brMnem.equals("bne")) {
+                        int targetIdx = findLabelIndex(allLines, inst4.getOperand1(), idx4);
+                        boolean aDeadTarget = targetIdx != -1 && isRegDeadAlongPath("A", allLines, targetIdx + 1, new HashSet<>(), currentScope, getProgram());
+                        boolean aDeadFall = isRegDeadAlongPath("A", allLines, idx4 + 1, new HashSet<>(), currentScope, getProgram());
+                        if(aDeadTarget && aDeadFall && !isFlagCLiveAfter(allLines, idx4, currentScope, getProgram())) {
+                           CpuOpcode ldaImm = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lda", CpuAddressingMode.IMM, false);
+                           CpuOpcode dcpOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("dcp", mode1, false);
+                           if(ldaImm != null && dcpOp != null) {
+                              String cImm = inst3.getOperand1();
+                              String mOp = inst1.getOperand1();
+                              getLog().append("ILL-08A: Folding DEC " + mOp + "; LDA " + mOp + "; CMP #" + cImm + "; " + brMnem + " -> LDA #" + cImm + "; DCP " + mOp);
+                              inst1.setCpuOpcode(ldaImm);
+                              inst1.setOperand1(cImm);
+                              inst2.setCpuOpcode(dcpOp);
+                              inst2.setOperand1(mOp);
+                              tombstoneLine(allLines, idx3);
+                              passModified = true;
+                              overallModified = true;
+                              continue;
+                           }
+                        }
+                     }
                   }
                }
             }
