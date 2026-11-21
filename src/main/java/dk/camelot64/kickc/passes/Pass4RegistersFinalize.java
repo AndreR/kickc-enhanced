@@ -80,11 +80,47 @@ public class Pass4RegistersFinalize extends Pass2Base {
 
       
       if(reallocateZp) {
+         // SSA-10: Conditionally reserve $FE/$FF scratch ZP when RegisterMainMem pointers exist
+         if(hasMainMemPointer(liveRangeEquivalenceClassSet)) {
+            reserveScratchZpFeFf();
+         }
          reallocateMemRegisters(liveRangeEquivalenceClassSet, overflowToMainMem);
+         // If ZP overflow moved a pointer to RegisterMainMem and $FE/$FF were not yet reserved, reserve and reallocate
+         if(overflowToMainMem && (!reservedZp.contains(0xFE) || !reservedZp.contains(0xFF)) && hasMainMemPointer(liveRangeEquivalenceClassSet)) {
+            reserveScratchZpFeFf();
+            currentZp = 2;
+            reallocateMemRegisters(liveRangeEquivalenceClassSet, overflowToMainMem);
+         }
       }
       liveRangeEquivalenceClassSet.storeRegisterAllocation();
       if(reallocateZp) {
          shortenAsmNames();
+      }
+   }
+
+   private boolean hasMainMemPointer(LiveRangeEquivalenceClassSet equivalenceClassSet) {
+      for(LiveRangeEquivalenceClass ec : equivalenceClassSet.getEquivalenceClasses()) {
+         boolean isMainMemReg = ec.getRegister() instanceof Registers.RegisterMainMem;
+         for(VariableRef varRef : ec.getVariables()) {
+            Variable var = getProgram().getSymbolInfos().getVariable(varRef);
+            if(var != null && var.getType() instanceof SymbolTypePointer) {
+               if(isMainMemReg || var.isMemoryAreaMain() || var.getRegister() instanceof Registers.RegisterMainMem) {
+                  return true;
+               }
+            }
+         }
+      }
+      return false;
+   }
+
+   private void reserveScratchZpFeFf() {
+      if(!reservedZp.contains(0xFE)) {
+         reservedZp.add(0xFE);
+         getProgram().addReservedZp(0xFE);
+      }
+      if(!reservedZp.contains(0xFF)) {
+         reservedZp.add(0xFF);
+         getProgram().addReservedZp(0xFF);
       }
    }
 

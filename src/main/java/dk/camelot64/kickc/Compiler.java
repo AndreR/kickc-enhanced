@@ -865,9 +865,6 @@ public class Compiler {
       new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing()).generate();
       new Pass4AssertNoCpuClobber(program).check();
 
-      // Remove unnecessary register savings from interrupts {@link InterruptType#HARDWARE_NOCLOBBER}
-      new Pass4InterruptClobberFix(program).fix();
-
       program.endPass4();
 
    }
@@ -935,6 +932,9 @@ public class Compiler {
       if(getLog().isVerboseAsmOptimize()) {
          System.out.println(String.format("   [PASS5] Peephole Optimizations (%d rounds): %6.2f s", pass5Rounds, tOptElapsed / 1000.0));
       }
+
+      // SSA-06: Prune interrupt register saves AFTER Pass 5 peephole passes (which may introduce X/Y clobbers)
+      new Pass4InterruptClobberFix(program).fix();
 
       if(program.getLoopAlignThreshold() > 0) {
          CompilerProgress.status("Pass 5 (ASM & Peephole): Loop alignment...");

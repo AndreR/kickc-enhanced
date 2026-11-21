@@ -12,7 +12,7 @@ import java.util.*;
 public class ControlFlowGraph implements Graph {
 
    private List<Graph.Block> blocks;
-   private final Map<LabelRef, Graph.Block> blockMap = new HashMap<>();
+   private volatile Map<LabelRef, Graph.Block> blockMap = new HashMap<>();
 
    /**
     * Sequence of blocks used when generating ASM
@@ -21,21 +21,25 @@ public class ControlFlowGraph implements Graph {
 
    public ControlFlowGraph(List<Graph.Block> blocks) {
       this.blocks = blocks;
+      Map<LabelRef, Graph.Block> map = new HashMap<>(blocks.size() * 2);
       for(Graph.Block block : blocks) {
-         this.blockMap.put(block.getLabel(), block);
+         map.put(block.getLabel(), block);
       }
+      this.blockMap = map;
    }
 
    public Graph.Block getBlock(LabelRef symbol) {
-      Graph.Block block = blockMap.get(symbol);
+      Map<LabelRef, Graph.Block> current = this.blockMap;
+      Graph.Block block = current.get(symbol);
       if(block != null && Objects.equals(block.getLabel(), symbol)) {
          return block;
       }
-      blockMap.clear();
+      Map<LabelRef, Graph.Block> rebuilt = new HashMap<>(blocks.size() * 2);
       for(Graph.Block b : blocks) {
-         blockMap.put(b.getLabel(), b);
+         rebuilt.put(b.getLabel(), b);
       }
-      return blockMap.get(symbol);
+      this.blockMap = rebuilt;
+      return rebuilt.get(symbol);
    }
 
    public void addBlock(Graph.Block block) {

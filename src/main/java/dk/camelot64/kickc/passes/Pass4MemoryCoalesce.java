@@ -134,16 +134,57 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
     */
    private static Set<ScopeRef> getEquivalenceClassThreads(LiveRangeEquivalenceClass equivalenceClass, Program program, Collection<ScopeRef> threadHeads, CallGraph callGraph) {
       Set<ScopeRef> threads = new LinkedHashSet<>();
+      VariableReferenceInfos refInfos = program.getVariableReferenceInfos();
+      StatementInfos stmtInfos = program.getStatementInfos();
       for(VariableRef varRef : equivalenceClass.getVariables()) {
          Variable variable = program.getScope().getVariable(varRef);
          ScopeRef scopeRef = variable.getScope().getRef();
          if(scopeRef.equals(ScopeRef.ROOT)) {
-            ProcedureRef mainThreadHead = program.getScope().getLocalProcedure(SymbolRef.MAIN_PROC_NAME).getRef();
-            threads.add(mainThreadHead);
+            // SSA-05: Determine actual accessing threads via VariableReferenceInfos instead of blindly assigning main
+            Set<Integer> stmtIndices = new LinkedHashSet<>();
+            Collection<Integer> uses = refInfos.getVarUseStatements(varRef);
+            if(uses != null) stmtIndices.addAll(uses);
+            Collection<Integer> defs = refInfos.getVarDefineStatements(varRef);
+            if(defs != null) stmtIndices.addAll(defs);
+            boolean foundAnyThread = false;
+            for(Integer stmtIdx : stmtIndices) {
+               Graph.Block block = stmtInfos.getBlock(stmtIdx);
+               if(block == null) continue;
+               ScopeRef blockScopeRef = block.getScope();
+               dk.camelot64.kickc.model.symbols.Scope blockScope = program.getScope().getScope(blockScopeRef);
+               while(blockScope != null && !(blockScope instanceof Procedure) && !blockScope.getRef().equals(ScopeRef.ROOT)) {
+                  blockScope = blockScope.getScope();
+               }
+               if(blockScope instanceof Procedure proc) {
+                  ScopeRef procRef = proc.getRef();
+                  if(threadHeads.contains(procRef)) {
+                     threads.add(procRef);
+                     foundAnyThread = true;
+                  }
+                  Collection<ScopeRef> recursiveCallers = callGraph.getRecursiveCallerProcs(procRef);
+                  for(ScopeRef threadHead : threadHeads) {
+                     if(recursiveCallers.contains(threadHead)) {
+                        threads.add(threadHead);
+                        foundAnyThread = true;
+                     }
+                  }
+               }
+            }
+            if(!foundAnyThread) {
+               ProcedureRef startProc = program.getStartProcedure();
+               if(startProc != null) {
+                  threads.add(startProc);
+               } else {
+                  Procedure mainProc = program.getScope().getLocalProcedure(SymbolRef.MAIN_PROC_NAME);
+                  if(mainProc != null) {
+                     threads.add(mainProc.getRef());
+                  }
+               }
+            }
          } else {
             Collection<ScopeRef> recursiveCallers = callGraph.getRecursiveCallerProcs(scopeRef);
             for(ScopeRef threadHead : threadHeads) {
-               if(recursiveCallers.contains(threadHead)) {
+               if(recursiveCallers.contains(threadHead) || threadHead.equals(scopeRef)) {
                   threads.add(threadHead);
                }
             }

@@ -122,6 +122,34 @@ public class LiveRangeInterference {
             }
          }
       }
+
+      // SSA-08: Parallel phi transitions execute sequentially; prevent lost-copy by interfering each phi LHS
+      // with every other phi entry's VariableRef RHS in the same StatementPhiBlock.
+      for(Graph.Block block : program.getGraph().getAllBlocks()) {
+         if(block.hasPhiBlock() && block.getPhiBlock().getPhiVariables().size() > 1) {
+            List<dk.camelot64.kickc.model.statements.StatementPhiBlock.PhiVariable> phiVars = block.getPhiBlock().getPhiVariables();
+            int phiCount = phiVars.size();
+            for(int i = 0; i < phiCount; i++) {
+               VariableRef lhs = phiVars.get(i).getVariable();
+               LiveRangeEquivalenceClass ecLhs = equivalenceClassSet.getEquivalenceClass(lhs);
+               int idxLhs = (ecLhs != null) ? ecToIndex.getOrDefault(ecLhs, -1) : -1;
+               if(idxLhs < 0) continue;
+               for(int j = 0; j < phiCount; j++) {
+                  if(i == j) continue;
+                  for(dk.camelot64.kickc.model.statements.StatementPhiBlock.PhiRValue phiRVal : phiVars.get(j).getValues()) {
+                     if(phiRVal.getrValue() instanceof VariableRef rhs) {
+                        LiveRangeEquivalenceClass ecRhs = equivalenceClassSet.getEquivalenceClass(rhs);
+                        int idxRhs = (ecRhs != null) ? ecToIndex.getOrDefault(ecRhs, -1) : -1;
+                        if(idxRhs >= 0 && idxRhs != idxLhs) {
+                           interference[idxLhs].set(idxRhs);
+                           interference[idxRhs].set(idxLhs);
+                        }
+                     }
+                  }
+               }
+            }
+         }
+      }
    }
 
    public boolean isAllocationOverlapping(RegisterCombination combination) {

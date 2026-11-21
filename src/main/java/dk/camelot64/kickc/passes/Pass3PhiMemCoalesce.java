@@ -126,21 +126,31 @@ public class Pass3PhiMemCoalesce extends Pass2SsaOptimization {
 
       @Override
       public Void visitAssignment(StatementAssignment assignment) {
-         if(assignment.getlValue() instanceof VariableRef) {
+         if(assignment.getlValue() instanceof VariableRef lValRef) {
             LiveRangeEquivalenceClass lValEquivalenceClass =
-                  phiEquivalenceClassSet.getEquivalenceClass((VariableRef) assignment.getlValue());
-            if(lValEquivalenceClass != null && assignment.getOperator() == null && assignment.getrValue1() == null && assignment.getrValue2() instanceof VariableRef) {
+                  phiEquivalenceClassSet.getEquivalenceClass(lValRef);
+            if(lValEquivalenceClass != null && assignment.getOperator() == null && assignment.getrValue1() == null && assignment.getrValue2() instanceof VariableRef assignVar) {
+               // SSA-09: Enforce the same safety guards as EquivalenceClassPhiInitializer
+               Variable lVar = getProgramScope().getVariable(lValRef);
+               Variable rVar = getProgramScope().getVariable(assignVar);
+               if(lVar == null || rVar == null
+                     || lVar.isVolatile() || rVar.isVolatile()
+                     || lVar.isKindLoadStore() || rVar.isKindLoadStore()
+                     || lVar.getRegister() != null || rVar.getRegister() != null
+                     || lVar.getType().getSizeBytes() != rVar.getType().getSizeBytes()
+                     || !lVar.getMemoryArea().equals(rVar.getMemoryArea())) {
+                  return null;
+               }
                // Found copy assignment to a variable in an equivalence class - attempt to coalesce
-               VariableRef assignVar = (VariableRef) assignment.getrValue2();
                LiveRangeEquivalenceClass assignVarEquivalenceClass = phiEquivalenceClassSet.getOrCreateEquivalenceClass(assignVar);
                if(lValEquivalenceClass.equals(assignVarEquivalenceClass)) {
-                  remove.add((VariableRef) assignment.getlValue());
-                  replace.put((VariableRef) assignment.getlValue(), assignVar);
+                  remove.add(lValRef);
+                  replace.put(lValRef, assignVar);
                   getLog().append("Coalesced (already) " + assignment);
                } else if(!lValEquivalenceClass.getLiveRange().overlaps(assignVarEquivalenceClass.getLiveRange())) {
                   phiEquivalenceClassSet.consolidate(lValEquivalenceClass, assignVarEquivalenceClass);
-                  remove.add((VariableRef) assignment.getlValue());
-                  replace.put((VariableRef) assignment.getlValue(), assignVar);
+                  remove.add(lValRef);
+                  replace.put(lValRef, assignVar);
                   getLog().append("Coalesced " + assignment);
                } else {
                   getLog().append("Not coalescing " + assignment);
