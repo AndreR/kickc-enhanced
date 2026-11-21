@@ -32,6 +32,21 @@ public abstract class Pass5AsmOptimization {
    public static final int FLAG_NZV  = FLAG_N | FLAG_Z | FLAG_V;
    public static final int FLAG_ALL  = FLAG_N | FLAG_Z | FLAG_C | FLAG_V;
 
+   private static final AsmComment TOMBSTONE_COMMENT = new AsmComment("", false);
+
+   /**
+    * PF-5: Removes the line at idx from its owning AsmChunk and replaces the entry in allLines
+    * with a zero-effect AsmComment tombstone so single-pass peepholes can continue without O(K*L) restarts.
+    */
+   public static void tombstoneLine(List<LineRef> allLines, int idx) {
+      if(idx < 0 || idx >= allLines.size()) return;
+      LineRef ref = allLines.get(idx);
+      if(ref != null && ref.line != TOMBSTONE_COMMENT) {
+         ref.chunk.getLines().remove(ref.line);
+         allLines.set(idx, new LineRef(ref.index, ref.chunk, ref.indexInChunk, TOMBSTONE_COMMENT, ref.scope));
+      }
+   }
+
    public static class LineRef {
       public final int index;
       public final AsmChunk chunk;

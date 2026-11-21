@@ -88,34 +88,16 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                   String newBranchMnem = mnem3.equals("bcc") ? "beq" : "bne";
                   CpuOpcode newBranchOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(newBranchMnem, CpuAddressingMode.REL, false);
                   if(newBranchOp != null) {
-                     boolean canEliminateCmp = false;
-                     if(mnem2.equals("cmp")) {
-                        if(mnem1.equals("lda") || mnem1.equals("pla") ||
-                           mnem1.equals("tax") || mnem1.equals("txa") ||
-                           mnem1.equals("tay") || mnem1.equals("tya") ||
-                           mnem1.equals("and") || mnem1.equals("ora") || mnem1.equals("eor") ||
-                           mnem1.equals("lax") || mnem1.equals("alr") || mnem1.equals("anc") ||
-                           ((mnem1.equals("asl") || mnem1.equals("lsr") || mnem1.equals("rol") || mnem1.equals("ror")) && mode1.equals(CpuAddressingMode.NON))) {
-                           canEliminateCmp = true;
-                        }
-                     } else if(mnem2.equals("cpx")) {
-                        if(mnem1.equals("ldx") || mnem1.equals("inx") || mnem1.equals("dex") ||
-                           mnem1.equals("tax") || mnem1.equals("tsx") || mnem1.equals("lax") || mnem1.equals("axs")) {
-                           canEliminateCmp = true;
-                        }
-                     } else if(mnem2.equals("cpy")) {
-                        if(mnem1.equals("ldy") || mnem1.equals("iny") || mnem1.equals("dey") || mnem1.equals("tay")) {
-                           canEliminateCmp = true;
-                        }
-                     }
+                     String cmpReg = mnem2.equals("cmp") ? "A" : (mnem2.equals("cpx") ? "X" : (mnem2.equals("cpy") ? "Y" : null));
+                     boolean canEliminateCmp = cmpReg != null && areFlagsEstablishedForReg(allLines, nextIdx, cmpReg, currentScope);
 
                      if(canEliminateCmp) {
                         getLog().append("Eliminating redundant " + inst2.getAsm() + " and converting " + mnem3 + " to " + newBranchMnem);
                         inst3.setCpuOpcode(newBranchOp);
-                        ref2.chunk.getLines().remove(inst2);
+                        tombstoneLine(allLines, nextIdx);
                         passModified = true;
                         overallModified = true;
-                        break;
+                        continue;
                      } else {
                         getLog().append("Converting " + inst2.getAsm() + "; " + mnem3 + " to CMP #0; " + newBranchMnem);
                         inst2.setOperand1("0");
@@ -562,7 +544,8 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
             }
 
             // -------------------------------------------------------------
-            // Pattern 0: Redundant CMP #0 / CPX #0 / CPY #0 elimination
+            // Pattern 0: Redundant CMP #0 / CPX #0 / CPY #0 elimination (FL-03)
+            // Also shorten remaining CPX #0 / CPY #0 -> TXA / TYA when A and C are dead
             // -------------------------------------------------------------
             if(mode1.equals(CpuAddressingMode.IMM) && isZeroOperand(inst1.getOperand1())) {
                String reg = mnem1.equals("cmp") ? "A" : (mnem1.equals("cpx") ? "X" : (mnem1.equals("cpy") ? "Y" : null));
@@ -571,33 +554,55 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                   boolean isZOrNBranch = m2.equals("beq") || m2.equals("bne") || m2.equals("bmi") || m2.equals("bpl");
                   if(isZOrNBranch && areFlagsEstablishedForReg(allLines, i, reg, currentScope)) {
                      getLog().append("Eliminating redundant zero comparison " + inst1.getAsm() + " before " + inst2.getAsm());
-                     ref1.chunk.getLines().remove(inst1);
+                     tombstoneLine(allLines, i);
                      passModified = true;
                      overallModified = true;
-                     break;
+                     continue;
+                  }
+                  if(isZOrNBranch && (mnem1.equals("cpx") || mnem1.equals("cpy")) && !isFlagCLiveAfter(allLines, i, currentScope, getProgram())) {
+                     int targetIdx = findLabelIndex(allLines, inst2.getOperand1(), nextIdx);
+                     boolean targetADead = targetIdx != -1 && isRegDeadAlongPath("A", allLines, targetIdx + 1, new HashSet<>(), currentScope, getProgram());
+                     boolean fallADead = isRegDeadAlongPath("A", allLines, nextIdx + 1, new HashSet<>(), currentScope, getProgram());
+                     if(targetADead && fallADead) {
+                        String xferMnem = mnem1.equals("cpx") ? "txa" : "tya";
+                        CpuOpcode xferOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(xferMnem, CpuAddressingMode.NON, false);
+                        if(xferOp != null) {
+                           getLog().append("Shortening " + inst1.getAsm() + " to " + xferMnem + " before " + inst2.getAsm());
+                           inst1.setCpuOpcode(xferOp);
+                           inst1.setOperand1(null);
+                           passModified = true;
+                           overallModified = true;
+                           continue;
+                        }
+                     }
                   }
                }
             }
 
             // -------------------------------------------------------------
-            // Pattern 0b: Redundant LDA <mem> after DEC <mem> / INC <mem>
+            // Pattern 0b: Redundant LDA/LDX/LDY <mem> after memory RMW (DEC/INC/ASL/LSR/ROL/ROR <mem>) (FL-03)
             // -------------------------------------------------------------
+            boolean isMemRmw = !mode1.equals(CpuAddressingMode.NON) &&
+               (mnem1.equals("dec") || mnem1.equals("inc") || mnem1.equals("asl") || mnem1.equals("lsr") || mnem1.equals("rol") || mnem1.equals("ror"));
+            String loadReg2 = mnem2.equals("lda") ? "A" : (mnem2.equals("ldx") ? "X" : (mnem2.equals("ldy") ? "Y" : null));
             if(inst3 != null && !inst3.isNoOptimize() && branchIdx != -1 &&
-               (mnem1.equals("dec") || mnem1.equals("inc")) && mnem2.equals("lda") &&
-               inst1.getOperand1() != null && inst1.getOperand1().equals(inst2.getOperand1()) && mode1.equals(mode2) &&
+               isMemRmw && loadReg2 != null &&
+               inst1.getOperand1() != null && inst2.getOperand1() != null && mode1.equals(mode2) &&
+               (inst1.getOperand1().equals(inst2.getOperand1())
+                  || (resolver != null && resolver.resolve(inst1.getOperand1()).equals(resolver.resolve(inst2.getOperand1())))) &&
                !isVolatileOrHardwareOperand(inst2.getOperand1(), currentScope, resolver, getProgram())) {
                String mnem3 = inst3.getCpuOpcode() != null ? inst3.getCpuOpcode().getMnemonic() : "";
                boolean isZOrNBranch = mnem3.equals("beq") || mnem3.equals("bne") || mnem3.equals("bmi") || mnem3.equals("bpl");
                if(isZOrNBranch) {
                   int targetIdx = findLabelIndex(allLines, inst3.getOperand1(), branchIdx);
-                  boolean targetDead = targetIdx != -1 && isRegDeadAlongPath("A", allLines, targetIdx + 1, new HashSet<>(), currentScope, getProgram());
-                  boolean fallthroughDead = isRegDeadAlongPath("A", allLines, branchIdx + 1, new HashSet<>(), currentScope, getProgram());
+                  boolean targetDead = targetIdx != -1 && isRegDeadAlongPath(loadReg2, allLines, targetIdx + 1, new HashSet<>(), currentScope, getProgram());
+                  boolean fallthroughDead = isRegDeadAlongPath(loadReg2, allLines, branchIdx + 1, new HashSet<>(), currentScope, getProgram());
                   if(targetDead && fallthroughDead) {
                      getLog().append("Eliminating redundant load " + inst2.getAsm() + " after " + inst1.getAsm() + " before " + inst3.getAsm());
-                     ref2.chunk.getLines().remove(inst2);
+                     tombstoneLine(allLines, nextIdx);
                      passModified = true;
                      overallModified = true;
-                     break;
+                     continue;
                   }
                }
             }
@@ -611,10 +616,10 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                   mnem1.equals("asl") || mnem1.equals("lsr") || mnem1.equals("rol") || mnem1.equals("ror") ||
                   mnem1.equals("lax") || mnem1.equals("alr")) {
                   getLog().append("Eliminating redundant " + inst2.getAsm() + " after " + inst1.getAsm());
-                  ref2.chunk.getLines().remove(inst2);
+                  tombstoneLine(allLines, nextIdx);
                   passModified = true;
                   overallModified = true;
-                  break;
+                  continue;
                }
             }
 
@@ -627,10 +632,74 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                 (mnem1.equals("tya") && mnem2.equals("tay"))) &&
                mode1.equals(CpuAddressingMode.NON) && mode2.equals(CpuAddressingMode.NON)) {
                getLog().append("Eliminating redundant transfer " + inst2.getAsm() + " after " + inst1.getAsm());
-               ref2.chunk.getLines().remove(inst2);
+               tombstoneLine(allLines, nextIdx);
                passModified = true;
                overallModified = true;
-               break;
+               continue;
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 0d2 (FL-04): Transfer-Store folding (TXA; STA dst -> STX dst, TYA; STA dst -> STY dst)
+            // -------------------------------------------------------------
+            if((mnem1.equals("txa") || mnem1.equals("tya")) && mode1.equals(CpuAddressingMode.NON) &&
+               mnem2.equals("sta")) {
+               String srcReg = mnem1.equals("txa") ? "X" : "Y";
+               String storeMnem = mnem1.equals("txa") ? "stx" : "sty";
+               boolean validMode = mnem1.equals("txa")
+                     ? (mode2.equals(CpuAddressingMode.ZP) || mode2.equals(CpuAddressingMode.ABS) || mode2.equals(CpuAddressingMode.ZPY))
+                     : (mode2.equals(CpuAddressingMode.ZP) || mode2.equals(CpuAddressingMode.ABS) || mode2.equals(CpuAddressingMode.ZPX));
+               if(validMode && isRegDeadAlongPath("A", allLines, nextIdx + 1, new HashSet<>(), currentScope, getProgram())) {
+                  boolean nzSafe = (getLiveFlagsAfter(allLines, nextIdx, currentScope, getProgram()) & FLAG_NZ) == 0
+                        || areFlagsEstablishedForReg(allLines, i, srcReg, currentScope);
+                  if(nzSafe) {
+                     CpuOpcode storeOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(storeMnem, mode2, false);
+                     if(storeOp != null) {
+                        getLog().append("Folding " + inst1.getAsm() + "; " + inst2.getAsm() + " -> " + storeMnem + " " + inst2.getOperand1());
+                        inst2.setCpuOpcode(storeOp);
+                        tombstoneLine(allLines, i);
+                        passModified = true;
+                        overallModified = true;
+                        continue;
+                     }
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 0d3 (FL-04): Load-Transfer folding (LDA src; TAY -> LDY src, LDA src; TAX -> LDX src)
+            // -------------------------------------------------------------
+            if(mnem1.equals("lda") && (mnem2.equals("tay") || mnem2.equals("tax")) && mode2.equals(CpuAddressingMode.NON)) {
+               String loadMnem = mnem2.equals("tay") ? "ldy" : "ldx";
+               boolean validMode = mnem2.equals("tay")
+                     ? (mode1.equals(CpuAddressingMode.IMM) || mode1.equals(CpuAddressingMode.ZP) || mode1.equals(CpuAddressingMode.ABS) || mode1.equals(CpuAddressingMode.ZPX) || mode1.equals(CpuAddressingMode.ABX))
+                     : (mode1.equals(CpuAddressingMode.IMM) || mode1.equals(CpuAddressingMode.ZP) || mode1.equals(CpuAddressingMode.ABS) || mode1.equals(CpuAddressingMode.ZPY) || mode1.equals(CpuAddressingMode.ABY));
+               if(validMode && isRegDeadAlongPath("A", allLines, nextIdx + 1, new HashSet<>(), currentScope, getProgram())) {
+                  CpuOpcode loadOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(loadMnem, mode1, false);
+                  if(loadOp != null) {
+                     getLog().append("Folding " + inst1.getAsm() + "; " + inst2.getAsm() + " -> " + loadMnem + " " + inst1.getOperand1());
+                     inst1.setCpuOpcode(loadOp);
+                     tombstoneLine(allLines, nextIdx);
+                     passModified = true;
+                     overallModified = true;
+                     continue;
+                  }
+               }
+            }
+
+            // -------------------------------------------------------------
+            // Pattern 0d4 (FL-04): Dead register transfer elimination (TAX/TAY/TXA/TYA/TSX)
+            // -------------------------------------------------------------
+            if(mode1.equals(CpuAddressingMode.NON) &&
+               (mnem1.equals("tax") || mnem1.equals("tay") || mnem1.equals("txa") || mnem1.equals("tya") || mnem1.equals("tsx"))) {
+               String dstReg = (mnem1.equals("tax") || mnem1.equals("tsx")) ? "X" : (mnem1.equals("tay") ? "Y" : "A");
+               if(isRegDeadAlongPath(dstReg, allLines, i + 1, new HashSet<>(), currentScope, getProgram())
+                     && (getLiveFlagsAfter(allLines, i, currentScope, getProgram()) & FLAG_NZ) == 0) {
+                  getLog().append("Eliminating dead register transfer " + inst1.getAsm());
+                  tombstoneLine(allLines, i);
+                  passModified = true;
+                  overallModified = true;
+                  continue;
+               }
             }
 
             // -------------------------------------------------------------
@@ -652,10 +721,10 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
             }
             if(isDeadOverwrittenLoad) {
                getLog().append("Eliminating dead overwritten load " + inst1.getAsm() + " before " + inst2.getAsm());
-               ref1.chunk.getLines().remove(inst1);
+               tombstoneLine(allLines, i);
                passModified = true;
                overallModified = true;
-               break;
+               continue;
             }
 
             // -------------------------------------------------------------

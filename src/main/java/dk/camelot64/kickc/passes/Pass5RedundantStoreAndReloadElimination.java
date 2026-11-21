@@ -210,10 +210,11 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                                  nextInst.setCpuOpcode(newOp);
                                  nextInst.setOperand1(operand);
                                  nextInst.setOperand2(inst.getOperand2());
-                                 ref.chunk.getLines().remove(inst);
+                                 tombstoneLine(allLines, i);
                                  passModified = true;
                                  overallModified = true;
-                                 break;
+                                 aMems.clear();
+                                 continue;
                               }
                            }
                         }
@@ -233,10 +234,10 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                      String canon = getCanonical(operand, localAliases, globalAliasMap);
                      if(aMems.contains(canon)) {
                         getLog().append("Eliminating redundant self-store " + inst.getAsm() + " (A already loaded from " + canon + ")");
-                        ref.chunk.getLines().remove(inst);
+                        tombstoneLine(allLines, i);
                         passModified = true;
                         overallModified = true;
-                        break;
+                        continue;
                      }
                      // Memory at operand was overwritten; invalidate any other registers holding it
                      xMems.remove(canon);
