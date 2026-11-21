@@ -175,9 +175,10 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                         if(!areModifiedFlagsLiveAfter(allLines, i, currentScope, getProgram()) || areFlagsEstablishedForReg(allLines, i, "A", currentScope)) {
                            getLog().append("Eliminating redundant load " + inst.getAsm() + " (A already contains " + canon + ")");
                            ref.chunk.getLines().remove(inst);
+                           allLines.set(i, new LineRef(ref.chunk, ref.indexInChunk, new AsmComment("", false), ref.scope));
                            passModified = true;
                            overallModified = true;
-                           break;
+                           continue;
                         }
                      }
                      aMems.clear();
@@ -259,9 +260,10 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                         if(!areModifiedFlagsLiveAfter(allLines, i, currentScope, getProgram()) || areFlagsEstablishedForReg(allLines, i, "X", currentScope)) {
                            getLog().append("Eliminating redundant load " + inst.getAsm() + " (X already contains " + canon + ")");
                            ref.chunk.getLines().remove(inst);
+                           allLines.set(i, new LineRef(ref.chunk, ref.indexInChunk, new AsmComment("", false), ref.scope));
                            passModified = true;
                            overallModified = true;
-                           break;
+                           continue;
                         }
                      }
                      xMems.clear();
@@ -307,9 +309,10 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                         if(!areModifiedFlagsLiveAfter(allLines, i, currentScope, getProgram()) || areFlagsEstablishedForReg(allLines, i, "Y", currentScope)) {
                            getLog().append("Eliminating redundant load " + inst.getAsm() + " (Y already contains " + canon + ")");
                            ref.chunk.getLines().remove(inst);
+                           allLines.set(i, new LineRef(ref.chunk, ref.indexInChunk, new AsmComment("", false), ref.scope));
                            passModified = true;
                            overallModified = true;
-                           break;
+                           continue;
                         }
                      }
                      yMems.clear();
