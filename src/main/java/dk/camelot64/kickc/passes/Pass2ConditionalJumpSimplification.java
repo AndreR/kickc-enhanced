@@ -5,13 +5,19 @@ import dk.camelot64.kickc.model.iterator.ProgramValue;
 import dk.camelot64.kickc.model.iterator.ProgramValueIterator;
 import dk.camelot64.kickc.model.operators.Operator;
 import dk.camelot64.kickc.model.statements.Statement;
+import dk.camelot64.kickc.model.statements.StatementAsm;
 import dk.camelot64.kickc.model.statements.StatementAssignment;
+import dk.camelot64.kickc.model.statements.StatementCalling;
 import dk.camelot64.kickc.model.statements.StatementConditionalJump;
+import dk.camelot64.kickc.model.statements.StatementKickAsm;
 import dk.camelot64.kickc.model.symbols.Scope;
 import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.types.SymbolType;
+import dk.camelot64.kickc.model.values.LValue;
+import dk.camelot64.kickc.model.values.PointerDereference;
 import dk.camelot64.kickc.model.values.RValue;
 import dk.camelot64.kickc.model.values.ScopeRef;
+import dk.camelot64.kickc.model.values.StructMemberRef;
 import dk.camelot64.kickc.model.values.SymbolRef;
 import dk.camelot64.kickc.model.values.VariableRef;
 import dk.camelot64.kickc.passes.utils.AliasReplacer;
@@ -21,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
@@ -37,8 +44,9 @@ public class Pass2ConditionalJumpSimplification extends Pass2SsaOptimization {
       final List<VariableRef> simpleConditionVars = new ArrayList<>();
       List<SimpleCondition> simpleConditions = getSimpleConditionTodos();
       for(SimpleCondition simpleCondition : simpleConditions) {
-         rewriteSimpleCondition(simpleCondition);
-         simpleConditionVars.add(simpleCondition.conditionVar);
+         if(rewriteSimpleCondition(simpleCondition)) {
+            simpleConditionVars.add(simpleCondition.conditionVar);
+         }
       }
       removeAssignments(getGraph(), simpleConditionVars);
       deleteSymbols(getProgramScope(), simpleConditionVars);
@@ -105,24 +113,38 @@ public class Pass2ConditionalJumpSimplification extends Pass2SsaOptimization {
     *
     * @param simpleCondition The simple condition to rewrite
     */
-   private void rewriteSimpleCondition(SimpleCondition simpleCondition) {
+   private boolean rewriteSimpleCondition(SimpleCondition simpleCondition) {
       final VariableReferenceInfos variableReferenceInfos = getProgram().getVariableReferenceInfos();
       // For each condition/assignment pair - do a rewrite to inline the condition if possible
       final Operator operator = simpleCondition.conditionAssignment.getOperator();
       RValue rValue1 = simpleCondition.conditionAssignment.getrValue1();
       RValue rValue2 = simpleCondition.conditionAssignment.getrValue2();
+      final StatementInfos statementInfos = getProgram().getStatementInfos();
+      final Graph.Block conditionDefineBlock = statementInfos.getBlock(simpleCondition.conditionAssignment);
+      Collection<Statement> statementsBetween = StatementsBetween.find(simpleCondition.conditionAssignment, conditionDefineBlock, simpleCondition.conditionalJump, getGraph());
+
+      // SSA-11: Do not sink pointer dereferences or volatile reads across intervening stores, calls, or inline asm
+      boolean condReadsMemoryOrVolatile = hasPointerOrVolatileRead(getProgramScope(), rValue1) || hasPointerOrVolatileRead(getProgramScope(), rValue2);
+      if(condReadsMemoryOrVolatile && !statementsBetween.isEmpty()) {
+         for(Statement statementBetween : statementsBetween) {
+            if(hasMemoryOrSideEffect(getProgramScope(), statementBetween)) {
+               getLog().append("Condition not sunk across side-effecting statement " + simpleCondition.conditionVar.toString(getProgram()));
+               return false;
+            }
+         }
+      }
+
       final Collection<Variable> referencedLoadStoreVariables = getReferencedLoadStoreVariables(rValue1);
       referencedLoadStoreVariables.addAll(getReferencedLoadStoreVariables(rValue2));
       if(referencedLoadStoreVariables.size() > 0) {
          // Found referenced load/store variables
          // Examine all statements between the conditionAssignment and conditionalJump for modifications
-         final StatementInfos statementInfos = getProgram().getStatementInfos();
-         final Graph.Block conditionDefineBlock = statementInfos.getBlock(simpleCondition.conditionAssignment);
-         Collection<Statement> statementsBetween = StatementsBetween.find(simpleCondition.conditionAssignment, conditionDefineBlock, simpleCondition.conditionalJump, getGraph());
          for(Statement statementBetween : statementsBetween) {
+            boolean stmtHasCallOrIndirectWrite = hasMemoryOrSideEffect(getProgramScope(), statementBetween);
             for(Variable referencedLoadStoreVariable : referencedLoadStoreVariables) {
-               if(variableReferenceInfos.getDefinedVars(statementBetween).contains(referencedLoadStoreVariable.getVariableRef())) {
-                  // A referenced load/store-variable is modified in a statement between the assignment and the condition!
+               if(variableReferenceInfos.getDefinedVars(statementBetween).contains(referencedLoadStoreVariable.getVariableRef())
+                     || stmtHasCallOrIndirectWrite) {
+                  // A referenced load/store-variable may be modified in a statement between the assignment and the condition!
                   getLog().append("Condition not simple " + simpleCondition.conditionVar.toString(getProgram()) + " " + simpleCondition.conditionalJump.toString(getProgram(), false));
                   // Create an intermediate variable copy of the load/store-variable at the position of the condition-variable to preserve the value
                   final ScopeRef conditionDefineScopeRef = conditionDefineBlock.getScope();
@@ -145,6 +167,7 @@ public class Pass2ConditionalJumpSimplification extends Pass2SsaOptimization {
                      rValue2 = (RValue) programValue2.get();
                   }
                   getLog().append("Introduced intermediate condition variable " + intermediateLoadStoreAssignment.toString(getProgram(), false));
+                  break;
                }
             }
          }
@@ -154,6 +177,46 @@ public class Pass2ConditionalJumpSimplification extends Pass2SsaOptimization {
       simpleCondition.conditionalJump.setOperator(operator);
       simpleCondition.conditionalJump.setrValue2(rValue2);
       getLog().append("Simple Condition " + simpleCondition.conditionVar.toString(getProgram()) + " " + simpleCondition.conditionalJump.toString(getProgram(), false));
+      return true;
+   }
+
+   public static boolean hasPointerOrVolatileRead(dk.camelot64.kickc.model.symbols.ProgramScope scope, RValue rValue) {
+      if(rValue == null) return false;
+      AtomicBoolean found = new AtomicBoolean(false);
+      ProgramValueIterator.execute(new ProgramValue.GenericValue(rValue), (pv, stmt, stmtIt, block) -> {
+         if(found.get()) return;
+         if(pv.get() instanceof PointerDereference) {
+            found.set(true);
+         } else if(pv.get() instanceof VariableRef varRef) {
+            Variable v = scope.getVariable(varRef);
+            if(v != null && v.isVolatile()) {
+               found.set(true);
+            }
+         }
+      }, null, null, null);
+      return found.get();
+   }
+
+   public static boolean hasMemoryOrSideEffect(dk.camelot64.kickc.model.symbols.ProgramScope scope, Statement stmt) {
+      if(stmt instanceof StatementCalling || stmt instanceof StatementAsm || stmt instanceof StatementKickAsm) {
+         return true;
+      }
+      if(stmt instanceof StatementAssignment assign) {
+         LValue lv = assign.getlValue();
+         if(lv instanceof PointerDereference || lv instanceof StructMemberRef) {
+            return true;
+         }
+         if(lv instanceof VariableRef varRef) {
+            Variable v = scope.getVariable(varRef);
+            if(v != null && (v.isVolatile() || v.isKindLoadStore())) {
+               return true;
+            }
+         }
+         if(hasPointerOrVolatileRead(scope, assign.getrValue1()) || hasPointerOrVolatileRead(scope, assign.getrValue2())) {
+            return true;
+         }
+      }
+      return false;
    }
 
    /**

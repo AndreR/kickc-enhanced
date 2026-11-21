@@ -127,22 +127,39 @@ public class Pass2ConditionalAndOrRewriting extends Pass2SsaOptimization {
       block.setConditionalSuccessor(newBlockLabel.getRef());
       conditional.setrValue2(conditionAssignment.getrValue1());
 
-      // Replace the phi labels inside the destination block with the new block
+      // SSA-13: Handle degenerate case where both branches target the same destination block
       Graph.Block destBlock = graph.getBlock(destLabel);
-      LinkedHashMap<LabelRef, LabelRef> replacements = new LinkedHashMap<>();
-      replacements.put(block.getLabel(), newBlockLabel.getRef());
-      replaceLabels(destBlock.getPhiBlock(), replacements);
-
-      // Update the default destination PHI block to copy the phi-value for the new block
       Graph.Block defaultDestBlock = graph.getBlock(newBlock.getDefaultSuccessor());
-      if(defaultDestBlock.hasPhiBlock()) {
-         StatementPhiBlock defaultDestPhiBlock = defaultDestBlock.getPhiBlock();
-         for(StatementPhiBlock.PhiVariable phiVariable : defaultDestPhiBlock.getPhiVariables()) {
-            for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
-               if(phiRValue.getPredecessor().equals(block.getLabel())) {
-                  // Found phi-variable with current block as predecessor - copy the phi-value for the new block
-                  phiVariable.setrValue(newBlockLabel.getRef(), phiRValue.getrValue());
-                  break;
+      if(destBlock.equals(defaultDestBlock)) {
+         // Both block (via defaultSuccessor) and newBlock (via conditional+default) reach destBlock:
+         // keep block's existing phi entry and copy it for newBlock.
+         if(destBlock.hasPhiBlock()) {
+            StatementPhiBlock destPhiBlock = destBlock.getPhiBlock();
+            for(StatementPhiBlock.PhiVariable phiVariable : destPhiBlock.getPhiVariables()) {
+               for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
+                  if(phiRValue.getPredecessor().equals(block.getLabel())) {
+                     phiVariable.setrValue(newBlockLabel.getRef(), phiRValue.getrValue());
+                     break;
+                  }
+               }
+            }
+         }
+      } else {
+         // Replace the phi labels inside the destination block with the new block
+         LinkedHashMap<LabelRef, LabelRef> replacements = new LinkedHashMap<>();
+         replacements.put(block.getLabel(), newBlockLabel.getRef());
+         replaceLabels(destBlock.getPhiBlock(), replacements);
+
+         // Update the default destination PHI block to copy the phi-value for the new block
+         if(defaultDestBlock.hasPhiBlock()) {
+            StatementPhiBlock defaultDestPhiBlock = defaultDestBlock.getPhiBlock();
+            for(StatementPhiBlock.PhiVariable phiVariable : defaultDestPhiBlock.getPhiVariables()) {
+               for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
+                  if(phiRValue.getPredecessor().equals(block.getLabel())) {
+                     // Found phi-variable with current block as predecessor - copy the phi-value for the new block
+                     phiVariable.setrValue(newBlockLabel.getRef(), phiRValue.getrValue());
+                     break;
+                  }
                }
             }
          }
@@ -178,29 +195,44 @@ public class Pass2ConditionalAndOrRewriting extends Pass2SsaOptimization {
       // Remove any unrolling from the original conditional as only the new one leaves the loop
       conditional.setDeclaredUnroll(false);
 
-      // Update the default destination PHI block to reflect the last of the conditions
+      // SSA-13: Handle degenerate case where both branches target the same destination block
       Graph.Block defaultDestBlock = graph.getBlock(newBlock.getDefaultSuccessor());
-      if(defaultDestBlock.hasPhiBlock()) {
-         StatementPhiBlock defaultDestPhiBlock = defaultDestBlock.getPhiBlock();
-         for(StatementPhiBlock.PhiVariable phiVariable : defaultDestPhiBlock.getPhiVariables()) {
-            for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
-               if(phiRValue.getPredecessor().equals(block.getLabel())) {
-                  // Found phi-variable with current block as predecessor - change the predecessor
-                  phiRValue.setPredecessor(newBlock.getLabel());
+      Graph.Block conditionalDestBlock = graph.getBlock(conditional.getDestination());
+      if(defaultDestBlock.equals(conditionalDestBlock)) {
+         if(conditionalDestBlock.hasPhiBlock()) {
+            StatementPhiBlock destPhiBlock = conditionalDestBlock.getPhiBlock();
+            for(StatementPhiBlock.PhiVariable phiVariable : destPhiBlock.getPhiVariables()) {
+               for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
+                  if(phiRValue.getPredecessor().equals(block.getLabel())) {
+                     phiVariable.setrValue(newBlockLabel.getRef(), phiRValue.getrValue());
+                     break;
+                  }
                }
             }
          }
-      }
+      } else {
+         // Update the default destination PHI block to reflect the last of the conditions
+         if(defaultDestBlock.hasPhiBlock()) {
+            StatementPhiBlock defaultDestPhiBlock = defaultDestBlock.getPhiBlock();
+            for(StatementPhiBlock.PhiVariable phiVariable : defaultDestPhiBlock.getPhiVariables()) {
+               for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
+                  if(phiRValue.getPredecessor().equals(block.getLabel())) {
+                     // Found phi-variable with current block as predecessor - change the predecessor
+                     phiRValue.setPredecessor(newBlock.getLabel());
+                  }
+               }
+            }
+         }
 
-      Graph.Block conditionalDestBlock = graph.getBlock(conditional.getDestination());
-      if(conditionalDestBlock.hasPhiBlock()) {
-         StatementPhiBlock conditionalDestPhiBlock = conditionalDestBlock.getPhiBlock();
-         for(StatementPhiBlock.PhiVariable phiVariable : conditionalDestPhiBlock.getPhiVariables()) {
-            for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
-               if(phiRValue.getPredecessor().equals(block.getLabel())) {
-                  // Found phi-variable with current block as predecessor - copy the phi-value for the new block
-                  phiVariable.setrValue(newBlockLabel.getRef(), phiRValue.getrValue());
-                  break;
+         if(conditionalDestBlock.hasPhiBlock()) {
+            StatementPhiBlock conditionalDestPhiBlock = conditionalDestBlock.getPhiBlock();
+            for(StatementPhiBlock.PhiVariable phiVariable : conditionalDestPhiBlock.getPhiVariables()) {
+               for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
+                  if(phiRValue.getPredecessor().equals(block.getLabel())) {
+                     // Found phi-variable with current block as predecessor - copy the phi-value for the new block
+                     phiVariable.setrValue(newBlockLabel.getRef(), phiRValue.getrValue());
+                     break;
+                  }
                }
             }
          }

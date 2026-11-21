@@ -2258,8 +2258,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    @Override
    public Object visitIfInitExpr(KickCParser.IfInitExprContext ctx) {
       if(ctx.commaExpr() != null) {
+         StatementSource source = new StatementSource(ctx);
+         PrePostModifierHandler.addPreModifiers(this, ctx.commaExpr(), source);
          RValue rValue = (RValue) this.visit(ctx.commaExpr());
          consumeExpr(rValue);
+         PrePostModifierHandler.addPostModifiers(this, ctx.commaExpr(), source);
       }
       return null;
    }
@@ -4731,10 +4734,13 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public RValue visitExprBinary(KickCParser.ExprBinaryContext ctx) {
-      RValue left = (RValue) this.visit(ctx.expr(0));
-      RValue right = (RValue) this.visit(ctx.expr(1));
       String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
       Operator operator = Operators.getBinary(op);
+      if((Operators.LOGIC_AND.equals(operator) || Operators.LOGIC_OR.equals(operator)) && getCurrentProcedureCompilation() != null) {
+         return visitExprLogicalShortCircuit(ctx, operator);
+      }
+      RValue left = (RValue) this.visit(ctx.expr(0));
+      RValue right = (RValue) this.visit(ctx.expr(1));
       if(left instanceof LValue && isInt24Type(inferExprType(ctx.expr(0)))) {
          left = promoteInt24ToDword(ctx, (LValue) left, inferExprType(ctx.expr(0)));
       }
@@ -4742,6 +4748,128 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          right = promoteInt24ToDword(ctx, (LValue) right, inferExprType(ctx.expr(1)));
       }
       return addExprBinary(ctx, left, operator, right);
+   }
+
+   /**
+    * Lower logical && and || with C short-circuit semantics inside procedures so that
+    * the right-hand operand (including pointer dereferences, volatile reads, and calls)
+    * is only evaluated when the left-hand operand does not determine the result.
+    */
+   private RValue visitExprLogicalShortCircuit(KickCParser.ExprBinaryContext ctx, Operator operator) {
+      boolean isAnd = Operators.LOGIC_AND.equals(operator);
+      RValue left = (RValue) this.visit(ctx.expr(0));
+      if(left instanceof LValue && isInt24Type(inferExprType(ctx.expr(0)))) {
+         left = promoteInt24ToDword(ctx, (LValue) left, inferExprType(ctx.expr(0)));
+      }
+      if(left instanceof ConstantValue leftConst) {
+         try {
+            ConstantLiteral lit = leftConst.calculateLiteral(program.getScope());
+            if(lit != null) {
+               boolean leftBool;
+               if(lit instanceof ConstantBool cb) {
+                  leftBool = cb.getBool();
+               } else if(lit instanceof ConstantInteger ci) {
+                  leftBool = ci.getValue() != 0;
+               } else if(lit instanceof ConstantPointer cp) {
+                  leftBool = cp.getLocation() != 0;
+               } else {
+                  leftBool = true;
+               }
+               if(isAnd && !leftBool) {
+                  return new ConstantBool(false);
+               }
+               if(!isAnd && leftBool) {
+                  return new ConstantBool(true);
+               }
+               // Otherwise right-hand side must be evaluated unconditionally
+               RValue right = (RValue) this.visit(ctx.expr(1));
+               if(right instanceof LValue && isInt24Type(inferExprType(ctx.expr(1)))) {
+                  right = promoteInt24ToDword(ctx, (LValue) right, inferExprType(ctx.expr(1)));
+               }
+               return addExprBinary(ctx, left, operator, right);
+            }
+         } catch(ConstantNotLiteral ignored) {
+            // Fall through: if right is also a ConstantValue, preserve ConstantBinary
+            RValue right = (RValue) this.visit(ctx.expr(1));
+            if(right instanceof ConstantValue) {
+               return addExprBinary(ctx, left, operator, right);
+            }
+            return addExprBinary(ctx, left, operator, right);
+         }
+      }
+
+      StatementSource source = new StatementSource(ctx);
+      Label evalRightLabel = getCurrentScope().addLabelIntermediate();
+      Label shortLabel = getCurrentScope().addLabelIntermediate();
+      Label rightBranchLabel = getCurrentScope().addLabelIntermediate();
+      Label rightFallthroughLabel = getCurrentScope().addLabelIntermediate();
+      Label endLabel = getCurrentScope().addLabelIntermediate();
+
+      Variable shortVarObj = addIntermediateVar();
+      shortVarObj.setType(SymbolType.BOOLEAN);
+      SymbolVariableRef shortVar = shortVarObj.getRef();
+      Variable rightFallthroughVarObj = addIntermediateVar();
+      rightFallthroughVarObj.setType(SymbolType.BOOLEAN);
+      SymbolVariableRef rightFallthroughVar = rightFallthroughVarObj.getRef();
+      Variable rightBranchVarObj = addIntermediateVar();
+      rightBranchVarObj.setType(SymbolType.BOOLEAN);
+      SymbolVariableRef rightBranchVar = rightBranchVarObj.getRef();
+
+      if(isAnd) {
+         // if (left) goto evalRightLabel else shortLabel (false)
+         addStatement(new StatementConditionalJump(left, evalRightLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementLabel(shortLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementAssignment((LValue) shortVar, new ConstantBool(false), true, source, Comment.NO_COMMENTS));
+         addStatement(new StatementJump(endLabel.getRef(), source, Comment.NO_COMMENTS));
+
+         addStatement(new StatementLabel(evalRightLabel.getRef(), source, Comment.NO_COMMENTS));
+         RValue right = (RValue) this.visit(ctx.expr(1));
+         if(right instanceof LValue && isInt24Type(inferExprType(ctx.expr(1)))) {
+            right = promoteInt24ToDword(ctx, (LValue) right, inferExprType(ctx.expr(1)));
+         }
+         addStatement(new StatementConditionalJump(right, rightBranchLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementLabel(rightFallthroughLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementAssignment((LValue) rightFallthroughVar, new ConstantBool(false), true, source, Comment.NO_COMMENTS));
+         addStatement(new StatementJump(endLabel.getRef(), source, Comment.NO_COMMENTS));
+
+         addStatement(new StatementLabel(rightBranchLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementAssignment((LValue) rightBranchVar, new ConstantBool(true), true, source, Comment.NO_COMMENTS));
+         consumeExpr(right);
+      } else {
+         // if (left) goto shortLabel (true) else evalRightLabel
+         addStatement(new StatementConditionalJump(left, shortLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementLabel(evalRightLabel.getRef(), source, Comment.NO_COMMENTS));
+         RValue right = (RValue) this.visit(ctx.expr(1));
+         if(right instanceof LValue && isInt24Type(inferExprType(ctx.expr(1)))) {
+            right = promoteInt24ToDword(ctx, (LValue) right, inferExprType(ctx.expr(1)));
+         }
+         addStatement(new StatementConditionalJump(right, rightBranchLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementLabel(rightFallthroughLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementAssignment((LValue) rightFallthroughVar, new ConstantBool(false), true, source, Comment.NO_COMMENTS));
+         addStatement(new StatementJump(endLabel.getRef(), source, Comment.NO_COMMENTS));
+
+         addStatement(new StatementLabel(rightBranchLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementAssignment((LValue) rightBranchVar, new ConstantBool(true), true, source, Comment.NO_COMMENTS));
+         addStatement(new StatementJump(endLabel.getRef(), source, Comment.NO_COMMENTS));
+
+         addStatement(new StatementLabel(shortLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementAssignment((LValue) shortVar, new ConstantBool(true), true, source, Comment.NO_COMMENTS));
+         consumeExpr(right);
+      }
+
+      addStatement(new StatementLabel(endLabel.getRef(), source, Comment.NO_COMMENTS));
+      StatementPhiBlock phiBlock = new StatementPhiBlock(Comment.NO_COMMENTS);
+      phiBlock.setSource(source);
+      Variable finalVarObj = addIntermediateVar();
+      finalVarObj.setType(SymbolType.BOOLEAN);
+      SymbolVariableRef finalVar = finalVarObj.getRef();
+      StatementPhiBlock.PhiVariable phiVariable = phiBlock.addPhiVariable((VariableRef) finalVar);
+      phiVariable.setrValue(shortLabel.getRef(), shortVar);
+      phiVariable.setrValue(rightFallthroughLabel.getRef(), rightFallthroughVar);
+      phiVariable.setrValue(rightBranchLabel.getRef(), rightBranchVar);
+      addStatement(phiBlock);
+      consumeExpr(left);
+      return finalVar;
    }
 
    private RValue addExprBinary(ParserRuleContext ctx, RValue left, Operator operator, RValue right) {
