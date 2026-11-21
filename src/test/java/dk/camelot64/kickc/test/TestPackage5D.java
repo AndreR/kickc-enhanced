@@ -93,12 +93,35 @@ public class TestPackage5D {
    }
 
    @Test
-   void testGen05_UpliftTrialResultTracksBytesAndCpuRegs() {
+   void testGen05_InterruptHandlerCompilesCleanlyThroughPass4AndPass5() throws Exception {
       var r1 = new Pass4RegisterUpliftCombinations.UpliftTrialResult(null, 100, 12, 1, true);
       var r2 = new Pass4RegisterUpliftCombinations.UpliftTrialResult(null, 100, 10, 2, true);
       assertEquals(12, r1.bytes);
       assertEquals(10, r2.bytes);
       assertEquals(2, r2.upliftedRegCount);
+
+      String code = """
+            #include <stdint.h>
+            volatile uint8_t tick = 0;
+            volatile uint8_t acc = 0;
+            volatile uint8_t * const VIC_IRQ = (uint8_t *)0xD019;
+
+            __interrupt(hardware_all) void raster_isr(void) {
+                tick++;
+                acc += tick;
+                *VIC_IRQ = 1;
+            }
+
+            void main(void) {
+                *((void (**)())0x0314) = &raster_isr;
+                while(1) {}
+            }
+            """;
+      Program program = compileC(code);
+      String asm = program.getAsm().toString();
+      assertTrue(asm.contains("raster_isr:"), "Expected raster_isr label in ASM:\n" + asm);
+      assertTrue(asm.contains("rti"), "Expected rti in interrupt handler ASM:\n" + asm);
+      assertTrue(asm.contains("$d019"), "Expected VIC_IRQ acknowledge in ISR ASM:\n" + asm);
    }
 
    @Test

@@ -77,7 +77,76 @@ public class TestPackage5A {
    }
 
    @Test
+   void testFl03_RedundantCpxCpyZeroEliminated() {
+      Program program = new Program();
+      dk.camelot64.cpufamily6502.Cpu65xx cpu = dk.camelot64.kickc.model.TargetCpu.MOS6502X.getCpu65xx();
+      dk.camelot64.kickc.asm.AsmProgram asm = new dk.camelot64.kickc.asm.AsmProgram(dk.camelot64.kickc.model.TargetCpu.MOS6502X);
+      program.setAsm(asm);
+
+      dk.camelot64.kickc.asm.AsmChunk chunk = asm.startChunk(dk.camelot64.kickc.model.values.ScopeRef.ROOT, null, "fl03");
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmScopeBegin("fl03"));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmInstruction(cpu.getOpcode("ldx", dk.camelot64.cpufamily6502.CpuAddressingMode.ZP, false), "$10", null, null));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmInstruction(cpu.getOpcode("cpx", dk.camelot64.cpufamily6502.CpuAddressingMode.IMM, false), "0", null, null));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmInstruction(cpu.getOpcode("beq", dk.camelot64.cpufamily6502.CpuAddressingMode.REL, false), "__b1", null, null));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmLabel("__b1"));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmInstruction(cpu.getOpcode("rts", dk.camelot64.cpufamily6502.CpuAddressingMode.NON, false), null, null, null));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmScopeEnd());
+
+      assertTrue(new dk.camelot64.kickc.passes.Pass5StandardPeepholeOptimization(program).optimize());
+      assertFalse(asm.toString().contains("cpx #0"), "FL-03: Redundant cpx #0 after ldx should be eliminated! ASM:\n" + asm);
+   }
+
+   @Test
+   void testFl04_DirectTransferStoreEliminatesTxaTya() {
+      Program program = new Program();
+      dk.camelot64.cpufamily6502.Cpu65xx cpu = dk.camelot64.kickc.model.TargetCpu.MOS6502X.getCpu65xx();
+      dk.camelot64.kickc.asm.AsmProgram asm = new dk.camelot64.kickc.asm.AsmProgram(dk.camelot64.kickc.model.TargetCpu.MOS6502X);
+      program.setAsm(asm);
+
+      dk.camelot64.kickc.asm.AsmChunk chunk = asm.startChunk(dk.camelot64.kickc.model.values.ScopeRef.ROOT, null, "fl04");
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmScopeBegin("fl04"));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmInstruction(cpu.getOpcode("ldx", dk.camelot64.cpufamily6502.CpuAddressingMode.IMM, false), "7", null, null));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmInstruction(cpu.getOpcode("txa", dk.camelot64.cpufamily6502.CpuAddressingMode.NON, false), null, null, null));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmInstruction(cpu.getOpcode("sta", dk.camelot64.cpufamily6502.CpuAddressingMode.ZP, false), "$20", null, null));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmInstruction(cpu.getOpcode("lda", dk.camelot64.cpufamily6502.CpuAddressingMode.IMM, false), "0", null, null));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmInstruction(cpu.getOpcode("rts", dk.camelot64.cpufamily6502.CpuAddressingMode.NON, false), null, null, null));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmScopeEnd());
+
+      assertTrue(new dk.camelot64.kickc.passes.Pass5StandardPeepholeOptimization(program).optimize());
+      String out = asm.toString();
+      assertFalse(out.contains("txa"), "FL-04: txa; sta.z $20 with dead A should fold to stx.z $20! ASM:\n" + out);
+      assertTrue(out.contains("stx.z $20") || out.contains("stx $20"), "Expected stx.z $20 in ASM:\n" + out);
+   }
+
+   @Test
    void testFl05_CommutativeAccumulatorForwarding() throws Exception {
+      // Direct Pass5 ASM verification that HOCH-01 made FL-05 reachable for ZP operands:
+      // sta.z hi; lda.z lo; ora.z hi -> sta.z hi; ora.z lo (eliminating lda.z lo!)
+      Program pAsm = new Program();
+      TargetPlatform tp = new TargetPlatform("c64");
+      tp.setCpu(dk.camelot64.kickc.model.TargetCpu.MOS6502X);
+      pAsm.setTargetPlatform(tp);
+      dk.camelot64.cpufamily6502.Cpu65xx cpu = dk.camelot64.kickc.model.TargetCpu.MOS6502X.getCpu65xx();
+      dk.camelot64.kickc.asm.AsmProgram asmProg = new dk.camelot64.kickc.asm.AsmProgram(dk.camelot64.kickc.model.TargetCpu.MOS6502X);
+      pAsm.setAsm(asmProg);
+
+      dk.camelot64.kickc.asm.AsmChunk chunk = asmProg.startChunk(dk.camelot64.kickc.model.values.ScopeRef.ROOT, null, "fl05");
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmScopeBegin("fl05"));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmInstruction(cpu.getOpcode("sta", dk.camelot64.cpufamily6502.CpuAddressingMode.ZP, false), "hi", null, null));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmInstruction(cpu.getOpcode("lda", dk.camelot64.cpufamily6502.CpuAddressingMode.ZP, false), "lo", null, null));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmInstruction(cpu.getOpcode("ora", dk.camelot64.cpufamily6502.CpuAddressingMode.ZP, false), "hi", null, null));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmInstruction(cpu.getOpcode("bne", dk.camelot64.cpufamily6502.CpuAddressingMode.REL, false), "__b1", null, null));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmLabel("__b1"));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmInstruction(cpu.getOpcode("rts", dk.camelot64.cpufamily6502.CpuAddressingMode.NON, false), null, null, null));
+      chunk.addLine(new dk.camelot64.kickc.asm.AsmScopeEnd());
+
+      assertTrue(new dk.camelot64.kickc.passes.Pass5RedundantStoreAndReloadElimination(pAsm).optimize(),
+            "FL-05 / HOCH-01: Commutative accumulator forwarding must fire for ZP operands!");
+      String optOut = asmProg.toString();
+      assertFalse(optOut.contains("lda.z lo"), "FL-05: Redundant lda.z lo must be eliminated! ASM:\n" + optOut);
+      assertTrue(optOut.contains("ora.z lo"), "FL-05: ora.z hi must be rewritten to ora.z lo! ASM:\n" + optOut);
+
+      // End-to-end C compilation check
       String code = """
             #include <stdint.h>
             volatile uint16_t a = 0x1234;
@@ -89,6 +158,8 @@ public class TestPackage5A {
             }
             """;
       Program program = compileC(code);
-      assertNotNull(program.getAsm());
+      String asm = program.getAsm().toString();
+      assertTrue(asm.contains("ora.z w") || asm.contains("ora w"), "Expected FL-05 16-bit zero test ora.z w in ASM:\n" + asm);
+      assertFalse(asm.contains("lda.z w\n    ora"), "FL-05 should eliminate redundant lda.z w before ora! ASM:\n" + asm);
    }
 }

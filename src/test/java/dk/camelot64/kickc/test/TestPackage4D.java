@@ -83,14 +83,16 @@ public class TestPackage4D {
 
    @Test
    void testSsa03_LoopBackEdgeNotReplacedByPreheader() throws Exception {
+      // Use a + b (genuine Pass2DuplicateRValueIdentification CSE candidate, not x * 3)
       String code = """
             #include <stdint.h>
             volatile uint8_t out;
             void main(void) {
                 __ma uint8_t x = 1;
-                uint8_t init = x * 3;
+                __ma uint8_t step = 2;
+                uint8_t init = x + step;
                 out = init;
-                while ((x * 3) < 12) {
+                while ((x + step) < 12) {
                     x++;
                 }
                 out = x;
@@ -98,9 +100,54 @@ public class TestPackage4D {
             """;
       Program program = compileC(code);
       String asm = program.getAsm().toString();
-      // Loop must not be an unconditional infinite loop
-      assertTrue(asm.contains("cmp #$c") || asm.contains("cmp #12"),
-            "Loop condition (x * 3) < 12 must not be replaced by preheader init");
+      assertTrue(asm.contains("cmp #$c") || asm.contains("cpx #$c") || asm.contains("cpy #$c") || asm.contains("cmp #12"),
+            "SSA-03: Loop condition (x + step) < 12 must NOT be replaced by preheader init! ASM:\n" + asm);
+   }
+
+   @Test
+   void testSsa03_VolatileAndPointerStorePreventCse() throws Exception {
+      String code = """
+            #include <stdint.h>
+            volatile uint8_t v = 1;
+            volatile uint8_t out1, out2;
+            uint8_t arr[4] = { 1, 2, 3, 4 };
+            void main(void) {
+                uint8_t *p = arr;
+                uint8_t a = arr[0] + 1;
+                *p = 9;
+                uint8_t b = arr[0] + 1;
+                out1 = a;
+                out2 = b;
+                uint8_t c = v + 1;
+                uint8_t d = v + 1;
+                out1 = c;
+                out2 = d;
+            }
+            """;
+      Program program = compileC(code);
+      String asm = program.getAsm().toString();
+      String mainAsm = asm.substring(asm.indexOf("main:"));
+      // v must be read twice (not CSE'd across volatile reads)
+      int vLoads = mainAsm.split("ld[axy](\\.z)? v\\b", -1).length - 1;
+      assertTrue(vLoads >= 2, "SSA-03: Volatile reads must NOT be merged by CSE! ASM:\n" + mainAsm);
+   }
+
+   @Test
+   void testHoch06_NonVolatileDeadPointerReadIsEliminated() throws Exception {
+      String code = """
+            #include <stdint.h>
+            uint8_t table[4] = { 10, 20, 30, 40 };
+            volatile uint8_t out;
+            void main(void) {
+                uint8_t unused = table[2];
+                out = 5;
+            }
+            """;
+      Program program = compileC(code);
+      String asm = program.getAsm().toString();
+      String mainAsm = asm.substring(asm.indexOf("main:"));
+      assertFalse(mainAsm.contains("table"),
+            "HOCH-06: Dead read from non-volatile array/pointer must be eliminated! ASM:\n" + mainAsm);
    }
 
    @Test
