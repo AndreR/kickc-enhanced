@@ -472,6 +472,7 @@ public class Compiler {
       optimizations.add(new Pass2DeInlineWordDerefIdx(program));
       optimizations.add(new PassNSimplifyConstantZero(program));
       optimizations.add(new PassNSimplifyExpressionWithZero(program));
+      optimizations.add(new Pass2BitShiftCanonicalization(program));
       optimizations.add(new PassNEliminateUnusedConstructors(program));
       optimizations.add(new Pass2EliminateUnusedBlocks(program));       // Notice sequence is important
       optimizations.add(new PassNEliminateUnusedVars(program, true));   // Notice sequence is important

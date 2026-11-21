@@ -171,6 +171,16 @@ public class AsmFragmentTemplateSynthesisRuleRegexManager {
        mapSToU.put("vdsc1", "vduc1");
        mapSToU.put("vdsc2", "vduc2");
        mapSToU.put("vdsc3", "vduc3");
+       // GEN-01: 24-bit tribyte signed-to-unsigned mappings
+       mapSToU.put("vtsz1", "vtuz1");
+       mapSToU.put("vtsz2", "vtuz2");
+       mapSToU.put("vtsz3", "vtuz3");
+       mapSToU.put("vtsm1", "vtum1");
+       mapSToU.put("vtsm2", "vtum2");
+       mapSToU.put("vtsm3", "vtum3");
+       mapSToU.put("vtsc1", "vtuc1");
+       mapSToU.put("vtsc2", "vtuc2");
+       mapSToU.put("vtsc3", "vtuc3");
        mapSToU.put("pbsz1", "pbuz1");
        mapSToU.put("pbsz2", "pbuz2");
        mapSToU.put("pbsz3", "pbuz3");
@@ -189,6 +199,25 @@ public class AsmFragmentTemplateSynthesisRuleRegexManager {
        mapSToU.put("pwsc1", "pwuc1");
        mapSToU.put("pwsc2", "pwuc2");
        mapSToU.put("pwsc3", "pwuc3");
+       // GEN-01: 24-bit & 32-bit pointer signed-to-unsigned mappings
+       mapSToU.put("ptsz1", "ptuz1");
+       mapSToU.put("ptsz2", "ptuz2");
+       mapSToU.put("ptsz3", "ptuz3");
+       mapSToU.put("ptsm1", "ptum1");
+       mapSToU.put("ptsm2", "ptum2");
+       mapSToU.put("ptsm3", "ptum3");
+       mapSToU.put("ptsc1", "ptuc1");
+       mapSToU.put("ptsc2", "ptuc2");
+       mapSToU.put("ptsc3", "ptuc3");
+       mapSToU.put("pdsz1", "pduz1");
+       mapSToU.put("pdsz2", "pduz2");
+       mapSToU.put("pdsz3", "pduz3");
+       mapSToU.put("pdsm1", "pdum1");
+       mapSToU.put("pdsm2", "pdum2");
+       mapSToU.put("pdsm3", "pdum3");
+       mapSToU.put("pdsc1", "pduc1");
+       mapSToU.put("pdsc2", "pduc2");
+       mapSToU.put("pdsc3", "pduc3");
        // Swap z1 and z2
        Map<String, String> mapZM2Swap = new LinkedHashMap<>();
        mapZM2Swap.put("z2", "zn");
@@ -636,6 +665,10 @@ public class AsmFragmentTemplateSynthesisRuleRegexManager {
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)_deref_pb(.)m1(.*)", twoZM1 + "|" + rvalAa + "|" + rvalYy + "|" + lvalDerefZM1, "ldy {m1}\nsty $fe\nldy {m1}+1\nsty $ff\nldy #0\n" + "lda ($fe),y", "$1vb$2aa$3", null, mapZM1));
        // Rewrite _deref_pb.m2_ to _vb.aa_ (if no other M1s)
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)_deref_pb(.)m2(.*)", twoZM2 + "|" + rvalAa + "|" + rvalYy + "|" + lvalDerefZM2, "ldy {m2}\nsty $fe\nldy {m2}+1\nsty $ff\nldy #0\n" + "lda ($fe),y", "$1vb$2aa$3", null, mapZM2));
+       // GEN-03: Generic main-memory pointer write & constant-indexed read/write via $fe/$ff
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("_deref_pb(.)m1=(.*)", twoZM1, null, "vb$1aa=$2", "ldy {m1}\nsty $fe\nldy {m1}+1\nsty $ff\nldy #0\nsta ($fe),y", mapZM1));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("pb(.)m1_derefidx_vbuc1=(.*)", twoZM1 + "|" + twoC1, null, "vb$1aa=$2", "ldy {m1}\nsty $fe\nldy {m1}+1\nsty $ff\nldy #{c1}\nsta ($fe),y", mapZM1C1));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)=pb(.)m1_derefidx_vbuc1", twoZM1 + "|" + twoC1 + "|" + rvalAa + "|" + rvalYy, "ldy {m1}\nsty $fe\nldy {m1}+1\nsty $ff\nldy #{c1}\nlda ($fe),y", "$1=vb$2aa", null, mapZM1C1));
 
        // Replace VB*C1 with AA (only one)
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)vb(.)c1(.*)", lvalC1 + "|" + rvalAa, "lda #{c1}", "$1vb$2aa$3", null, null));
@@ -770,11 +803,16 @@ public class AsmFragmentTemplateSynthesisRuleRegexManager {
        // Rewrite wv.z1=(word)_ror_4 to wv.z1=(word)
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("vw(.*)m1=(.*)_ror_4", rvalAa, null, "vw$1m1=$2", "lsr {m1}+1\nror {m1}\nlsr {m1}+1\nror {m1}\nlsr {m1}+1\nror {m1}\nlsr {m1}+1\nror {m1}", null, null));
 
-       // Rewrite vbuaa=(byte)_rol_N to wbuz1=(byte)
+       // Rewrite vbuaa=(byte)_rol_N to vbuaa=(byte)
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("vbuaa=(.*)_rol_1", rvalAa, null, "vbuaa=$1", "asl", null, null));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("vbuaa=(.*)_rol_2", rvalAa, null, "vbuaa=$1", "asl\nasl", null, null));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("vbuaa=(.*)_rol_3", rvalAa, null, "vbuaa=$1", "asl\nasl\nasl", null, null));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("vbuaa=(.*)_rol_4", rvalAa, null, "vbuaa=$1", "asl\nasl\nasl\nasl", null, null));
+       // GEN-02: Inductive unsigned right-shift synthesis vbuaa=(byte)_ror_1..4
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("vbuaa=(.*)_ror_1", rvalAa, null, "vbuaa=$1", "lsr", null, null));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("vbuaa=(.*)_ror_2", rvalAa, null, "vbuaa=$1", "lsr\nlsr", null, null));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("vbuaa=(.*)_ror_3", rvalAa, null, "vbuaa=$1", "lsr\nlsr\nlsr", null, null));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("vbuaa=(.*)_ror_4", rvalAa, null, "vbuaa=$1", "lsr\nlsr\nlsr\nlsr", null, null));
 
        // Rewrite multiple _derefidx_vbuc1 to use YY
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)_derefidx_vbuc1(.*)_derefidx_vbuc1(.*)", rvalYy + "|" + threeC1, "ldy #{c1}", "$1_derefidx_vbuyy$2_derefidx_vbuyy$3", null, mapC1));
@@ -810,8 +848,8 @@ public class AsmFragmentTemplateSynthesisRuleRegexManager {
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)=(.*c2.*)pb(.)c2_derefidx_vbuyy(.*)", rvalAa, "lda {c2},y", "$1=$2vb$3aa$4", null, null));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)=(.*)pb(.)c2_derefidx_vbuyy(.*c2.*)", rvalAa, "lda {c2},y", "$1=$2vb$3aa$4", null, null));
 
-       // Remove any parenthesis ending up around values
-       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)\\(([vp][bwd][us][mzcaxy][123456axyz])\\)(.*)", null, null, "$1$2$3", null, null));
+       // Remove any parenthesis ending up around values (GEN-01: includes 't' for 24-bit tribyte)
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)\\(([vp][bwtd][us][mzcaxy][123456axyz])\\)(.*)", null, null, "$1$2$3", null, null));
 
        // Rewrite (pbuc1_derefidx_vbuxx) to use YY
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(.*)\\(pb(.)c1_derefidx_vbuxx\\)(.*)", rvalYy + "|" + twoC1, "ldy {c1},x", "$1vb$2yy$3", null, mapC1, "yy"));
@@ -827,26 +865,33 @@ public class AsmFragmentTemplateSynthesisRuleRegexManager {
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("pb(.)c1_derefidx_vbuxx_(lt|gt|le|ge|eq|neq)_(.*)", rvalAa + "|" + twoC1, "lda {c1},x", "vb$1aa_$2_$3", null, mapC1));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("pb(.)c1_derefidx_vbuxx_(lt|gt|le|ge|eq|neq)_(.*c1.*)", rvalAa, "lda {c1},x", "vb$1aa_$2_$3", null, null));
 
-       // Use unsigned ASM to synthesize signed ASM ( ...vbs... -> ...vbu... )
+       // Use unsigned ASM to synthesize signed ASM ( ...vbs... -> ...vbu..., GEN-01: includes 24-bit tribyte vts/pts )
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vbs..)=(vbs..)", null, null, "$1=$2", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vws..)=(vws..)", null, null, "$1=$2", null, mapSToU));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vts..)=(vts..)", null, null, "$1=$2", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vds..)=(vds..)", null, null, "$1=$2", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vbs..)_(eq|neq)_(vbs..)_then_(.*)", null, null, "$1_$2_$3_then_$4", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vws..)_(eq|neq)_(vws..)_then_(.*)", null, null, "$1_$2_$3_then_$4", null, mapSToU));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vts..)_(eq|neq)_(vts..)_then_(.*)", null, null, "$1_$2_$3_then_$4", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vds..)_(eq|neq)_(vds..)_then_(.*)", null, null, "$1_$2_$3_then_$4", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vbs..)=(vbs..)_(band|bxor|bor)_(v.s..)", null, null, "$1=$2_$3_$4", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vws..)=(vws..)_(band|bxor|bor)_(v.s..)", null, null, "$1=$2_$3_$4", null, mapSToU));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vts..)=(vts..)_(band|bxor|bor)_(v.s..)", null, null, "$1=$2_$3_$4", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vds..)=(vds..)_(band|bxor|bor)_(v.s..)", null, null, "$1=$2_$3_$4", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vbs..)=(pbs..)_derefidx_(vbu..)", null, null, "$1=$2_derefidx_$3", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vws..)=(pws..)_derefidx_(vbu..)", null, null, "$1=$2_derefidx_$3", null, mapSToU));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vts..)=(pts..)_derefidx_(vbu..)", null, null, "$1=$2_derefidx_$3", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vds..)=(pds..)_derefidx_(vbu..)", null, null, "$1=$2_derefidx_$3", null, mapSToU));
-       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vbs..)=_(inc|dec)_(vbs..)", null, null, "$1=_$2_$3", null, mapSToU));
-       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vws..)=_(inc|dec)_(vws..)", null, null, "$1=_$2_$3", null, mapSToU));
-       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vds..)=_(inc|dec)_(vds..)", null, null, "$1=_$2_$3", null, mapSToU));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vbs..)=_(inc|dec|neg)_(vbs..)", null, null, "$1=_$2_$3", null, mapSToU));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vws..)=_(inc|dec|neg)_(vws..)", null, null, "$1=_$2_$3", null, mapSToU));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vts..)=_(inc|dec|neg)_(vts..)", null, null, "$1=_$2_$3", null, mapSToU));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vds..)=_(inc|dec|neg)_(vds..)", null, null, "$1=_$2_$3", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vb[su]..)=(vb[su]..)_(plus|minus)_(vb[su]..)", null, null, "$1=$2_$3_$4", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vw[su]..)=(vw[su]..)_(plus|minus)_(vw[su]..)", null, null, "$1=$2_$3_$4", null, mapSToU));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vt[su]..)=(vt[su]..)_(plus|minus)_(vt[su]..)", null, null, "$1=$2_$3_$4", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vd[su]..)=(vd[su]..)_(plus|minus)_(vd[su]..)", null, null, "$1=$2_$3_$4", null, mapSToU));
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vbu..)=_(lo|hi)_vws(z[0-9]|c[0-9]|m[0-9])", null, null, "$1=_$2_vwu$3", null, mapSToU));
+       synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(vb[su]..)=_byte([0-3])_v([wtd])s(z[0-9]|c[0-9]|m[0-9])", null, null, "$1=_byte$2_v$3u$4", null, mapSToU));
 
        // Use Z1/Z2 ASM to synthesize Z1-only code ( ...z1...z1... -> ...z1...z2... )
        synths.add(new AsmFragmentTemplateSynthesisRuleRegex("(v..[zm])1=(v..[zm])1_(plus|minus|band|bxor|bor)_(.*)", oneZM2, null, "$11=$22_$3_$4", null, mapZM1, false));
