@@ -3,7 +3,14 @@ package dk.camelot64.kickc.passes;
 import dk.camelot64.cpufamily6502.CpuAddressingMode;
 import dk.camelot64.cpufamily6502.CpuClobber;
 import dk.camelot64.kickc.asm.*;
+import dk.camelot64.kickc.model.ConstantNotLiteral;
 import dk.camelot64.kickc.model.Program;
+import dk.camelot64.kickc.model.symbols.Procedure;
+import dk.camelot64.kickc.model.symbols.Symbol;
+import dk.camelot64.kickc.model.symbols.Variable;
+import dk.camelot64.kickc.model.values.ConstantChar;
+import dk.camelot64.kickc.model.values.ConstantInteger;
+import dk.camelot64.kickc.model.values.ConstantLiteral;
 import dk.camelot64.kickc.model.values.ScopeRef;
 
 import java.util.*;
@@ -70,15 +77,79 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
       return CpuAddressingMode.IMM.equals(inst.getCpuOpcode().getAddressingMode());
    }
 
+   private Long resolveConstValue(String val, String scope, Map<String, String> asmConstants, CanonicalResolver resolver) {
+      Long direct = parseConstValue(val);
+      if(direct != null) return direct;
+      if(val == null) return null;
+      String t = val.trim();
+      if(t.startsWith("#")) t = t.substring(1).trim();
+      if(t.isEmpty() || t.startsWith("<") || t.startsWith(">")) return null;
+
+      // 1. Resolve via ASM .const declarations (local scope first, then global)
+      if(asmConstants != null) {
+         String cur = t;
+         for(int hop = 0; hop < 8; hop++) {
+            String mapped = null;
+            if(scope != null && !scope.isEmpty()) {
+               mapped = asmConstants.get(scope + "." + cur);
+            }
+            if(mapped == null) {
+               mapped = asmConstants.get(cur);
+            }
+            if(mapped == null) break;
+            Long parsed = parseConstValue(mapped);
+            if(parsed != null) return parsed;
+            cur = mapped.trim();
+            if(cur.startsWith("#")) cur = cur.substring(1).trim();
+            if(cur.startsWith("<") || cur.startsWith(">")) return null;
+         }
+      }
+
+      // 2. Resolve via CanonicalResolver (.label numeric aliases)
+      if(resolver != null) {
+         String resolved = resolver.resolve(t);
+         if(resolved != null && !resolved.equals(t)) {
+            Long parsed = parseConstValue(resolved);
+            if(parsed != null) return parsed;
+         }
+      }
+
+      // 3. Resolve via ProgramScope constant symbol (e.g. const uint8_t RED = 2)
+      if(getProgram() != null && getProgram().getScope() != null) {
+         Symbol sym = null;
+         if(scope != null && !scope.isEmpty()) {
+            Symbol procSym = getProgram().getScope().findSymbol(scope);
+            if(procSym instanceof Procedure proc) {
+               sym = proc.findSymbol(t);
+            }
+         }
+         if(sym == null) {
+            sym = getProgram().getScope().findSymbol(t);
+         }
+         if(sym instanceof Variable v && v.isKindConstant() && v.getInitValue() != null) {
+            try {
+               ConstantLiteral lit = v.getInitValue().calculateLiteral(getProgram().getScope());
+               if(lit instanceof ConstantInteger ci) {
+                  return ci.getInteger();
+               } else if(lit instanceof ConstantChar cc) {
+                  return cc.getInteger();
+               }
+            } catch(ConstantNotLiteral ignored) {
+            }
+         }
+      }
+      return null;
+   }
+
    /**
     * CF-04: Verify that skipping the 2-byte immediate load via .byte $2c (BIT $xxxx)
     * cannot perform a dummy bus read on hardware I/O space ($D000-$DFFF or $0000-$0001).
     * BIT $xxxx forms address (immByte << 8) | opcodeByte.
     */
-   private static boolean isSafeByteSkipImmediate(AsmInstruction inst) {
+   private boolean isSafeByteSkipImmediate(AsmInstruction inst, String scope, Map<String, String> asmConstants, CanonicalResolver resolver) {
       if(!isImmediateLoad(inst) || inst.getLineBytes() != 2) return false;
-      Long val = parseConstValue(inst.getOperand1());
-      if(val == null) return false; // Reject symbolic/label operands like #<IO or #>IO
+      Long val = resolveConstValue(inst.getOperand1(), scope, asmConstants, resolver);
+      if(val == null) return false; // Reject unresolved symbolic/label operands like #<IO or #>IO
       int hiByte = (int) (val & 0xff);
       if(hiByte >= 0xd0 && hiByte <= 0xdf) {
          return false; // $D000-$DFFF (VIC-II, SID, CIA, I/O1/I/O2 cartridge latches)
@@ -135,6 +206,18 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
 
          List<LineRef> allLines = flattenLines(getAsmProgram());
          Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
+         Map<String, String> asmConstants = new HashMap<>();
+         for(LineRef ref : allLines) {
+            if(ref.line instanceof AsmConstant c && c.getName() != null && c.getValue() != null) {
+               String cname = c.getName().trim();
+               String cval = c.getValue().trim();
+               if(ref.scope != null && !ref.scope.isEmpty()) {
+                  asmConstants.put(ref.scope + "." + cname, cval);
+               } else {
+                  asmConstants.put(cname, cval);
+               }
+            }
+         }
 
          // Scan for Pattern B (Branch Byte-Skipping)
          for(int i = 0; i < allLines.size(); i++) {
@@ -186,7 +269,8 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
 
             LineRef ref2 = allLines.get(idx2);
             AsmInstruction inst2 = (AsmInstruction) ref2.line;
-            if(!isSafeByteSkipImmediate(inst2) || inst2.isNoOptimize()) continue;
+            CanonicalResolver scopeRes2 = scopeResolvers.getOrDefault(ref2.scope != null ? ref2.scope : "", scopeResolvers.get(""));
+            if(!isSafeByteSkipImmediate(inst2, ref2.scope, asmConstants, scopeRes2) || inst2.isNoOptimize()) continue;
             String reg2 = inst2.getCpuOpcode().getMnemonic();
             if(!reg1.equals(reg2)) continue; // Must load into same register
 
@@ -221,9 +305,9 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
             int chunkIdx = refJmp.chunk.getLines().indexOf(instJmp);
             if(chunkIdx != -1) {
                refJmp.chunk.getLines().set(chunkIdx, byteSkipper);
+               allLines.set(idxJmp, new LineRef(idxJmp, refJmp.chunk, byteSkipper, refJmp.scope));
                passModified = true;
                overallModified = true;
-               break; // Re-scan
             }
          }
 
@@ -276,13 +360,15 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
             AsmInstruction first1 = insts1.get(0);
             AsmInstruction first2 = insts2.get(0);
 
-            if(!isImmediateLoad(first1) || !isSafeByteSkipImmediate(first2)) continue;
+            CanonicalResolver res1 = scopeResolvers.getOrDefault(p1.name, scopeResolvers.get(""));
+            CanonicalResolver res2 = scopeResolvers.getOrDefault(p2.name, scopeResolvers.get(""));
+            if(!isImmediateLoad(first1) || !isSafeByteSkipImmediate(first2, p2.name, asmConstants, res2)) continue;
             if(!first1.getCpuOpcode().getMnemonic().equals(first2.getCpuOpcode().getMnemonic())) continue;
             if(first1.getLineBytes() != 2 || first2.getLineBytes() != 2) continue;
 
-            // Operands must be pure scalar/numeric constants, NOT label references like #<msg or #>msg
-            Long const1 = parseConstValue(first1.getOperand1());
-            Long const2 = parseConstValue(first2.getOperand1());
+            // Operands must be pure scalar/numeric constants (or resolved .const symbols), NOT label references like #<msg or #>msg
+            Long const1 = resolveConstValue(first1.getOperand1(), p1.name, asmConstants, res1);
+            Long const2 = resolveConstValue(first2.getOperand1(), p2.name, asmConstants, res2);
             if(const1 == null || const2 == null) continue;
 
             // Last instruction must be RTS
@@ -304,8 +390,6 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
             }
 
             // Check if remaining instructions (index 1 to end) are canonically identical across scopes
-            CanonicalResolver res1 = scopeResolvers.getOrDefault(p1.name, scopeResolvers.get(""));
-            CanonicalResolver res2 = scopeResolvers.getOrDefault(p2.name, scopeResolvers.get(""));
             boolean identical = true;
             for(int k = 1; k < insts1.size(); k++) {
                AsmInstruction i1 = insts1.get(k);

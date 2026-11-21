@@ -422,7 +422,32 @@ public abstract class Pass5AsmOptimization {
          return -1;
       }
 
-      // Named label strictly within the active procedure scope
+      // Named label strictly within the active procedure scope:
+      // Fast path: scan locally within the contiguous enclosing scope block around fromIdx (~30 lines vs whole program)
+      if(fromIdx >= 0 && fromIdx < allLines.size() && Objects.equals(targetScope, allLines.get(fromIdx).scope)) {
+         for(int i = fromIdx; i < allLines.size(); i++) {
+            LineRef ref = allLines.get(i);
+            if(ref.line instanceof AsmScopeEnd || !Objects.equals(targetScope, ref.scope)) {
+               break;
+            }
+            if(ref.line instanceof AsmLabel) {
+               String l = ((AsmLabel) ref.line).getLabel();
+               if(clean.equals(l)) return i;
+            }
+         }
+         for(int i = fromIdx - 1; i >= 0; i--) {
+            LineRef ref = allLines.get(i);
+            if(ref.line instanceof AsmScopeBegin || !Objects.equals(targetScope, ref.scope)) {
+               break;
+            }
+            if(ref.line instanceof AsmLabel) {
+               String l = ((AsmLabel) ref.line).getLabel();
+               if(clean.equals(l)) return i;
+            }
+         }
+      }
+
+      // Fallback scan across allLines (e.g., multi-chunk procedures or out-of-scope fromIdx)
       for(int i = 0; i < allLines.size(); i++) {
          LineRef ref = allLines.get(i);
          if(ref.line instanceof AsmLabel && Objects.equals(targetScope, ref.scope)) {
@@ -1227,29 +1252,76 @@ public abstract class Pass5AsmOptimization {
             break;
          }
 
-         // Check jumps/branches to targetLabels strictly within currentScope
-         String scanScope = null;
-         for(int k = 0; k < allLines.size(); k++) {
-            LineRef ref = allLines.get(k);
+         // Check jumps/branches to targetLabels strictly within currentScope.
+         // Fast path: locate enclosing [scopeStart..scopeEnd] around firstLabelIdx to avoid scanning the entire program.
+         int scopeStart = -1;
+         for(int p = firstLabelIdx; p >= 0; p--) {
+            LineRef ref = allLines.get(p);
             if(ref.line instanceof AsmScopeBegin) {
-               scanScope = ((AsmScopeBegin) ref.line).getLabel();
-               continue;
-            } else if(ref.line instanceof AsmScopeEnd) {
-               scanScope = null;
-               continue;
+               if(currentScope.equals(((AsmScopeBegin) ref.line).getLabel())) {
+                  scopeStart = p;
+               }
+               break;
             }
-            if(scanScope == null || !scanScope.equals(currentScope)) {
-               continue;
+            if(!currentScope.equals(ref.scope)) {
+               break;
             }
-            if(ref.line instanceof AsmInstruction) {
-               AsmInstruction inst = (AsmInstruction) ref.line;
-               if(inst.getCpuOpcode() != null && inst.getCpuOpcode().isJump()) {
-                  String dest = inst.getOperandJumpTarget();
-                  if(dest != null) {
-                     for(String tLab : targetLabels) {
-                        if(dest.equals(tLab) || dest.equals("!" + tLab + "+") || dest.equals(tLab + "+")) {
-                           predIndices.add(k);
-                           break;
+         }
+         int scopeEnd = -1;
+         if(scopeStart != -1) {
+            for(int p = firstLabelIdx; p < allLines.size(); p++) {
+               LineRef ref = allLines.get(p);
+               if(ref.line instanceof AsmScopeEnd || !currentScope.equals(ref.scope)) {
+                  scopeEnd = p;
+                  break;
+               }
+            }
+            if(scopeEnd == -1) scopeEnd = allLines.size();
+         }
+
+         if(scopeStart != -1) {
+            for(int k = scopeStart + 1; k < scopeEnd; k++) {
+               LineRef ref = allLines.get(k);
+               if(ref.line instanceof AsmInstruction) {
+                  AsmInstruction inst = (AsmInstruction) ref.line;
+                  if(inst.getCpuOpcode() != null && inst.getCpuOpcode().isJump()) {
+                     String dest = inst.getOperandJumpTarget();
+                     if(dest != null) {
+                        for(String tLab : targetLabels) {
+                           if(dest.equals(tLab) || dest.equals("!" + tLab + "+") || dest.equals(tLab + "+")) {
+                              predIndices.add(k);
+                              break;
+                           }
+                        }
+                     }
+                  }
+               }
+            }
+         } else {
+            // Fallback when no enclosing AsmScopeBegin was found
+            String scanScope = null;
+            for(int k = 0; k < allLines.size(); k++) {
+               LineRef ref = allLines.get(k);
+               if(ref.line instanceof AsmScopeBegin) {
+                  scanScope = ((AsmScopeBegin) ref.line).getLabel();
+                  continue;
+               } else if(ref.line instanceof AsmScopeEnd) {
+                  scanScope = null;
+                  continue;
+               }
+               if(scanScope == null || !scanScope.equals(currentScope)) {
+                  continue;
+               }
+               if(ref.line instanceof AsmInstruction) {
+                  AsmInstruction inst = (AsmInstruction) ref.line;
+                  if(inst.getCpuOpcode() != null && inst.getCpuOpcode().isJump()) {
+                     String dest = inst.getOperandJumpTarget();
+                     if(dest != null) {
+                        for(String tLab : targetLabels) {
+                           if(dest.equals(tLab) || dest.equals("!" + tLab + "+") || dest.equals(tLab + "+")) {
+                              predIndices.add(k);
+                              break;
+                           }
                         }
                      }
                   }

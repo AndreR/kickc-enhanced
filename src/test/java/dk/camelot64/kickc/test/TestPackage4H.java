@@ -180,6 +180,51 @@ public class TestPackage4H {
       assertTrue(new Pass5MultiEntryByteSkipping(p3).optimize(),
             "CF-04: Safe immediate with dead flags should apply .byte $2c byte skipping");
       assertTrue(asm3.toString().contains("$2c"), "Expected .byte $2c in ASM:\n" + asm3);
+
+      // Case 4: Symbolic constants (.const RED = 2, .const PINK = 10) -> safe non-I/O values -> SHOULD emit .byte $2c!
+      Program p4 = new Program();
+      AsmProgram asm4 = new AsmProgram(TargetCpu.MOS6502X);
+      p4.setAsm(asm4);
+      AsmChunk c4Global = asm4.startChunk(ScopeRef.ROOT, null, "consts");
+      c4Global.addLine(new AsmConstant("RED", "2"));
+      c4Global.addLine(new AsmConstant("PINK", "$0a"));
+      AsmChunk c4 = asm4.startChunk(ScopeRef.ROOT, null, "const_skip");
+      c4.addLine(new AsmScopeBegin("const_skip"));
+      c4.addLine(new AsmInstruction(cpu.getOpcode("lda", CpuAddressingMode.IMM, false), "RED", null, null));
+      c4.addLine(new AsmInstruction(cpu.getOpcode("jmp", CpuAddressingMode.ABS, false), "__b5", null, null));
+      c4.addLine(new AsmLabel("__b4"));
+      c4.addLine(new AsmInstruction(cpu.getOpcode("lda", CpuAddressingMode.IMM, false), "PINK", null, null));
+      c4.addLine(new AsmLabel("__b5"));
+      c4.addLine(new AsmInstruction(cpu.getOpcode("sta", CpuAddressingMode.ABS, false), "$0400", null, null));
+      c4.addLine(new AsmInstruction(cpu.getOpcode("lda", CpuAddressingMode.IMM, false), "0", null, null));
+      c4.addLine(new AsmInstruction(cpu.getOpcode("rts", CpuAddressingMode.NON, false), null, null, null));
+      c4.addLine(new AsmScopeEnd());
+
+      assertTrue(new Pass5MultiEntryByteSkipping(p4).optimize(),
+            "Symbolic .const RED/PINK with safe values should apply .byte $2c byte skipping! ASM:\n" + asm4);
+      assertTrue(asm4.toString().contains("$2c"), "Expected .byte $2c for symbolic .const RED/PINK in ASM:\n" + asm4);
+
+      // Case 5: Symbolic constant resolving to hardware I/O high byte (.const IO_HI = $de) -> MUST NOT emit .byte $2c!
+      Program p5 = new Program();
+      AsmProgram asm5 = new AsmProgram(TargetCpu.MOS6502X);
+      p5.setAsm(asm5);
+      AsmChunk c5Global = asm5.startChunk(ScopeRef.ROOT, null, "consts_io");
+      c5Global.addLine(new AsmConstant("RED", "2"));
+      c5Global.addLine(new AsmConstant("IO_HI", "$de"));
+      AsmChunk c5 = asm5.startChunk(ScopeRef.ROOT, null, "const_io_skip");
+      c5.addLine(new AsmScopeBegin("const_io_skip"));
+      c5.addLine(new AsmInstruction(cpu.getOpcode("lda", CpuAddressingMode.IMM, false), "RED", null, null));
+      c5.addLine(new AsmInstruction(cpu.getOpcode("jmp", CpuAddressingMode.ABS, false), "__b5", null, null));
+      c5.addLine(new AsmLabel("__b4"));
+      c5.addLine(new AsmInstruction(cpu.getOpcode("lda", CpuAddressingMode.IMM, false), "IO_HI", null, null));
+      c5.addLine(new AsmLabel("__b5"));
+      c5.addLine(new AsmInstruction(cpu.getOpcode("sta", CpuAddressingMode.ABS, false), "$0400", null, null));
+      c5.addLine(new AsmInstruction(cpu.getOpcode("lda", CpuAddressingMode.IMM, false), "0", null, null));
+      c5.addLine(new AsmInstruction(cpu.getOpcode("rts", CpuAddressingMode.NON, false), null, null, null));
+      c5.addLine(new AsmScopeEnd());
+
+      assertFalse(new Pass5MultiEntryByteSkipping(p5).optimize(),
+            "Symbolic .const IO_HI = $de must STILL block .byte $2c to avoid I/O dummy read! ASM:\n" + asm5);
    }
 
    @Test
