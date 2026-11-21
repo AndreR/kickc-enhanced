@@ -75,4 +75,20 @@ public class TestPackage5A {
       String asm = program.getAsm().toString();
       assertFalse(asm.contains("clc"), "Redundant clc after bcs fallthrough should be eliminated");
    }
+
+   @Test
+   void testFl05_CommutativeAccumulatorForwarding() throws Exception {
+      String code = """
+            #include <stdint.h>
+            volatile uint16_t a = 0x1234;
+            volatile uint16_t b = 0x5678;
+            volatile uint8_t is_zero;
+            void main(void) {
+                uint16_t w = a + b;
+                is_zero = (w == 0) ? 1 : 0;
+            }
+            """;
+      Program program = compileC(code);
+      assertNotNull(program.getAsm());
+   }
 }

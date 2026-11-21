@@ -185,6 +185,40 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                      continue;
                   }
                }
+               if(!aMems.isEmpty() && !isVolatileOrHardwareOperand(operand, currentScope, resolver, getProgram())) {
+                  // FL-05: Commutative accumulator forwarding: STA/LDA X; LDA Y; [CLC/SEC;] ORA/AND/EOR/ADC X -> [CLC/SEC;] ORA/AND/EOR/ADC Y
+                  int nextIdx = findNextInstruction(allLines, i + 1);
+                  if(nextIdx != -1) {
+                     AsmInstruction nextInst = (AsmInstruction) allLines.get(nextIdx).line;
+                     String nextMnem = nextInst.getCpuOpcode() != null ? nextInst.getCpuOpcode().getMnemonic() : "";
+                     if(nextMnem.equals("clc") || nextMnem.equals("sec")) {
+                        nextIdx = findNextInstruction(allLines, nextIdx + 1);
+                        nextInst = nextIdx != -1 ? (AsmInstruction) allLines.get(nextIdx).line : null;
+                        nextMnem = (nextInst != null && nextInst.getCpuOpcode() != null) ? nextInst.getCpuOpcode().getMnemonic() : "";
+                     }
+                     if(nextInst != null && (nextMnem.equals("ora") || nextMnem.equals("and") || nextMnem.equals("eor") || nextMnem.equals("adc"))) {
+                        CpuAddressingMode nextMode = nextInst.getCpuOpcode().getAddressingMode();
+                        String nextOp = nextInst.getOperand1();
+                        if((nextMode.equals(CpuAddressingMode.ZP) || nextMode.equals(CpuAddressingMode.ABS))
+                              && !isVolatileOrHardwareOperand(nextOp, currentScope, resolver, getProgram())) {
+                           String nextCanon = getCanonical(nextOp, localAliases, globalAliasMap);
+                           if(aMems.contains(nextCanon)) {
+                              CpuOpcode newOp = getProgram().getTargetCpu().getCpu65xx().getOpcode(nextMnem, mode, false);
+                              if(newOp != null) {
+                                 getLog().append("Commutative accumulator forwarding: " + inst.getAsm() + " ; " + nextInst.getAsm() + " -> " + nextMnem + " " + operand);
+                                 nextInst.setCpuOpcode(newOp);
+                                 nextInst.setOperand1(operand);
+                                 nextInst.setOperand2(inst.getOperand2());
+                                 ref.chunk.getLines().remove(inst);
+                                 passModified = true;
+                                 overallModified = true;
+                                 break;
+                              }
+                           }
+                        }
+                     }
+                  }
+               }
                aMems.clear();
                continue;
             }
