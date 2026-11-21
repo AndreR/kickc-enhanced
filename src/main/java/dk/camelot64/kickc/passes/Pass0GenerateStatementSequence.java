@@ -286,7 +286,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          case CParser.PRAGMA_ENCODING -> {
             final String encodingName = pragmaParamName(pragmaParamSingle(ctx));
             try {
-               this.currentEncoding = StringEncoding.fromName(encodingName);
+               this.currentEncoding = StringEncoding.fromName(encodingName, program);
             } catch(IllegalArgumentException e) {
                throw new CompileError("Unknown string encoding " + encodingName, new StatementSource(ctx));
             }
@@ -478,7 +478,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       if(params.size() > 1 && params.get(1) instanceof KickCParser.PragmaParamNameContext) {
          String baseName = pragmaParamName(params.get(1));
          try {
-            baseEncoding = StringEncoding.fromName(baseName);
+            baseEncoding = StringEncoding.fromName(baseName, program);
          } catch(IllegalArgumentException e) {
             throw new CompileError("Unknown base encoding '" + baseName + "' in #pragma " + ctx.NAME().getText(), new StatementSource(ctx));
          }
@@ -496,7 +496,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          }
       }
 
-      StringEncoding.createCustom(encodingName, baseEncoding, encodingName, customMappings);
+      program.registerCustomStringEncoding(StringEncoding.createCustom(encodingName, baseEncoding, encodingName, customMappings));
    }
 
    private void parseCharmapString(String mappingStr, Map<Character, Byte> mappings, StatementSource source) {
@@ -4671,7 +4671,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       for(TerminalNode stringNode : ctx.STRING()) {
          subText = stringNode.getText();
          String suffix = subText.substring(subText.lastIndexOf('"') + 1);
-         StringEncoding suffixEncoding = StringEncoding.fromSuffix(suffix, currentEncoding);
+         StringEncoding suffixEncoding = StringEncoding.fromSuffix(suffix, currentEncoding, program);
          if(suffixEncoding != null) {
             if(encoding != null && !encoding.equals(suffixEncoding)) {
                throw new CompileError("Cannot mix encodings in concatenated strings " + ctx.getText(), new StatementSource(ctx));
@@ -4703,7 +4703,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          int lastQuote = fullText.lastIndexOf('\'');
          String charText = fullText.substring(1, lastQuote);
          String suffix = fullText.substring(lastQuote + 1);
-         StringEncoding encoding = StringEncoding.fromSuffix(suffix, currentEncoding);
+         StringEncoding encoding = StringEncoding.fromSuffix(suffix, currentEncoding, program);
          char constChar = encoding.escapeToAscii(charText).charAt(0);
          return new ConstantChar(constChar, encoding);
       } catch(CompileError e) {

@@ -5,29 +5,32 @@ import dk.camelot64.kickc.fragment.synthesis.*;
 
 import java.io.File;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.LongAdder;
 
 /** Statistics for usage of the ASM fragments. Also contains a methods for identifying redundant/unused files. */
 public class AsmFragmentTemplateUsages {
 
    /** Usage Statistics for fragment templates. */
-   private static Map<AsmFragmentSynthesisResult, Integer> fragmentTemplateUsage = new HashMap<>();
+   private final Map<AsmFragmentSynthesisResult, LongAdder> fragmentTemplateUsage = new ConcurrentHashMap<>();
 
    /**
     * Count one usage of ASM fragment templates - directly or through synthesis
     *
     * @param fragmentTemplate The template to increment usage of
     */
-   public static void incUsage(AsmFragmentSynthesisResult fragmentTemplate) {
-      Integer usage = fragmentTemplateUsage.get(fragmentTemplate);
-      if(usage == null) {
-         usage = 0;
-      }
-      fragmentTemplateUsage.put(fragmentTemplate, usage + 1);
+   public void incUsage(AsmFragmentSynthesisResult fragmentTemplate) {
+      fragmentTemplateUsage.computeIfAbsent(fragmentTemplate, k -> new LongAdder()).increment();
       for (AsmFragmentSynthesisResult subFragment : fragmentTemplate.getSubFragments()) {
          if (subFragment != null) {
             incUsage(subFragment);
          }
       }
+   }
+
+   public int getUsage(AsmFragmentSynthesisResult fragmentTemplate) {
+      LongAdder count = fragmentTemplateUsage.get(fragmentTemplate);
+      return count == null ? 0 : count.intValue();
    }
 
    /**
@@ -84,8 +87,7 @@ public class AsmFragmentTemplateUsages {
                boolean allZero = true;
                Integer fileUsage = null;
                for(AsmFragmentSynthesisResult template : templates) {
-                  Integer usage = fragmentTemplateUsage.get(template);
-                  if(usage == null) usage = 0;
+                  int usage = synthesizer.getUsages().getUsage(template);
                   if(usage > 0) {
                      allZero = false;
                   }
@@ -155,18 +157,13 @@ public class AsmFragmentTemplateUsages {
 
    private static void logTemplatesByUsage(AsmFragmentTemplateSynthesizer synthesizer, CompileLog log, List<AsmFragmentSynthesisResult> templates, boolean logBody) {
       // Sort by usage
-      Collections.sort(templates, (o1, o2) -> {
-               Integer u1 = fragmentTemplateUsage.get(o1);
-               Integer u2 = fragmentTemplateUsage.get(o2);
-               if(u1 == null) u1 = 0;
-               if(u2 == null) u2 = 0;
-               return u2 - u1;
-            }
-      );
+      Collections.sort(templates, (o1, o2) -> Integer.compare(
+            synthesizer.getUsages().getUsage(o2),
+            synthesizer.getUsages().getUsage(o1)
+      ));
       // Output
       for(AsmFragmentSynthesisResult template : templates) {
-         Integer usage = fragmentTemplateUsage.get(template);
-         if(usage == null) usage = 0;
+         int usage = synthesizer.getUsages().getUsage(template);
          AsmFragmentSynthesis synthesis = synthesizer.getOrCreateSynthesis(template.getSignature(), log);
          Collection<AsmFragmentSynthesisResult> bestTemplates = synthesis.getBestTemplates();
          log.append(String.format("%8d", usage) + " " + template.getSignature()+" - templates: " + bestTemplates.size());

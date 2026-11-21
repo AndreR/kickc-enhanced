@@ -185,6 +185,15 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
 
       List<UpliftTrialResult> results;
       if(combinationsToTest.size() > 1) {
+         // Pre-initialize lazy analyses on the main thread before parallel evaluation
+         program.getLiveRangeInterference();
+         program.getPhiTransitions();
+         program.getSymbolInfos();
+         program.getStatementInfos();
+         program.getLiveRangeVariablesEffective();
+         program.getLoopSet();
+         program.getVariableReferenceInfos();
+         program.getCallGraph();
          results = combinationsToTest.parallelStream()
                .map(c -> evaluateCombination(c, program, unknownFragments, scope, blocksToRegenerate, outsideScore))
                .toList();

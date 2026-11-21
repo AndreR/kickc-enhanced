@@ -381,6 +381,10 @@ public class Variable implements Symbol {
 
    private static final ThreadLocal<Map<VariableRef, Registers.Register>> THREAD_ALLOCATION_OVERRIDE = new ThreadLocal<>();
 
+   public static Map<VariableRef, Registers.Register> getThreadAllocationOverride() {
+      return THREAD_ALLOCATION_OVERRIDE.get();
+   }
+
    public static void setThreadAllocationOverride(Map<VariableRef, Registers.Register> override) {
       if(override == null) {
          THREAD_ALLOCATION_OVERRIDE.remove();

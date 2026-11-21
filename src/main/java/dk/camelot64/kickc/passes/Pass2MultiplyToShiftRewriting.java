@@ -10,14 +10,14 @@ import dk.camelot64.kickc.model.types.SymbolType;
 import dk.camelot64.kickc.model.types.SymbolTypeInference;
 import dk.camelot64.kickc.model.values.*;
 
-import java.util.HashMap;
 import java.util.ListIterator;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Pass that replaces multiplications / division with factors of 2 with shifts */
 public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
 
-   public static final Map<Long, Integer> inlinedDivCounts = new java.util.LinkedHashMap<>();
+   public static final Map<Long, Integer> inlinedDivCounts = new ConcurrentHashMap<>();
 
 
    public static class Reciprocal {
@@ -29,11 +29,15 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
       }
    }
 
-   private static final Map<Long, Reciprocal> RECIP_CACHE = new HashMap<>();
+   private static final Reciprocal NO_RECIPROCAL = new Reciprocal(0, 0);
+   private static final Map<Long, Reciprocal> RECIP_CACHE = new ConcurrentHashMap<>();
 
    public static Reciprocal findReciprocal(long d) {
       if(d <= 1 || d > 255) return null;
-      if(RECIP_CACHE.containsKey(d)) return RECIP_CACHE.get(d);
+      Reciprocal cached = RECIP_CACHE.get(d);
+      if(cached != null) {
+         return cached == NO_RECIPROCAL ? null : cached;
+      }
       for(int s = 8; s <= 23; s++) {
          long m = (1L << s) / d + 1;
          if(255 * m > 65535) continue;
@@ -46,11 +50,11 @@ public class Pass2MultiplyToShiftRewriting extends Pass2SsaOptimization {
          }
          if(ok) {
             Reciprocal r = new Reciprocal((int) m, s);
-            RECIP_CACHE.put(d, r);
+            RECIP_CACHE.putIfAbsent(d, r);
             return r;
          }
       }
-      RECIP_CACHE.put(d, null);
+      RECIP_CACHE.putIfAbsent(d, NO_RECIPROCAL);
       return null;
    }
 

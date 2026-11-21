@@ -8,20 +8,21 @@ import dk.camelot64.kickc.model.types.SymbolTypeProgram;
 import dk.camelot64.kickc.model.values.*;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** The program scope containing the symbols of a program */
 public class ProgramScope extends Scope {
 
    /** Caches the global symbols for fast lookup. */
-   private Map<String, Symbol> cachedGlobalSymbols;
+   private final Map<String, Symbol> cachedGlobalSymbols;
 
    public ProgramScope() {
       super("", null, Scope.SEGMENT_DATA_DEFAULT);
-      cachedGlobalSymbols = new HashMap<>();
+      cachedGlobalSymbols = new ConcurrentHashMap<>();
    }
 
    public void clearCache() {
-      this.cachedGlobalSymbols = new HashMap<>();
+      this.cachedGlobalSymbols.clear();
    }
 
    @Override

@@ -1,6 +1,7 @@
 package dk.camelot64.kickc.model.values;
 
 import dk.camelot64.kickc.model.CompileError;
+import dk.camelot64.kickc.model.Program;
 import kickass.nonasm.c64.CharToPetsciiConverter;
 
 import java.util.*;
@@ -21,33 +22,27 @@ public class StringEncoding {
       PETSCII_MIXED, PETSCII_UPPER, SCREENCODE_MIXED, SCREENCODE_UPPER, ASCII, ATASCII, SCREENCODE_ATARI
    );
 
-   private static final Map<String, StringEncoding> ENCODINGS = new LinkedHashMap<>();
-   private static final Map<String, StringEncoding> SUFFIXES = new LinkedHashMap<>();
+   private static final Map<String, StringEncoding> ENCODINGS;
+   private static final Map<String, StringEncoding> SUFFIXES;
 
    static {
-      initStandardEncodings();
-   }
-
-   public static void initStandardEncodings() {
-      ENCODINGS.clear();
-      SUFFIXES.clear();
+      Map<String, StringEncoding> encodings = new LinkedHashMap<>();
+      Map<String, StringEncoding> suffixes = new LinkedHashMap<>();
       for(StringEncoding enc : STANDARD_ENCODINGS) {
-         register(enc);
+         encodings.put(enc.name.toLowerCase(Locale.ENGLISH), enc);
+         if(enc.suffix != null && !enc.suffix.isEmpty()) {
+            suffixes.put(enc.suffix.toLowerCase(Locale.ENGLISH), enc);
+         }
       }
       // Also register legacy short aliases:
-      SUFFIXES.put("s", SCREENCODE_MIXED);
-      SUFFIXES.put("p", PETSCII_MIXED);
+      suffixes.put("s", SCREENCODE_MIXED);
+      suffixes.put("p", PETSCII_MIXED);
+      ENCODINGS = Collections.unmodifiableMap(encodings);
+      SUFFIXES = Collections.unmodifiableMap(suffixes);
    }
 
    public static void resetCustomEncodings() {
-      initStandardEncodings();
-   }
-
-   public static void register(StringEncoding encoding) {
-      ENCODINGS.put(encoding.name.toLowerCase(Locale.ENGLISH), encoding);
-      if(encoding.suffix != null && !encoding.suffix.isEmpty()) {
-         SUFFIXES.put(encoding.suffix.toLowerCase(Locale.ENGLISH), encoding);
-      }
+      // Custom encodings are now stored per-Program; static standard maps are immutable.
    }
 
    public static Collection<StringEncoding> values() {
@@ -89,7 +84,7 @@ public class StringEncoding {
    }
 
    /**
-    * Create and register a custom character encoding based on an existing encoding.
+    * Create a custom character encoding based on an existing encoding.
     */
    public static StringEncoding createCustom(String name, StringEncoding baseEncoding, String suffix, Map<Character, Byte> customMappings) {
       Map<Character, Byte> combinedMapping = new HashMap<>(baseEncoding.mapping);
@@ -99,9 +94,7 @@ public class StringEncoding {
          customChars.addAll(baseEncoding.customChars);
       }
       customChars.addAll(customMappings.keySet());
-      StringEncoding custom = new StringEncoding(name, baseEncoding.asmEncoding, suffix, combinedMapping, customChars);
-      register(custom);
-      return custom;
+      return new StringEncoding(name, baseEncoding.asmEncoding, suffix, combinedMapping, customChars);
    }
 
    public boolean isCustomMapped(Character aChar) {
@@ -115,10 +108,21 @@ public class StringEncoding {
     * @return The encoding
     */
    public static StringEncoding fromName(String name) {
+      return fromName(name, null);
+   }
+
+   public static StringEncoding fromName(String name, Program program) {
       if(name == null) {
          throw new IllegalArgumentException("Encoding name cannot be null");
       }
-      StringEncoding enc = ENCODINGS.get(name.toLowerCase(Locale.ENGLISH));
+      String lowerName = name.toLowerCase(Locale.ENGLISH);
+      if(program != null) {
+         StringEncoding custom = program.getCustomStringEncoding(lowerName);
+         if(custom != null) {
+            return custom;
+         }
+      }
+      StringEncoding enc = ENCODINGS.get(lowerName);
       if(enc != null) {
          return enc;
       }
@@ -133,6 +137,10 @@ public class StringEncoding {
     * @return The encoding specified by the suffix. If not the current source encoding is returned.
     */
    public static StringEncoding fromSuffix(String suffix, StringEncoding defaultEncoding) {
+      return fromSuffix(suffix, defaultEncoding, null);
+   }
+
+   public static StringEncoding fromSuffix(String suffix, StringEncoding defaultEncoding, Program program) {
       if(suffix == null || suffix.isEmpty()) {
          return defaultEncoding;
       }
@@ -140,13 +148,24 @@ public class StringEncoding {
       if(encSuffix.isEmpty()) {
          return defaultEncoding;
       }
+      String lowerSuffix = encSuffix.toLowerCase(Locale.ENGLISH);
+      if(program != null) {
+         StringEncoding custom = program.getCustomStringEncodingBySuffix(lowerSuffix);
+         if(custom != null) {
+            return custom;
+         }
+         custom = program.getCustomStringEncoding(lowerSuffix);
+         if(custom != null) {
+            return custom;
+         }
+      }
       // Check direct suffix map:
-      StringEncoding enc = SUFFIXES.get(encSuffix.toLowerCase(Locale.ENGLISH));
+      StringEncoding enc = SUFFIXES.get(lowerSuffix);
       if(enc != null) {
          return enc;
       }
       // Check encoding name as suffix:
-      enc = ENCODINGS.get(encSuffix.toLowerCase(Locale.ENGLISH));
+      enc = ENCODINGS.get(lowerSuffix);
       if(enc != null) {
          return enc;
       }

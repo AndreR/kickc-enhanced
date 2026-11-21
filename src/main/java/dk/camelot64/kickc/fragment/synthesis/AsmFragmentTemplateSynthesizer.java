@@ -42,6 +42,13 @@ public class AsmFragmentTemplateSynthesizer {
    /** The folder containing fragment files. */
     private final Path baseFragmentFolder;
 
+    /** Usage statistics for this synthesizer instance. */
+    private final AsmFragmentTemplateUsages usages = new AsmFragmentTemplateUsages();
+
+    public AsmFragmentTemplateUsages getUsages() {
+        return usages;
+    }
+
    /** The Target CPU - used for obtaining CPU-specific fragment files. */
     private final TargetCpu targetCpu;
 
@@ -101,7 +108,7 @@ public class AsmFragmentTemplateSynthesizer {
             throw new UnknownFragmentException(signature);
         }
         if (bestTemplate != null) {
-            AsmFragmentTemplateUsages.incUsage(new AsmFragmentSynthesisResult(bestTemplate, false, true, null, new ArrayList<>()));
+            usages.incUsage(new AsmFragmentSynthesisResult(bestTemplate, false, true, null, new ArrayList<>()));
             return bestTemplate;
         }
 
@@ -131,7 +138,7 @@ public class AsmFragmentTemplateSynthesizer {
             log.append("Found best fragment  " + bestResult.getName() + " score: " + minScore);
         }
         fragmentCache.put(signature, bestResult.getFragment());
-        AsmFragmentTemplateUsages.incUsage(bestResult);
+        usages.incUsage(bestResult);
         return bestResult.getFragment();
     }
 
