@@ -199,6 +199,56 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                && !isVolatileOrHardwareOperand(instruction.getOperand1(), ref.scope, resolver, getProgram())) {
                removeLine(allLines, i, ref, instruction);
                modified = true;
+            } else if((mnem.equals("cpx") || mnem.equals("cpy")) && mode.equals(CpuAddressingMode.IMM)
+                  && ("0".equals(instruction.getOperand1()) || "$0".equals(instruction.getOperand1()) || "$00".equals(instruction.getOperand1()))
+                  && !isRegALiveAfter(allLines, i, ref.scope)
+                  && !isFlagCLiveAfter(allLines, i, ref.scope, getProgram())) {
+               String transferMnem = mnem.equals("cpx") ? "txa" : "tya";
+               CpuOpcode transferOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(transferMnem, CpuAddressingMode.NON, false);
+               if(transferOp != null) {
+                  getLog().append("Replacing " + instruction + " with " + transferMnem.toUpperCase());
+                  instruction.setCpuOpcode(transferOp);
+                  instruction.setOperand1(null);
+                  modified = true;
+               }
+            }
+         } else if(mnem.equals("txa") || mnem.equals("tya")) {
+            int nextIdx = findNextInstruction(allLines, i + 1);
+            if(nextIdx != -1) {
+               LineRef nextRef = allLines.get(nextIdx);
+               AsmInstruction nextInst = (AsmInstruction) nextRef.line;
+               if(nextInst.getCpuOpcode() != null && nextInst.getCpuOpcode().getMnemonic().equals("sta")) {
+                  CpuAddressingMode nextMode = nextInst.getCpuOpcode().getAddressingMode();
+                  String storeMnem = mnem.equals("txa") ? "stx" : "sty";
+                  CpuOpcode storeOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(storeMnem, nextMode, false);
+                  if(storeOp != null
+                        && !isRegALiveAfter(allLines, nextIdx, ref.scope)
+                        && (!areModifiedFlagsLiveAfter(allLines, nextIdx, ref.scope, getProgram())
+                              || areFlagsEstablishedForReg(allLines, i, mnem.equals("txa") ? "X" : "Y", ref.scope))) {
+                     getLog().append("Folding " + instruction + " ; " + nextInst + " -> " + storeMnem.toUpperCase());
+                     nextInst.setCpuOpcode(storeOp);
+                     removeLine(allLines, i, ref, instruction);
+                     modified = true;
+                  }
+               }
+            }
+         } else if(mnem.equals("lda")) {
+            int nextIdx = findNextInstruction(allLines, i + 1);
+            if(nextIdx != -1) {
+               LineRef nextRef = allLines.get(nextIdx);
+               AsmInstruction nextInst = (AsmInstruction) nextRef.line;
+               String nextMnem = nextInst.getCpuOpcode() != null ? nextInst.getCpuOpcode().getMnemonic() : "";
+               if((nextMnem.equals("tay") || (nextMnem.equals("tax") && mode.equals(CpuAddressingMode.IMM)))
+                     && !isRegALiveAfter(allLines, nextIdx, ref.scope)) {
+                  String loadMnem = nextMnem.equals("tay") ? "ldy" : "ldx";
+                  CpuOpcode loadOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(loadMnem, mode, false);
+                  if(loadOp != null) {
+                     getLog().append("Folding " + instruction + " ; " + nextInst + " -> " + loadMnem.toUpperCase());
+                     instruction.setCpuOpcode(loadOp);
+                     removeLine(allLines, nextIdx, nextRef, nextInst);
+                     modified = true;
+                  }
+               }
             }
          } else if(mnem.equals("tsx")) {
             AsmProgramStaticRegisterValues.AsmRegisterValues instructionValues = staticValues.getValues(instruction);
@@ -223,5 +273,32 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
    private boolean canRemoveRegister(List<LineRef> allLines, int currentIdx, String reg, String currentScope) {
       return !areModifiedFlagsLiveAfter(allLines, currentIdx, currentScope, getProgram())
          || areFlagsEstablishedForReg(allLines, currentIdx, reg, currentScope);
+   }
+
+   private boolean isRegALiveAfter(List<LineRef> allLines, int currentIdx, String currentScope) {
+      for(int k = currentIdx + 1; k < allLines.size(); k++) {
+         LineRef lr = allLines.get(k);
+         if(lr.scope != null && !lr.scope.equals(currentScope)) return true;
+         if(lr.line instanceof AsmLabel || lr.line instanceof AsmScopeBegin || lr.line instanceof AsmScopeEnd) return true;
+         if(lr.line instanceof AsmInstruction inst && inst.getCpuOpcode() != null) {
+            String m = inst.getCpuOpcode().getMnemonic();
+            if(m.equals("lda") || m.equals("pla") || m.equals("txa") || m.equals("tya") || m.equals("tza")) {
+               return false; // A overwritten before read
+            }
+            if(m.equals("rts") || m.equals("rti") || m.equals("jmp") || m.equals("jsr") || inst.getCpuOpcode().isJump()) {
+               return true;
+            }
+            if(m.equals("sta") || m.equals("tax") || m.equals("tay") || m.equals("taz") || m.equals("pha")
+                  || m.equals("cmp") || m.equals("adc") || m.equals("sbc") || m.equals("and")
+                  || m.equals("ora") || m.equals("eor") || m.equals("bit")) {
+               return true; // A is read
+            }
+            if((m.equals("asl") || m.equals("lsr") || m.equals("rol") || m.equals("ror"))
+                  && inst.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.NON)) {
+               return true;
+            }
+         }
+      }
+      return true;
    }
 }
