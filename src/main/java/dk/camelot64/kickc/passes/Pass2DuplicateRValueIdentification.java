@@ -27,6 +27,43 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
 
    private static record RValueKey(RValue rValue1, Operator operator, RValue rValue2) {}
 
+   /** Per-procedure CFG cache built lazily in O(B_proc) to avoid O(B_total) getGraph().getPredecessors() scans. */
+   private static final class ProcCfgCache {
+      final List<Graph.Block> blocks;
+      private Map<LabelRef, Graph.Block> blockMap;
+      private Map<LabelRef, List<LabelRef>> predMap;
+
+      ProcCfgCache(List<Graph.Block> blocks) {
+         this.blocks = blocks;
+      }
+
+      private void ensureBuilt() {
+         if(blockMap != null) return;
+         blockMap = new HashMap<>(blocks.size() * 2);
+         predMap = new HashMap<>(blocks.size() * 2);
+         for(Graph.Block b : blocks) {
+            blockMap.put(b.getLabel(), b);
+         }
+         for(Graph.Block b : blocks) {
+            for(LabelRef succ : b.getSuccessors()) {
+               if(succ != null && blockMap.containsKey(succ)) {
+                  predMap.computeIfAbsent(succ, k -> new ArrayList<>()).add(b.getLabel());
+               }
+            }
+         }
+      }
+
+      Graph.Block getBlock(LabelRef label) {
+         ensureBuilt();
+         return blockMap.get(label);
+      }
+
+      List<LabelRef> getPredecessors(LabelRef label) {
+         ensureBuilt();
+         return predMap.getOrDefault(label, Collections.emptyList());
+      }
+   }
+
    @Override
    public boolean step() {
       boolean modified = false;
@@ -34,62 +71,70 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
       // Dominators are used for determining if one statement is guaranteed to be executed before another statement
       DominatorsGraph dominators = getProgram().getDominators();
 
-      // All RValues in the program indexed by their signature
-      Map<RValueKey, List<AssignmentWithRValue>> rValues = new HashMap<>();
+      for(ProcedureCompilation procComp : getProgram().getProcedureCompilations()) {
+         ControlFlowGraph procGraph = procComp.getGraph();
+         if(procGraph == null) continue;
+         List<Graph.Block> procBlocks = procGraph.getAllBlocks();
+         if(procBlocks.isEmpty()) continue;
 
-      for(var block : getGraph().getAllBlocks()) {
-         for(Statement statement : block.getStatements()) {
-            if(statement instanceof StatementAssignment) {
-               StatementAssignment thisAssignment = (StatementAssignment) statement;
-               Operator op = thisAssignment.getOperator();
-               if(op == null || op instanceof OperatorCast) continue;
-               if(Operators.LE.equals(op) || Operators.LT.equals(op) || Operators.GE.equals(op) || Operators.GT.equals(op)
-                     || Operators.EQ.equals(op) || Operators.NEQ.equals(op) || Operators.LOGIC_NOT.equals(op)
-                     || Operators.LOGIC_AND.equals(op) || Operators.LOGIC_OR.equals(op)
-                     || Operators.BYTE0.equals(op) || Operators.BYTE1.equals(op) || Operators.BYTE2.equals(op) || Operators.BYTE3.equals(op)
-                     || Operators.WORD0.equals(op) || Operators.WORD1.equals(op)) {
-                  continue;
-               }
-               RValue rVal1 = thisAssignment.getrValue1();
-               RValue rVal2 = thisAssignment.getrValue2();
-               if((rVal1 == null || rVal1 instanceof ConstantValue) && (rVal2 == null || rVal2 instanceof ConstantValue)) {
-                  continue;
-               }
-               AssignmentWithRValue thisRValue = new AssignmentWithRValue(thisAssignment, block);
-               if(!thisRValue.isConstant() && !thisRValue.isTrivial() && !thisRValue.isVolatile()) {
-                  boolean duplicate = false;
-                  RValueKey key = new RValueKey(thisRValue.rValue1, thisRValue.operator, thisRValue.rValue2);
-                  List<AssignmentWithRValue> candidates = rValues.get(key);
-                  if(candidates != null) {
-                     for(AssignmentWithRValue otherRValue : candidates) {
-                        if(otherRValue.isSameRValue(thisRValue)) {
-                           // Check if any of the statements is guaranteed to be executed before the other statement
-                           DominatorsBlock thisDominators = dominators.getDominators(thisRValue.block.getLabel());
-                           DominatorsBlock otherDominators = dominators.getDominators(otherRValue.block.getLabel());
-                           if(otherRValue.block.getLabel().equals(thisRValue.block.getLabel())) {
-                              // The two assignments are in the same block
-                              // Since we are visiting statements sequentially the other  other assignment is guaranteed to be executed before this assignment
-                              if(isSafeSameBlock(otherRValue, thisRValue))
-                                 duplicate |= deduplicateRValue(otherRValue, thisRValue);
-                           } else {
-                              if(thisDominators.contains(otherRValue.block.getLabel())) {
-                                 // The other assignment is guaranteed to be executed before this assignment
-                                 if(scopeMatch(thisRValue, otherRValue) && isSafeCrossBlock(otherRValue, thisRValue))
-                                     duplicate |= deduplicateRValue(otherRValue, thisRValue);
-                              } else if(otherDominators.contains(thisRValue.block.getLabel())) {
-                                 // This assignment is guaranteed to be executed before the other assignment
-                                 if(scopeMatch(thisRValue, otherRValue) && isSafeCrossBlock(thisRValue, otherRValue))
-                                     duplicate |= deduplicateRValue(thisRValue, otherRValue);
+         // All RValues in this procedure indexed by their signature (CSE is strictly intra-procedural)
+         Map<RValueKey, List<AssignmentWithRValue>> rValues = new HashMap<>();
+         ProcCfgCache cfgCache = new ProcCfgCache(procBlocks);
+
+         for(Graph.Block block : procBlocks) {
+            for(Statement statement : block.getStatements()) {
+               if(statement instanceof StatementAssignment) {
+                  StatementAssignment thisAssignment = (StatementAssignment) statement;
+                  Operator op = thisAssignment.getOperator();
+                  if(op == null || op instanceof OperatorCast) continue;
+                  if(Operators.LE.equals(op) || Operators.LT.equals(op) || Operators.GE.equals(op) || Operators.GT.equals(op)
+                        || Operators.EQ.equals(op) || Operators.NEQ.equals(op) || Operators.LOGIC_NOT.equals(op)
+                        || Operators.LOGIC_AND.equals(op) || Operators.LOGIC_OR.equals(op)
+                        || Operators.BYTE0.equals(op) || Operators.BYTE1.equals(op) || Operators.BYTE2.equals(op) || Operators.BYTE3.equals(op)
+                        || Operators.WORD0.equals(op) || Operators.WORD1.equals(op)) {
+                     continue;
+                  }
+                  RValue rVal1 = thisAssignment.getrValue1();
+                  RValue rVal2 = thisAssignment.getrValue2();
+                  if((rVal1 == null || rVal1 instanceof ConstantValue) && (rVal2 == null || rVal2 instanceof ConstantValue)) {
+                     continue;
+                  }
+                  AssignmentWithRValue thisRValue = new AssignmentWithRValue(thisAssignment, block);
+                  if(!thisRValue.isConstant() && !thisRValue.isTrivial() && !thisRValue.isVolatile()) {
+                     boolean duplicate = false;
+                     RValueKey key = new RValueKey(thisRValue.rValue1, thisRValue.operator, thisRValue.rValue2);
+                     List<AssignmentWithRValue> candidates = rValues.get(key);
+                     if(candidates != null) {
+                        for(AssignmentWithRValue otherRValue : candidates) {
+                           if(otherRValue.isSameRValue(thisRValue)) {
+                              // Check if any of the statements is guaranteed to be executed before the other statement
+                              DominatorsBlock thisDominators = dominators.getDominators(thisRValue.block.getLabel());
+                              DominatorsBlock otherDominators = dominators.getDominators(otherRValue.block.getLabel());
+                              if(otherRValue.block.getLabel().equals(thisRValue.block.getLabel())) {
+                                 // The two assignments are in the same block
+                                 // Since we are visiting statements sequentially the other assignment is guaranteed to be executed before this assignment
+                                 if(isSafeSameBlock(otherRValue, thisRValue))
+                                    duplicate |= deduplicateRValue(otherRValue, thisRValue);
+                              } else {
+                                 if(thisDominators.contains(otherRValue.block.getLabel())) {
+                                    // The other assignment is guaranteed to be executed before this assignment
+                                    if(scopeMatch(thisRValue, otherRValue) && isSafeCrossBlock(otherRValue, thisRValue, cfgCache))
+                                        duplicate |= deduplicateRValue(otherRValue, thisRValue);
+                                 } else if(otherDominators.contains(thisRValue.block.getLabel())) {
+                                    // This assignment is guaranteed to be executed before the other assignment
+                                    if(scopeMatch(thisRValue, otherRValue) && isSafeCrossBlock(thisRValue, otherRValue, cfgCache))
+                                        duplicate |= deduplicateRValue(thisRValue, otherRValue);
+                                 }
                               }
                            }
                         }
                      }
+                     // If not a duplicate itself - add it to the candidate pool
+                     if(!duplicate)
+                        rValues.computeIfAbsent(key, k -> new ArrayList<>()).add(thisRValue);
+                     // Determine if anything is modified
+                     modified |= duplicate;
                   }
-                  // If not a duplicate itself - add it to the candidate pool
-                  if(!duplicate)
-                     rValues.computeIfAbsent(key, k -> new ArrayList<>()).add(thisRValue);
-                  // Determine if anything is modified
-                  modified |= duplicate;
                }
             }
          }
@@ -360,7 +405,7 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
       }
    }
 
-   private boolean isSafeCrossBlock(AssignmentWithRValue first, AssignmentWithRValue second) {
+   private boolean isSafeCrossBlock(AssignmentWithRValue first, AssignmentWithRValue second, ProcCfgCache cfgCache) {
       if(!first.isSafeCseSource()) return false;
       boolean hasLoadStore = first.isLoadStore() || second.isLoadStore();
       if(!hasLoadStore) return true;
@@ -405,11 +450,8 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
             }
          }
       }
-      List<Graph.Block> procBlocks = (scope instanceof ProcedureRef procRef)
-            ? getProgram().getProcedureCompilation(procRef).getGraph().getAllBlocks()
-            : getGraph().getScopeBlocks(scope);
-      for(Graph.Block b : procBlocks) {
-         if(!b.equals(first.block) && !b.equals(second.block)) {
+      for(Graph.Block b : cfgCache.blocks) {
+         if(!b.equals(first.block) && !b.equals(second.block) && scope.equals(b.getScope())) {
             for(Statement s : b.getStatements()) {
                if(statementMayModifyOperands(s, operands, hasLoadStore)) {
                   writeBlocks.add(b.getLabel());
@@ -424,20 +466,25 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
       }
 
       // SSA-03: Check ALL paths from first.block to second.block INCLUDING loop back-edges returning to second.block
-      // without re-executing first.block!
+      // without re-executing first.block! Uses O(1) procedure-local blockMap & predMap.
       Set<LabelRef> forwardFromFirst = new HashSet<>();
       Queue<LabelRef> fwdQueue = new ArrayDeque<>();
-      for(LabelRef succ : getGraph().getBlock(first.block.getLabel()).getSuccessors()) {
-         if(succ != null && !succ.equals(first.block.getLabel()) && forwardFromFirst.add(succ)) {
-            fwdQueue.add(succ);
+      LabelRef firstLabel = first.block.getLabel();
+      LabelRef secondLabel = second.block.getLabel();
+      Graph.Block firstBlock = cfgCache.getBlock(firstLabel);
+      if(firstBlock != null) {
+         for(LabelRef succ : firstBlock.getSuccessors()) {
+            if(succ != null && !succ.equals(firstLabel) && forwardFromFirst.add(succ)) {
+               fwdQueue.add(succ);
+            }
          }
       }
       while(!fwdQueue.isEmpty()) {
          LabelRef cur = fwdQueue.poll();
-         Graph.Block curBlock = getGraph().getBlock(cur);
+         Graph.Block curBlock = cfgCache.getBlock(cur);
          if(curBlock != null && scope.equals(curBlock.getScope())) {
             for(LabelRef succ : curBlock.getSuccessors()) {
-               if(succ != null && !succ.equals(first.block.getLabel()) && forwardFromFirst.add(succ)) {
+               if(succ != null && !succ.equals(firstLabel) && forwardFromFirst.add(succ)) {
                   fwdQueue.add(succ);
                }
             }
@@ -446,29 +493,23 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
 
       Set<LabelRef> backwardToSecond = new HashSet<>();
       Queue<LabelRef> bwdQueue = new ArrayDeque<>();
-      Graph.Block secondBlock = getGraph().getBlock(second.block.getLabel());
-      if(secondBlock != null) {
-         for(Graph.Block pred : getGraph().getPredecessors(secondBlock)) {
-            LabelRef predLbl = pred.getLabel();
-            if(predLbl != null && !predLbl.equals(first.block.getLabel()) && scope.equals(pred.getScope()) && backwardToSecond.add(predLbl)) {
-               bwdQueue.add(predLbl);
-            }
+      for(LabelRef predLbl : cfgCache.getPredecessors(secondLabel)) {
+         Graph.Block predBlock = cfgCache.getBlock(predLbl);
+         if(predBlock != null && !predLbl.equals(firstLabel) && scope.equals(predBlock.getScope()) && backwardToSecond.add(predLbl)) {
+            bwdQueue.add(predLbl);
          }
       }
       while(!bwdQueue.isEmpty()) {
          LabelRef cur = bwdQueue.poll();
-         Graph.Block curBlock = getGraph().getBlock(cur);
-         if(curBlock != null) {
-            for(Graph.Block pred : getGraph().getPredecessors(curBlock)) {
-               LabelRef predLbl = pred.getLabel();
-               if(predLbl != null && !predLbl.equals(first.block.getLabel()) && scope.equals(pred.getScope()) && backwardToSecond.add(predLbl)) {
-                  bwdQueue.add(predLbl);
-               }
+         for(LabelRef predLbl : cfgCache.getPredecessors(cur)) {
+            Graph.Block predBlock = cfgCache.getBlock(predLbl);
+            if(predBlock != null && !predLbl.equals(firstLabel) && scope.equals(predBlock.getScope()) && backwardToSecond.add(predLbl)) {
+               bwdQueue.add(predLbl);
             }
          }
       }
 
-      if(secondModifiesAfterIdx2 && backwardToSecond.contains(second.block.getLabel())) {
+      if(secondModifiesAfterIdx2 && backwardToSecond.contains(secondLabel)) {
          return false;
       }
 

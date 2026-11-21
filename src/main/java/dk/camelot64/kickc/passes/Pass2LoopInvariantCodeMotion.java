@@ -28,13 +28,31 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
    @Override
    public boolean step() {
       NaturalLoopSet loopSet = getProgram().getLoopSet();
-      if(loopSet == null) return false;
+      if(loopSet == null || loopSet.getLoops().isEmpty()) return false;
       VariableReferenceInfos varRefInfos = getProgram().getVariableReferenceInfos();
       StatementInfos statementInfos = getProgram().getStatementInfos();
 
+      // Build O(1) block and predecessor maps once per step instead of calling O(B_total) getGraph().getPredecessors()
+      Map<LabelRef, Graph.Block> blockMap = new HashMap<>();
+      Map<LabelRef, List<Graph.Block>> predMap = new HashMap<>();
+      for(ProcedureCompilation pc : getProgram().getProcedureCompilations()) {
+         ControlFlowGraph g = pc.getGraph();
+         if(g == null) continue;
+         for(Graph.Block b : g.getAllBlocks()) {
+            blockMap.put(b.getLabel(), b);
+         }
+      }
+      for(Graph.Block b : blockMap.values()) {
+         for(LabelRef succ : b.getSuccessors()) {
+            if(succ != null) {
+               predMap.computeIfAbsent(succ, k -> new ArrayList<>()).add(b);
+            }
+         }
+      }
+
       for(NaturalLoop loop : loopSet.getLoops()) {
          if(loop.getBlocks() == null || loop.getBlocks().isEmpty()) continue;
-         if(optimizeLoop(loop, varRefInfos, statementInfos)) {
+         if(optimizeLoop(loop, varRefInfos, statementInfos, blockMap, predMap)) {
             getProgram().clearVariableReferenceInfos();
             getProgram().clearControlFlowBlockSuccessorClosure();
             getProgram().clearStatementInfos();
@@ -46,12 +64,13 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
       return false;
    }
 
-   private boolean optimizeLoop(NaturalLoop loop, VariableReferenceInfos varRefInfos, StatementInfos statementInfos) {
+   private boolean optimizeLoop(NaturalLoop loop, VariableReferenceInfos varRefInfos, StatementInfos statementInfos,
+                                Map<LabelRef, Graph.Block> blockMap, Map<LabelRef, List<Graph.Block>> predMap) {
       LabelRef headRef = loop.getHead();
-      Graph.Block headBlock = getGraph().getBlock(headRef);
+      Graph.Block headBlock = blockMap.get(headRef);
       if(headBlock == null) return false;
 
-      List<Graph.Block> predecessors = getGraph().getPredecessors(headBlock);
+      List<Graph.Block> predecessors = predMap.getOrDefault(headRef, Collections.emptyList());
       List<Graph.Block> entryPreds = new ArrayList<>();
       for(Graph.Block p : predecessors) {
          if(!loop.getBlocks().contains(p.getLabel())) {
@@ -61,13 +80,13 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
       if(entryPreds.isEmpty()) return false;
 
       for(LabelRef blockRef : loop.getBlocks()) {
-         Graph.Block block = getGraph().getBlock(blockRef);
+         Graph.Block block = blockMap.get(blockRef);
          if(block == null) continue;
 
          for(Statement stmt : new ArrayList<>(block.getStatements())) {
             if(stmt instanceof StatementAssignment) {
                StatementAssignment assignment = (StatementAssignment) stmt;
-               if(isHoistable(assignment, loop, headBlock, varRefInfos, statementInfos)) {
+               if(isHoistable(assignment, loop, headBlock, varRefInfos, statementInfos, blockMap)) {
                   Graph.Block preheader = getOrCreatePreheader(loop, headBlock, entryPreds);
                   if(preheader == null) return false;
 
@@ -82,7 +101,9 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
       return false;
    }
 
-   private boolean isHoistable(StatementAssignment assignment, NaturalLoop loop, Graph.Block headBlock, VariableReferenceInfos varRefInfos, StatementInfos statementInfos) {
+   private boolean isHoistable(StatementAssignment assignment, NaturalLoop loop, Graph.Block headBlock,
+                               VariableReferenceInfos varRefInfos, StatementInfos statementInfos,
+                               Map<LabelRef, Graph.Block> blockMap) {
       if(!(assignment.getlValue() instanceof VariableRef)) return false;
       VariableRef lVarRef = (VariableRef) assignment.getlValue();
       Variable lVar = getProgramScope().getVariable(lVarRef);
@@ -152,7 +173,7 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
             }
          } else {
             // Variable defined outside or LOAD_STORE variable: verify it is not modified anywhere in the loop
-            if(isVariableModifiedInLoop(usedVar, loop)) {
+            if(isVariableModifiedInLoop(usedVar, loop, blockMap)) {
                return false;
             }
          }
@@ -161,13 +182,13 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
       return true;
    }
 
-   private boolean isVariableModifiedInLoop(VariableRef varRef, NaturalLoop loop) {
+   private boolean isVariableModifiedInLoop(VariableRef varRef, NaturalLoop loop, Map<LabelRef, Graph.Block> blockMap) {
       dk.camelot64.kickc.model.ProcedureModifiedVars procModVars = getProgram().getProcedureModifiedVars();
       Variable var = getProgramScope().getVariable(varRef);
       boolean isLoadStoreOrGlobal = (var == null) || var.isKindLoadStore() || var.isVolatile()
             || (var.getScope() instanceof dk.camelot64.kickc.model.symbols.ProgramScope);
       for(LabelRef blockRef : loop.getBlocks()) {
-         Graph.Block block = getGraph().getBlock(blockRef);
+         Graph.Block block = blockMap.get(blockRef);
          if(block == null) continue;
          for(Statement stmt : block.getStatements()) {
             if(stmt instanceof StatementAssignment) {

@@ -441,4 +441,37 @@ public class TestAuditRegressions {
                   && asm.matches("(?s).*sta(\\.z)? out_a.*sta(\\.z)? out_b.*"),
             "TS-16: Empty compound literal (struct Pair){} must zero-initialize fields! ASM:\n" + asm);
    }
+
+   @Test
+   void testConstantBinaryArraySizeNotTruncatedToByteByFinalizeNumberTypes() throws Exception {
+      StringBuilder tableEntries = new StringBuilder();
+      for(int i = 0; i < 1024; i++) {
+         if(i > 0) tableEntries.append(",");
+         tableEntries.append(i & 0xff);
+      }
+      StringBuilder arr2Entries = new StringBuilder();
+      for(int i = 0; i < 300; i++) {
+         if(i > 0) arr2Entries.append(",");
+         arr2Entries.append(i & 0xff);
+      }
+      String code =
+            "#include <stdint.h>\n" +
+            "#define COUNT 16\n" +
+            "const uint16_t TABLE[COUNT * 64] = { " + tableEntries + " };\n" +
+            "const uint8_t ARR2[200 + 100] = { " + arr2Entries + " };\n" +
+            "volatile uint16_t out1;\n" +
+            "volatile uint8_t out2;\n" +
+            "volatile uint16_t out3;\n" +
+            "void main(void) {\n" +
+            "    out1 = TABLE[1023];\n" +
+            "    out2 = ARR2[299];\n" +
+            "    out3 = 200 + 100;\n" +
+            "}\n";
+      Program program = compileC(code);
+      String asm = program.getAsm().toString();
+      assertTrue(asm.contains("TABLE:") && asm.contains("ARR2:"),
+            "ConstantBinary array sizes (16*64=1024, 200+100=300) must not truncate to BYTE! ASM:\n" + asm);
+      assertTrue(asm.contains("$12c") || asm.contains("300"),
+            "200 + 100 must evaluate to 300 ($12c), not truncated 44! ASM:\n" + asm);
+   }
 }
