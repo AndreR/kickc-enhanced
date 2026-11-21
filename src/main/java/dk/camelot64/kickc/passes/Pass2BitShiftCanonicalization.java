@@ -78,7 +78,11 @@ public class Pass2BitShiftCanonicalization extends Pass2SsaOptimization {
             if(shiftAmt < 8) continue;
 
             RValue src = shiftAssign.getrValue1();
-            if(!(src instanceof VariableRef)) continue;
+            if(!(src instanceof VariableRef srcRef)) continue;
+            Variable srcVar = getProgramScope().getVariable(srcRef);
+            if(srcVar != null && srcVar.isVolatile()) continue;
+            Variable shiftVar = getProgramScope().getVariable(shiftVarRef);
+            if(shiftVar == null || !shiftVar.isKindIntermediate()) continue;
             SymbolType srcType = SymbolTypeInference.inferType(getProgramScope(), src);
             if(!(srcType instanceof SymbolTypeIntegerFixed srcInt)) continue;
             // Only rewrite unsigned shifts (or exact byte-aligned shifts where sign bit is preserved)
@@ -97,37 +101,44 @@ public class Pass2BitShiftCanonicalization extends Pass2SsaOptimization {
             if(byteOp == null) continue;
 
             if(r == 0) {
-               // Exact byte extraction: (uint8_t)(x >> 8*q) -> BYTEq(x)
-               getLog().append("GEN-02: Canonicalizing " + assign.toString(getProgram(), false) + " -> " + byteOp.getOperator() + "(" + src + ")");
-               assign.setrValue1(null);
-               assign.setOperator(byteOp);
-               assign.setrValue2(src);
-               // Remove the now-dead shiftAssign statement and its single-use temp variable
-               Graph.Block defBlock = getProgram().getStatementInfos().getBlock(shiftAssign);
-               if(defBlock != null) {
-                  defBlock.getStatements().remove(shiftAssign);
-               }
-               Variable shiftVar = getProgramScope().getVariable(shiftVarRef);
-               if(shiftVar != null) {
-                  shiftVar.getScope().remove(shiftVar);
+               // KRIT-08: Rewrite shiftAssign IN-PLACE so we never sink reads of src across intervening writes,
+               // and preserve explicit CastValue for non-BYTE targets (e.g. signed byte / SBYTE) for Pass2AssertTypeMatch!
+               getLog().append("GEN-02: Canonicalizing " + shiftAssign.toString(getProgram(), false) + " -> " + byteOp.getOperator() + "(" + src + ")");
+               shiftVar.setType(SymbolType.BYTE);
+               shiftAssign.setrValue1(null);
+               shiftAssign.setOperator(byteOp);
+               shiftAssign.setrValue2(src);
+               if(SymbolType.BYTE.equals(dstType)) {
+                  assign.setrValue2(shiftVarRef);
+               } else {
+                  assign.setrValue2(new CastValue(dstType, shiftVarRef));
                }
                modified = true;
                break;
             } else if(q == srcBytes - 1) {
-               // Top-byte shift: rewrite shiftAssign in-place to BYTEq(src), and assign to shiftVar >> r
-               Variable shiftVar = getProgramScope().getVariable(shiftVarRef);
-               if(shiftVar != null && shiftVar.isKindIntermediate()) {
-                  getLog().append("GEN-02: Canonicalizing top-byte shift " + assign.toString(getProgram(), false) + " -> " + byteOp.getOperator() + "(" + src + ") >> " + r);
-                  shiftVar.setType(SymbolType.BYTE);
-                  shiftAssign.setrValue1(null);
-                  shiftAssign.setOperator(byteOp);
-                  shiftAssign.setrValue2(src);
+               // Top-byte shift: rewrite shiftAssign in-place to BYTEq(src), and shift in 8 bits
+               getLog().append("GEN-02: Canonicalizing top-byte shift " + assign.toString(getProgram(), false) + " -> " + byteOp.getOperator() + "(" + src + ") >> " + r);
+               shiftVar.setType(SymbolType.BYTE);
+               shiftAssign.setrValue1(null);
+               shiftAssign.setOperator(byteOp);
+               shiftAssign.setrValue2(src);
+               if(SymbolType.BYTE.equals(dstType)) {
                   assign.setrValue1(shiftVarRef);
                   assign.setOperator(Operators.SHIFT_RIGHT);
                   assign.setrValue2(new ConstantInteger((long) r, SymbolType.BYTE));
-                  modified = true;
-                  break;
+               } else {
+                  // For SBYTE target, shift into a BYTE intermediate first, then cast to dstType
+                  Variable shiftedTmp = VariableBuilder.createIntermediate(shiftVar.getScope(), SymbolType.BYTE, getProgram());
+                  StatementAssignment shiftedAssign = new StatementAssignment(shiftedTmp.getVariableRef(), shiftVarRef, Operators.SHIFT_RIGHT, new ConstantInteger((long) r, SymbolType.BYTE), true, assign.getSource(), assign.getComments());
+                  it.previous();
+                  it.add(shiftedAssign);
+                  it.next();
+                  assign.setrValue1(null);
+                  assign.setOperator(null);
+                  assign.setrValue2(new CastValue(dstType, shiftedTmp.getRef()));
                }
+               modified = true;
+               break;
             }
          }
       }

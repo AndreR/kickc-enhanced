@@ -163,6 +163,9 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
 
    private boolean isVariableModifiedInLoop(VariableRef varRef, NaturalLoop loop) {
       dk.camelot64.kickc.model.ProcedureModifiedVars procModVars = getProgram().getProcedureModifiedVars();
+      Variable var = getProgramScope().getVariable(varRef);
+      boolean isLoadStoreOrGlobal = (var == null) || var.isKindLoadStore() || var.isVolatile()
+            || (var.getScope() instanceof dk.camelot64.kickc.model.symbols.ProgramScope);
       for(LabelRef blockRef : loop.getBlocks()) {
          Graph.Block block = getGraph().getBlock(blockRef);
          if(block == null) continue;
@@ -170,6 +173,11 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
             if(stmt instanceof StatementAssignment) {
                LValue lVal = ((StatementAssignment) stmt).getlValue();
                if(varRef.equals(lVal)) return true;
+               // HOCH-05: Indirect pointer write (*p = val) can alias any LOAD_STORE / global / address-taken variable
+               if(lVal instanceof PointerDereference && isLoadStoreOrGlobal) return true;
+            } else if(stmt instanceof dk.camelot64.kickc.model.statements.StatementCallPointer) {
+               // HOCH-05: Indirect function pointer call (*fn_ptr)() can modify any LOAD_STORE / global / address-taken variable
+               if(isLoadStoreOrGlobal) return true;
             } else if(stmt instanceof dk.camelot64.kickc.model.statements.StatementCalling calling) {
                ProcedureRef callee = calling.getProcedure();
                if(callee != null) {
@@ -180,9 +188,12 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
                   } else {
                      return true;
                   }
+               } else if(isLoadStoreOrGlobal) {
+                  return true;
                }
-            } else if(stmt instanceof dk.camelot64.kickc.model.statements.StatementAsm) {
-               return true; // Inline assembly might modify memory
+            } else if(stmt instanceof dk.camelot64.kickc.model.statements.StatementAsm
+                  || stmt instanceof dk.camelot64.kickc.model.statements.StatementKickAsm) {
+               return true; // Inline assembly or KickAsm might modify memory
             }
          }
       }

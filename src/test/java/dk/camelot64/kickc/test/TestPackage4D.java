@@ -136,6 +136,6 @@ public class TestPackage4D {
             """;
       Program program = compileC(code);
       String asm = program.getAsm().toString();
-      assertTrue(asm.contains("$dc0d"), "Volatile read *CIA1_ICR must not be eliminated");
+      assertTrue(asm.contains("$dc0d"), "Volatile read *CIA1_ICR must not be eliminated. ASM:\n" + asm);
    }
 }

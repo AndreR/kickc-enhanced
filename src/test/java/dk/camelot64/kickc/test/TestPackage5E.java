@@ -82,9 +82,12 @@ public class TestPackage5E {
             volatile uint16_t w = 0x1234;
             volatile uint8_t hi;
             volatile uint8_t hi_shifted;
+            volatile int8_t hi_signed;
             void main(void) {
-                hi = (uint8_t)(w >> 8);
-                hi_shifted = (uint8_t)(w >> 10);
+                uint16_t v = w;
+                hi = (uint8_t)(v >> 8);
+                hi_shifted = (uint8_t)(v >> 10);
+                hi_signed = (int8_t)(v >> 8);
             }
             """;
       Program program = compileC(code);

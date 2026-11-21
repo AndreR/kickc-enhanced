@@ -4762,17 +4762,32 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return addExprBinary(ctx, left, operator, right);
    }
 
+   private RValue evalShortCircuitOperand(KickCParser.ExprContext exprCtx, StatementSource source) {
+      PrePostModifierHandler.addPreModifiers(this, exprCtx, source);
+      RValue val = (RValue) this.visit(exprCtx);
+      if(val instanceof LValue && isInt24Type(inferExprType(exprCtx))) {
+         val = promoteInt24ToDword(exprCtx, (LValue) val, inferExprType(exprCtx));
+      }
+      if(PrePostModifierHandler.hasPostModifiers(this, exprCtx, source)) {
+         if(!(val instanceof VariableRef vr) || !vr.isIntermediate()) {
+            Variable tmpVar = addIntermediateVar();
+            addStatement(new StatementAssignment(tmpVar.getVariableRef(), val, true, source, Comment.NO_COMMENTS));
+            val = tmpVar.getRef();
+         }
+         PrePostModifierHandler.addPostModifiers(this, exprCtx, source);
+      }
+      return val;
+   }
+
    /**
     * Lower logical && and || with C short-circuit semantics inside procedures so that
-    * the right-hand operand (including pointer dereferences, volatile reads, and calls)
+    * the right-hand operand (including pointer dereferences, volatile reads, pre/post modifiers, and calls)
     * is only evaluated when the left-hand operand does not determine the result.
     */
    private RValue visitExprLogicalShortCircuit(KickCParser.ExprBinaryContext ctx, Operator operator) {
       boolean isAnd = Operators.LOGIC_AND.equals(operator);
-      RValue left = (RValue) this.visit(ctx.expr(0));
-      if(left instanceof LValue && isInt24Type(inferExprType(ctx.expr(0)))) {
-         left = promoteInt24ToDword(ctx, (LValue) left, inferExprType(ctx.expr(0)));
-      }
+      StatementSource source = new StatementSource(ctx);
+      RValue left = evalShortCircuitOperand(ctx.expr(0), source);
       if(left instanceof ConstantValue leftConst) {
          try {
             ConstantLiteral lit = leftConst.calculateLiteral(program.getScope());
@@ -4793,16 +4808,13 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
                if(!isAnd && leftBool) {
                   return new ConstantBool(true);
                }
-               // Otherwise right-hand side must be evaluated unconditionally
-               RValue right = (RValue) this.visit(ctx.expr(1));
-               if(right instanceof LValue && isInt24Type(inferExprType(ctx.expr(1)))) {
-                  right = promoteInt24ToDword(ctx, (LValue) right, inferExprType(ctx.expr(1)));
-               }
+               // Otherwise right-hand side must be evaluated unconditionally (with its pre/post modifiers)
+               RValue right = evalShortCircuitOperand(ctx.expr(1), source);
                return addExprBinary(ctx, left, operator, right);
             }
          } catch(ConstantNotLiteral ignored) {
             // Fall through: if right is also a ConstantValue, preserve ConstantBinary
-            RValue right = (RValue) this.visit(ctx.expr(1));
+            RValue right = evalShortCircuitOperand(ctx.expr(1), source);
             if(right instanceof ConstantValue) {
                return addExprBinary(ctx, left, operator, right);
             }
@@ -4810,7 +4822,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          }
       }
 
-      StatementSource source = new StatementSource(ctx);
       Label evalRightLabel = getCurrentScope().addLabelIntermediate();
       Label shortLabel = getCurrentScope().addLabelIntermediate();
       Label rightBranchLabel = getCurrentScope().addLabelIntermediate();
@@ -4835,10 +4846,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          addStatement(new StatementJump(endLabel.getRef(), source, Comment.NO_COMMENTS));
 
          addStatement(new StatementLabel(evalRightLabel.getRef(), source, Comment.NO_COMMENTS));
-         RValue right = (RValue) this.visit(ctx.expr(1));
-         if(right instanceof LValue && isInt24Type(inferExprType(ctx.expr(1)))) {
-            right = promoteInt24ToDword(ctx, (LValue) right, inferExprType(ctx.expr(1)));
-         }
+         RValue right = evalShortCircuitOperand(ctx.expr(1), source);
          addStatement(new StatementConditionalJump(right, rightBranchLabel.getRef(), source, Comment.NO_COMMENTS));
          addStatement(new StatementLabel(rightFallthroughLabel.getRef(), source, Comment.NO_COMMENTS));
          addStatement(new StatementAssignment((LValue) rightFallthroughVar, new ConstantBool(false), true, source, Comment.NO_COMMENTS));
@@ -4851,10 +4859,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          // if (left) goto shortLabel (true) else evalRightLabel
          addStatement(new StatementConditionalJump(left, shortLabel.getRef(), source, Comment.NO_COMMENTS));
          addStatement(new StatementLabel(evalRightLabel.getRef(), source, Comment.NO_COMMENTS));
-         RValue right = (RValue) this.visit(ctx.expr(1));
-         if(right instanceof LValue && isInt24Type(inferExprType(ctx.expr(1)))) {
-            right = promoteInt24ToDword(ctx, (LValue) right, inferExprType(ctx.expr(1)));
-         }
+         RValue right = evalShortCircuitOperand(ctx.expr(1), source);
          addStatement(new StatementConditionalJump(right, rightBranchLabel.getRef(), source, Comment.NO_COMMENTS));
          addStatement(new StatementLabel(rightFallthroughLabel.getRef(), source, Comment.NO_COMMENTS));
          addStatement(new StatementAssignment((LValue) rightFallthroughVar, new ConstantBool(false), true, source, Comment.NO_COMMENTS));
@@ -5212,37 +5217,52 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       private final List<PrePostModifier> postMods;
       private final List<PrePostModifier> preMods;
       private final Pass0GenerateStatementSequence mainParser;
+      private final boolean stopAtShortCircuit;
 
-      PrePostModifierHandler(Pass0GenerateStatementSequence mainParser) {
+      PrePostModifierHandler(Pass0GenerateStatementSequence mainParser, boolean stopAtShortCircuit) {
          this.mainParser = mainParser;
+         this.stopAtShortCircuit = stopAtShortCircuit;
          preMods = new ArrayList<>();
          postMods = new ArrayList<>();
       }
 
       static void addPostModifiers(Pass0GenerateStatementSequence parser, ParserRuleContext ctx, StatementSource statementSource) {
-         PrePostModifierHandler prePostModifierHandler = new PrePostModifierHandler(parser);
+         PrePostModifierHandler prePostModifierHandler = new PrePostModifierHandler(parser, true);
          prePostModifierHandler.visit(ctx);
          List<PrePostModifier> modifiers = prePostModifierHandler.getPostMods();
          addModifierStatements(parser, modifiers, statementSource);
       }
 
       static void addPreModifiers(Pass0GenerateStatementSequence parser, ParserRuleContext ctx, StatementSource statementSource) {
-         PrePostModifierHandler modifierHandler = new PrePostModifierHandler(parser);
+         PrePostModifierHandler modifierHandler = new PrePostModifierHandler(parser, true);
          modifierHandler.visit(ctx);
          List<PrePostModifier> modifiers = modifierHandler.getPreMods();
          addModifierStatements(parser, modifiers, statementSource);
       }
 
       static boolean hasPrePostModifiers(Pass0GenerateStatementSequence parser, ParserRuleContext ctx, StatementSource statementSource) {
-         PrePostModifierHandler modifierHandler = new PrePostModifierHandler(parser);
+         PrePostModifierHandler modifierHandler = new PrePostModifierHandler(parser, false);
          modifierHandler.visit(ctx);
          return (modifierHandler.getPreMods().size() > 0) || (modifierHandler.getPostMods().size() > 0);
       }
 
       static boolean hasPostModifiers(Pass0GenerateStatementSequence parser, ParserRuleContext ctx, StatementSource statementSource) {
-         PrePostModifierHandler modifierHandler = new PrePostModifierHandler(parser);
+         PrePostModifierHandler modifierHandler = new PrePostModifierHandler(parser, true);
          modifierHandler.visit(ctx);
          return modifierHandler.getPostMods().size() > 0;
+      }
+
+      @Override
+      public Void visitExprBinary(KickCParser.ExprBinaryContext ctx) {
+         if(stopAtShortCircuit && mainParser.getCurrentProcedureCompilation() != null) {
+            String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
+            Operator operator = Operators.getBinary(op);
+            if(Operators.LOGIC_AND.equals(operator) || Operators.LOGIC_OR.equals(operator)) {
+               // KRIT-09: Short-circuit && / || owns pre/post modifiers for both LHS and RHS internally
+               return null;
+            }
+         }
+         return super.visitExprBinary(ctx);
       }
 
 
