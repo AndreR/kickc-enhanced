@@ -95,13 +95,31 @@ public class CompileLog {
     */
    private boolean sysOut = false;
 
+   /**
+    * Whether log messages are recorded in memory (can be disabled for non-verbose CLI runs to avoid heap bloat).
+    */
+   private boolean enabled = true;
+
    public CompileLog() {
       this.log = new StringBuilder();
    }
 
+   public boolean isEnabled() {
+      return enabled || sysOut;
+   }
+
+   public void setEnabled(boolean enabled) {
+      this.enabled = enabled;
+   }
+
    public synchronized void append(String msg) {
-      log.append(msg);
-      log.append("\n");
+      if(!enabled && !sysOut) {
+         return;
+      }
+      if(enabled) {
+         log.append(msg);
+         log.append("\n");
+      }
       if(sysOut) {
          System.out.append(msg + "\n");
       }

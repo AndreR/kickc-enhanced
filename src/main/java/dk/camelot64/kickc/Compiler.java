@@ -668,9 +668,13 @@ public class Compiler {
       new Pass3AddNopBeforeCallOns(program).generate();
       new PassNStatementIndices(program).execute();
 
-      getLog().append("CALL GRAPH");
       program.clearCallGraph();
-      getLog().append(program.getCallGraph().toString());
+      if(getLog().isEnabled()) {
+         getLog().append("CALL GRAPH");
+         getLog().append(program.getCallGraph().toString());
+      } else {
+         program.getCallGraph();
+      }
 
       //getLog().setVerboseLiveRanges(true);
 
@@ -720,8 +724,10 @@ public class Compiler {
          System.out.println(String.format("   [PASS3] LiveRangesEffective took    %6.2f s", (System.currentTimeMillis() - tLiveRanges) / 1000.0));
       }
 
-      getLog().append("\nFINAL CONTROL FLOW GRAPH");
-      getLog().append(program.prettyControlFlowGraph());
+      if(getLog().isEnabled()) {
+         getLog().append("\nFINAL CONTROL FLOW GRAPH");
+         getLog().append(program.prettyControlFlowGraph());
+      }
 
    }
 
@@ -800,15 +806,21 @@ public class Compiler {
          if(getLog().isVerboseUplift()) {
             System.out.println(String.format("   [PASS4] Total Potential Reg Analysis: %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
          }
-         getLog().append(program.getRegisterPotentials().toString());
+         if(getLog().isEnabled()) {
+            getLog().append(program.getRegisterPotentials().toString());
+         }
 
          if(getLog().isVerboseSizeInfo()) {
             getLog().append(program.getSizeInfo());
          }
 
          // Find register uplift scopes
-         getLog().append("REGISTER UPLIFT SCOPES");
-         getLog().append(program.getRegisterUpliftProgram().toString((program.getVariableRegisterWeights())));
+         if(getLog().isEnabled()) {
+            getLog().append("REGISTER UPLIFT SCOPES");
+            getLog().append(program.getRegisterUpliftProgram().toString((program.getVariableRegisterWeights())));
+         } else {
+            program.getRegisterUpliftProgram();
+         }
 
          // Attempt uplifting registers through a lot of combinations
          CompilerProgress.status("Pass 4 (Register Allocation): Uplifting combinations...");

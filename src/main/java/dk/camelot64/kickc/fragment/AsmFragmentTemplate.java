@@ -99,8 +99,9 @@ public class AsmFragmentTemplate {
          Variable.setThreadAllocationOverride(null);
       }
       try {
-         // Parse the body ASM
-         this.bodyAsm = AsmParser.parseAsm(this.body, new StatementSource(signature + ".asm", 1, 1, this.body, -1, -1));
+         // Parse the body ASM into a local first; publish volatile bodyAsm LAST so readers
+         // observing bodyAsm != null are guaranteed to see initialized clobber and cycles (MC-3).
+         KickCParser.AsmLinesContext parsedBodyAsm = AsmParser.parseAsm(this.body, new StatementSource(signature + ".asm", 1, 1, this.body, -1, -1));
          // Generate a dummy instance to find clobber & cycles
          ProgramScope scope = new ProgramScope();
          LinkedHashMap<String, Value> bindings = new LinkedHashMap<>();
@@ -136,11 +137,12 @@ public class AsmFragmentTemplate {
                new AsmFragmentInstance(new Program(), signature, ScopeRef.ROOT, this, bindings);
          AsmProgram asm = new AsmProgram(targetCpu);
          asm.startChunk(ScopeRef.ROOT, null, signature);
-         fragmentInstance.generate(asm);
+         fragmentInstance.generate(asm, parsedBodyAsm);
          CpuClobber cpuClobber = asm.getClobber();
          this.clobber = new AsmFragmentClobber(cpuClobber);
          asm.addStash();
          this.cycles = asm.getCycles();
+         this.bodyAsm = parsedBodyAsm;
       } finally {
          if(prevOverride != null) {
             Variable.setThreadAllocationOverride(prevOverride);

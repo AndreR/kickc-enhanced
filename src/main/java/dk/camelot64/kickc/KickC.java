@@ -612,6 +612,9 @@ public class KickC implements Callable<Integer> {
          compiler.getLog().setVerboseFixLongBranch(true);
          compiler.getLog().setSysOut(true);
       }
+      if(!compiler.getLog().isSysOut()) {
+         compiler.getLog().setEnabled(false);
+      }
 
    }
 

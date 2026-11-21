@@ -108,7 +108,7 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
             if(alwaysClobbered.isEmpty()) {
                // No registers are always clobbered - move on to the next statement
                continue;
-            } else {
+            } else if(getLog().isEnabled()) {
                StringBuilder msg = new StringBuilder();
                msg.append("Statement ").append(statement.toString(getProgram(), true));
                msg.append(" always clobbers ");
@@ -130,9 +130,9 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
                for(Registers.Register clobberedRegister : alwaysClobbered) {
                   if(alivePotentialRegisters.contains(clobberedRegister)) {
                      registerPotentials.removePotentialRegister(aliveClass, clobberedRegister);
-                     StringBuilder msg = new StringBuilder();
-                     msg.append("Removing always clobbered register " + clobberedRegister + " as potential for " + aliveClass);
-                     getLog().append(msg.toString());
+                     if(getLog().isEnabled()) {
+                        getLog().append("Removing always clobbered register " + clobberedRegister + " as potential for " + aliveClass);
+                     }
                      nextDirtyClasses.add(aliveClass);
                      modified = true;
                   }
