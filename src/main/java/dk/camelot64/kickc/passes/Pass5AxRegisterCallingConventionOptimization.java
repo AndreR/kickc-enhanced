@@ -47,20 +47,42 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
 
    private static int prevInstIdx(List<LineRef> allLines, int startIdx) {
       for(int i = startIdx; i >= 0; i--) {
-         if(allLines.get(i).line instanceof AsmInstruction) {
+         AsmLine line = allLines.get(i).line;
+         if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) {
+            continue;
+         }
+         if(line instanceof AsmInstruction) {
             return i;
          }
+         // Stop at AsmLabel, AsmScopeBegin, AsmScopeEnd, AsmInlineKickAsm, etc. (CF-09)
+         break;
       }
       return -1;
    }
 
    private static int nextInstIdx(List<LineRef> allLines, int startIdx) {
       for(int i = startIdx; i < allLines.size(); i++) {
-         if(allLines.get(i).line instanceof AsmInstruction) {
+         AsmLine line = allLines.get(i).line;
+         if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) {
+            continue;
+         }
+         if(line instanceof AsmInstruction) {
             return i;
          }
+         // Stop at AsmLabel, AsmScopeBegin, AsmScopeEnd, AsmInlineKickAsm, etc. (CF-09)
+         break;
       }
       return -1;
+   }
+
+   private static boolean hasEarlierInstInScope(List<LineRef> allLines, int idx, String scope) {
+      for(int i = idx - 1; i >= 0; i--) {
+         LineRef ref = allLines.get(i);
+         if(ref.scope == null || !scope.equals(ref.scope)) break;
+         if(ref.line instanceof AsmScopeBegin) break;
+         if(ref.line instanceof AsmInstruction) return true;
+      }
+      return false;
    }
 
    private static String stripPlus1(String op) {
@@ -214,6 +236,7 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
 
          // Collect procedures eligible for AX return and AX parameter
          Set<String> axReturnProcs = new HashSet<>();
+         Map<String, Procedure> procByName = new HashMap<>();
          Map<String, String> procReturnVarAddr = new HashMap<>();
          Set<String> axParamProcs = new HashSet<>();
          Map<String, String> procParamVarName = new HashMap<>();
@@ -222,10 +245,15 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
          Scope rootScope = getProgram().getScope();
          for(Procedure proc : rootScope.getAllProcedures(true)) {
             String name = proc.getLocalName();
+            procByName.put(name, proc);
             if(proc.getInterruptType() != null || proc.isDeclaredIntrinsic()) {
                continue;
             }
             if(Procedure.CallingConvention.STACK_CALL.equals(proc.getCallingConvention())) {
+               continue;
+            }
+            // CF-09: Exclude procedures whose address is taken (function pointer calls cannot be patched)
+            if(!proc.isAxConvention() && Pass2ConstantIdentification.isAddressOfUsed(proc.getRef(), getProgram())) {
                continue;
             }
 
@@ -255,10 +283,8 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
          }
 
          // -------------------------------------------------------------
-         // Call-Site Liveness Validation for AX Return Candidates
+         // Call-Site Liveness & Caller Compatibility Validation for AX Return Candidates (CF-09)
          // -------------------------------------------------------------
-         // If register X is live across ANY call-site (jsr <target>), the target procedure
-         // cannot use AX return because clobbering X on return would corrupt the caller's live variable!
          Set<String> scopesReadingX = new HashSet<>();
          for(LineRef ref : allLines) {
             if(ref.scope != null && ref.line instanceof AsmInstruction inst) {
@@ -269,17 +295,93 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
          }
 
          Set<String> unsafeAxReturnProcs = new HashSet<>();
+         // Collect all call-site instruction indices that Step 4 knows how to patch
+         Map<String, Set<Integer>> handledCallerReadIndices = new HashMap<>();
          for(int i = 0; i < allLines.size(); i++) {
             LineRef ref = allLines.get(i);
-            if(ref.line instanceof AsmInstruction inst && "jsr".equalsIgnoreCase(inst.getCpuOpcode().getMnemonic())) {
+            if(ref.line instanceof AsmInstruction inst && inst.getCpuOpcode() != null) {
+               String mn = inst.getCpuOpcode().getMnemonic().toLowerCase();
                String target = inst.getOperand1();
-               if(target != null) {
+               if("jmp".equals(mn) && target != null) {
+                  String targetProc = target.trim();
+                  if(axReturnProcs.contains(targetProc) && (ref.scope == null || !targetProc.equals(ref.scope))) {
+                     Procedure p = procByName.get(targetProc);
+                     if(p == null || !p.isAxConvention()) {
+                        // Tail-call JMP from another scope into auto-AX candidate -> unsafe
+                        unsafeAxReturnProcs.add(targetProc);
+                     }
+                  }
+               } else if("jsr".equals(mn) && target != null) {
                   String targetProc = target.trim();
                   if(axReturnProcs.contains(targetProc) && ref.scope != null) {
                      boolean callerReadsX = scopesReadingX.contains(ref.scope);
                      if(isXLiveAcrossCall(allLines, i, ref.scope, callerReadsX)) {
                         unsafeAxReturnProcs.add(targetProc);
+                        continue;
                      }
+                     // Record indices handled by Step 4A / 4B for this call site
+                     String retAddr = procReturnVarAddr.get(targetProc);
+                     Map<String, String> callerAliases = scopeAliases.get(ref.scope);
+                     int idx1 = nextInstIdx(allLines, i + 1);
+                     int idx2 = (idx1 >= 0) ? nextInstIdx(allLines, idx1 + 1) : -1;
+                     int idx3 = (idx2 >= 0) ? nextInstIdx(allLines, idx2 + 1) : -1;
+                     int idx4 = (idx3 >= 0) ? nextInstIdx(allLines, idx3 + 1) : -1;
+                     Set<Integer> handled = handledCallerReadIndices.computeIfAbsent(targetProc, k -> new HashSet<>());
+                     if(idx1 >= 0 && idx2 >= 0 && idx3 >= 0 && idx4 >= 0) {
+                        AsmInstruction i1 = (AsmInstruction) allLines.get(idx1).line;
+                        AsmInstruction i2 = (AsmInstruction) allLines.get(idx2).line;
+                        AsmInstruction i3 = (AsmInstruction) allLines.get(idx3).line;
+                        AsmInstruction i4 = (AsmInstruction) allLines.get(idx4).line;
+                        if("lda".equalsIgnoreCase(i1.getCpuOpcode().getMnemonic()) &&
+                           matchesVarLo(i1.getOperand1(), targetProc + ".return", retAddr, callerAliases) &&
+                           "sta".equalsIgnoreCase(i2.getCpuOpcode().getMnemonic()) &&
+                           "lda".equalsIgnoreCase(i3.getCpuOpcode().getMnemonic()) &&
+                           matchesVarHi(i3.getOperand1(), targetProc + ".return", retAddr, callerAliases) &&
+                           "sta".equalsIgnoreCase(i4.getCpuOpcode().getMnemonic())) {
+                           handled.add(idx1);
+                           handled.add(idx3);
+                           continue;
+                        }
+                     }
+                     if(idx1 >= 0 && allLines.get(idx1).line instanceof AsmInstruction i1 &&
+                        "lda".equalsIgnoreCase(i1.getCpuOpcode().getMnemonic()) &&
+                        matchesVarLo(i1.getOperand1(), targetProc + ".return", retAddr, callerAliases) &&
+                        idx2 >= 0 && allLines.get(idx2).line instanceof AsmInstruction i2 &&
+                        !"sta".equalsIgnoreCase(i2.getCpuOpcode().getMnemonic())) {
+                        // Case 4B stores A/X back to return/return+1 right after JSR, so any subsequent reads in this block are valid
+                        handled.add(idx1);
+                        for(int k = idx1 + 1; k < allLines.size(); k++) {
+                           LineRef kr = allLines.get(k);
+                           if(kr.scope == null || !ref.scope.equals(kr.scope) || kr.line instanceof AsmScopeEnd) break;
+                           if(kr.line instanceof AsmInstruction ki && ki.getCpuOpcode() != null &&
+                              "jsr".equalsIgnoreCase(ki.getCpuOpcode().getMnemonic()) && targetProc.equals(ki.getOperand1())) {
+                              break;
+                           }
+                           handled.add(k);
+                        }
+                     }
+                  }
+               }
+            }
+         }
+         // Verify no caller reads procName.return or procName.return+1 outside handled Step 4 patterns (e.g. high-byte-only readers)
+         for(String candProc : new ArrayList<>(axReturnProcs)) {
+            if(unsafeAxReturnProcs.contains(candProc)) continue;
+            Procedure p = procByName.get(candProc);
+            if(p != null && p.isAxConvention()) continue; // Explicitly annotated __ax
+            String qualRet = candProc + ".return";
+            Set<Integer> handled = handledCallerReadIndices.getOrDefault(candProc, Collections.emptySet());
+            for(int i = 0; i < allLines.size(); i++) {
+               LineRef ref = allLines.get(i);
+               if(candProc.equals(ref.scope)) continue;
+               if(ref.line instanceof AsmInstruction inst && inst.getOperand1() != null) {
+                  Map<String, String> callerAliases = scopeAliases.get(ref.scope);
+                  String op = inst.getOperand1().trim();
+                  boolean refsQualLo = matchesVarLo(op, qualRet, null, callerAliases);
+                  boolean refsQualHi = matchesVarHi(op, qualRet, null, callerAliases);
+                  if((refsQualLo || refsQualHi) && !handled.contains(i)) {
+                     unsafeAxReturnProcs.add(candProc);
+                     break;
                   }
                }
             }
@@ -324,9 +426,12 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
                      }
                   }
 
-                  // Case 1A: Constant return defined in .label return = <const> with no instructions before RTS
+                  // Case 1A: Constant return defined in .label return = <const> (ONLY when return var is constant, NOT a ZP address!)
+                  Procedure curProcObj = procByName.get(ref.scope);
+                  Variable retVarObj = (curProcObj != null) ? curProcObj.getLocalVariable("return") : null;
+                  boolean isConstantReturnVar = (retVarObj != null && retVarObj.isKindConstant());
                   String retValDecl = (aliases != null) ? aliases.get("return") : null;
-                  Long constVal = parseConstValue(retValDecl);
+                  Long constVal = isConstantReturnVar ? parseConstValue(retValDecl) : null;
                   if(constVal != null && (!inSameScope || !(allLines.get(idx1).line instanceof AsmInstruction))) {
                      int rtsIndex = ref.chunk.getLines().indexOf(inst);
                      if(rtsIndex >= 0) {
@@ -337,13 +442,33 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
                         ref.chunk.getLines().add(rtsIndex, ldaRet);
                         ref.chunk.getLines().add(rtsIndex + 1, ldxRet);
                         transformedRts.add(inst);
+                        if(curProcObj != null) curProcObj.setAxConvention(true);
                         passModified = true;
                         overallModified = true;
                         break;
                      }
                   }
 
+                  // If RTS is immediately preceded by a merge label (e.g. __breturn: rts), emit Case 1D (lda.z return; ldx.z return+1)
                   if(!inSameScope) {
+                     if(retAddr != null) {
+                        CpuOpcode ldaOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lda", CpuAddressingMode.ZP, false);
+                        CpuOpcode ldxOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("ldx", CpuAddressingMode.ZP, false);
+                        int rtsIndex = ref.chunk.getLines().indexOf(inst);
+                        if(rtsIndex >= 0 && ldaOp != null && ldxOp != null) {
+                           AsmInstruction ldaRet = new AsmInstruction(ldaOp, retAddr, null, null);
+                           ldaRet.setNoOptimize(true);
+                           AsmInstruction ldxRet = new AsmInstruction(ldxOp, retAddr + "+1", null, null);
+                           ldxRet.setNoOptimize(true);
+                           ref.chunk.getLines().add(rtsIndex, ldaRet);
+                           ref.chunk.getLines().add(rtsIndex + 1, ldxRet);
+                           transformedRts.add(inst);
+                           if(curProcObj != null) curProcObj.setAxConvention(true);
+                           passModified = true;
+                           overallModified = true;
+                           break;
+                        }
+                     }
                      transformedRts.add(inst);
                      continue;
                   }
@@ -380,6 +505,7 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
                            allLines.get(idx3).chunk.getLines().remove(inst3);
                            ref1.chunk.getLines().remove(inst1);
                            transformedRts.add(inst);
+                           if(curProcObj != null) curProcObj.setAxConvention(true);
                            passModified = true;
                            overallModified = true;
                            break;
@@ -404,6 +530,7 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
                         ref.chunk.getLines().add(rtsIndex, taxInst);
                         ref.chunk.getLines().add(rtsIndex + 1, ldaRet);
                         transformedRts.add(inst);
+                        if(curProcObj != null) curProcObj.setAxConvention(true);
                         passModified = true;
                         overallModified = true;
                         break;
@@ -429,6 +556,7 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
                         ref.chunk.getLines().add(rtsIndex, ldaRet);
                         ref.chunk.getLines().add(rtsIndex + 1, ldxRet);
                         transformedRts.add(inst);
+                        if(curProcObj != null) curProcObj.setAxConvention(true);
                         passModified = true;
                         overallModified = true;
                         break;
@@ -446,8 +574,7 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
          for(int i = 0; i < allLines.size(); i++) {
             LineRef ref = allLines.get(i);
             if(ref.scope != null && axParamProcs.contains(ref.scope) && ref.line instanceof AsmInstruction) {
-               int prev = prevInstIdx(allLines, i - 1);
-               if(prev >= 0 && ref.scope.equals(allLines.get(prev).scope)) {
+               if(hasEarlierInstInScope(allLines, i, ref.scope)) {
                   continue; // Not the first instruction in scope
                }
 

@@ -61,10 +61,44 @@ public class Pass5LoopRegisterPinning extends Pass5AsmOptimization {
       String mnem = op.getMnemonic();
       if(mnem.equals("ldx") || mnem.equals("tax") || mnem.equals("tsx") || mnem.equals("lax") ||
          mnem.equals("inx") || mnem.equals("dex") || mnem.equals("axs") || mnem.equals("plx") ||
-         mnem.equals("jsr")) {
+         mnem.equals("jsr") || mnem.equals("rti")) {
          return true;
       }
       return false;
+   }
+
+   private static boolean readsX(AsmInstruction inst) {
+      CpuOpcode op = inst.getCpuOpcode();
+      if(op == null) return true;
+      CpuAddressingMode mode = op.getAddressingMode();
+      if(mode == CpuAddressingMode.ABX || mode == CpuAddressingMode.ZPX ||
+         mode == CpuAddressingMode.IZX || mode == CpuAddressingMode.IAX) {
+         return true;
+      }
+      String mnem = op.getMnemonic();
+      return mnem.equals("stx") || mnem.equals("sax") || mnem.equals("txa") || mnem.equals("txs") ||
+             mnem.equals("cpx") || mnem.equals("inx") || mnem.equals("dex") || mnem.equals("axs") ||
+             mnem.equals("phx") || mnem.equals("jsr") || mnem.equals("rti");
+   }
+
+   private static boolean readsY(AsmInstruction inst) {
+      CpuOpcode op = inst.getCpuOpcode();
+      if(op == null) return true;
+      CpuAddressingMode mode = op.getAddressingMode();
+      if(mode == CpuAddressingMode.ABY || mode == CpuAddressingMode.ZPY || mode == CpuAddressingMode.IZY) {
+         return true;
+      }
+      String mnem = op.getMnemonic();
+      return mnem.equals("sty") || mnem.equals("tya") || mnem.equals("cpy") ||
+             mnem.equals("iny") || mnem.equals("dey") || mnem.equals("phy") ||
+             mnem.equals("jsr") || mnem.equals("rti");
+   }
+
+   private static boolean overwritesY(AsmInstruction inst) {
+      CpuOpcode op = inst.getCpuOpcode();
+      if(op == null) return false;
+      String mnem = op.getMnemonic();
+      return mnem.equals("ldy") || mnem.equals("tay") || mnem.equals("ply");
    }
 
    @Override
@@ -115,13 +149,8 @@ public class Pass5LoopRegisterPinning extends Pass5AsmOptimization {
          return cur;
       };
 
-      // 2. Flatten all lines across chunks
-      List<LineRef> allLines = new ArrayList<>();
-      for(AsmChunk chunk : getAsmProgram().getChunks()) {
-         for(AsmLine line : chunk.getLines()) {
-            allLines.add(new LineRef(chunk, line));
-         }
-      }
+      // 2. Flatten all lines across chunks (preserving scope metadata)
+      List<LineRef> allLines = flattenLines(getAsmProgram());
 
       // 3. Scan for loop head: L_head followed by LDY var; LDA arr,y
       String currentScope = null;
@@ -155,22 +184,21 @@ public class Pass5LoopRegisterPinning extends Pass5AsmOptimization {
          String canonVar1 = resolve.apply(var1, currentScope);
          if(canonVar1 == null) continue;
 
-         // Find instruction 2 (lda arr,y)
+         // Find instruction 2 (lda arr,y - strictly ABY only, NEVER IZY!)
          int ldaIdx = -1;
          for(int j = ldyIdx + 1; j < allLines.size(); j++) {
             AsmLine l = allLines.get(j).line;
             if(l instanceof AsmComment || l instanceof AsmLabelDecl || l instanceof AsmConstant) continue;
             if(l instanceof AsmInstruction) {
                AsmInstruction inst = (AsmInstruction) l;
-               if(inst.getCpuOpcode() != null && "lda".equals(inst.getCpuOpcode().getMnemonic()) &&
-                  (CpuAddressingMode.ABY.equals(inst.getCpuOpcode().getAddressingMode()) ||
-                   CpuAddressingMode.IZY.equals(inst.getCpuOpcode().getAddressingMode()))) {
+               if(inst.getCpuOpcode() != null && !inst.isNoOptimize() && "lda".equals(inst.getCpuOpcode().getMnemonic()) &&
+                  CpuAddressingMode.ABY.equals(inst.getCpuOpcode().getAddressingMode())) {
                   ldaIdx = j;
                }
             }
             break;
          }
-         if(ldaIdx == -1) continue;
+         if(ldaIdx == -1 || ldyInst.isNoOptimize()) continue;
          AsmInstruction ldaInst = (AsmInstruction) allLines.get(ldaIdx).line;
 
          // 4. Find step block that branches back to headName
@@ -179,7 +207,7 @@ public class Pass5LoopRegisterPinning extends Pass5AsmOptimization {
          int laxIdx = -1;
          for(int j = ldaIdx + 1; j < allLines.size(); j++) {
             AsmLine l = allLines.get(j).line;
-            if(l instanceof AsmScopeBegin || l instanceof AsmScopeEnd) break;
+            if(l instanceof AsmScopeBegin || l instanceof AsmScopeEnd || l instanceof AsmInlineKickAsm) break;
             if(l instanceof AsmInstruction) {
                AsmInstruction inst = (AsmInstruction) l;
                CpuOpcode op = inst.getCpuOpcode();
@@ -195,10 +223,17 @@ public class Pass5LoopRegisterPinning extends Pass5AsmOptimization {
                   int curLax = -1;
                   for(int k = branchIdx - 1; k >= ldaIdx; k--) {
                      AsmLine lk = allLines.get(k).line;
+                     if(lk instanceof AsmInlineKickAsm) {
+                        xSafe = false;
+                        break;
+                     }
                      if(lk instanceof AsmInstruction) {
                         AsmInstruction ik = (AsmInstruction) lk;
                         CpuOpcode opk = ik.getCpuOpcode();
-                        if(opk == null) continue;
+                        if(opk == null) {
+                           xSafe = false;
+                           break;
+                        }
                         String mk = opk.getMnemonic();
                         if(curAxs == -1) {
                            if(mk.equals("axs")) {
@@ -222,21 +257,55 @@ public class Pass5LoopRegisterPinning extends Pass5AsmOptimization {
                      }
                   }
                   if(xSafe && curAxs != -1 && curLax != -1) {
-                     axsIdx = curAxs;
-                     laxIdx = curLax;
-                     break;
+                     // CF-10: Verify X is neither clobbered nor read in the ENTIRE loop body [ldaIdx+1 .. curLax-1]
+                     // and verify Y is NOT read anywhere in the loop body before being overwritten, nor live after the loop!
+                     boolean bodySafe = true;
+                     boolean yOverwrittenInLoop = false;
+                     for(int k = ldaIdx + 1; k < branchIdx; k++) {
+                        AsmLine lk = allLines.get(k).line;
+                        if(lk instanceof AsmInlineKickAsm) {
+                           bodySafe = false;
+                           break;
+                        }
+                        if(lk instanceof AsmInstruction ik) {
+                           if(k < curLax && (clobbersX(ik) || readsX(ik))) {
+                              bodySafe = false;
+                              break;
+                           }
+                           if(!yOverwrittenInLoop) {
+                              if(readsY(ik)) {
+                                 bodySafe = false;
+                                 break;
+                              }
+                              if(overwritesY(ik)) {
+                                 yOverwrittenInLoop = true;
+                              }
+                           }
+                        }
+                     }
+                     if(bodySafe && !yOverwrittenInLoop) {
+                        // Y was not overwritten in the loop body; verify Y is dead after the loop exit
+                        if(!isRegDeadAlongPath("Y", allLines, branchIdx + 1, new HashSet<>(), currentScope, getProgram())) {
+                           bodySafe = false;
+                        }
+                     }
+                     if(bodySafe) {
+                        axsIdx = curAxs;
+                        laxIdx = curLax;
+                        break;
+                     }
                   }
                }
             }
          }
          if(branchIdx == -1 || axsIdx == -1 || laxIdx == -1) continue;
 
-         // 5. Find pre-loop store: look backwards before headLabel for STA var
+         // 5. Find pre-loop store: look backwards before headLabel for STA var (stop at labels/inline asm!)
          int staIdx = -1;
          boolean preXSafe = true;
          for(int j = i - 1; j >= 0; j--) {
             AsmLine l = allLines.get(j).line;
-            if(l instanceof AsmScopeBegin || l instanceof AsmScopeEnd) break;
+            if(l instanceof AsmScopeBegin || l instanceof AsmScopeEnd || l instanceof AsmLabel || l instanceof AsmInlineKickAsm) break;
             if(l instanceof AsmInstruction) {
                AsmInstruction inst = (AsmInstruction) l;
                CpuOpcode op = inst.getCpuOpcode();
@@ -249,7 +318,7 @@ public class Pass5LoopRegisterPinning extends Pass5AsmOptimization {
                      break;
                   }
                }
-               if(clobbersX(inst)) {
+               if(clobbersX(inst) || readsX(inst)) {
                   preXSafe = false;
                   break;
                }

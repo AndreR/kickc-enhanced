@@ -91,6 +91,7 @@ public class Pass5BitTestOptimization extends Pass5AsmOptimization {
                mnem.equals("alr") || mnem.equals("anc") || mnem.equals("arr") || mnem.equals("axs") ||
                mnem.equals("dcp") || mnem.equals("isc") || mnem.equals("rla") || mnem.equals("rra") ||
                mnem.equals("slo") || mnem.equals("sre") ||
+               ((mnem.equals("asl") || mnem.equals("lsr") || mnem.equals("rol") || mnem.equals("ror")) && CpuAddressingMode.NON.equals(op.getAddressingMode())) ||
                mnem.equals("jsr") || mnem.equals("rti") || mnem.equals("jmp") || mnem.startsWith("b")) {
                return false;
             }
@@ -122,10 +123,9 @@ public class Pass5BitTestOptimization extends Pass5AsmOptimization {
                   currentScope = null;
                } else if(line instanceof AsmLabel) {
                   String lbl = ((AsmLabel) line).getLabel();
-                  if(!lbl.startsWith("!")) {
+                  if(lbl != null && !lbl.startsWith("!")) {
                      String key = (currentScope != null ? currentScope + "::" : "") + lbl;
                      labelIndices.put(key, lineIdx);
-                     labelIndices.put(lbl, lineIdx);
                   }
                }
                allLines.add(new LineRef(lineIdx++, chunk, line, currentScope));
@@ -244,11 +244,12 @@ public class Pass5BitTestOptimization extends Pass5AsmOptimization {
             // Check if A is dead on fallthrough path
             if(!isADeadAfter(allLines, idxBranch + 1, refBranch.scope)) continue;
 
-            // Check if A is dead on jump target path
+            // Check if A is dead on jump target path (strictly within refBranch.scope)
             String targetKey = (refBranch.scope != null ? refBranch.scope + "::" : "") + jumpTarget;
             Integer targetLineIdx = labelIndices.get(targetKey);
-            if(targetLineIdx == null) {
-               targetLineIdx = labelIndices.get(jumpTarget);
+            if(targetLineIdx == null && jumpTarget.startsWith("!")) {
+               int resolvedIdx = findLabelIndex(allLines, jumpTarget, idxBranch, refBranch.scope);
+               if(resolvedIdx != -1) targetLineIdx = resolvedIdx;
             }
             if(targetLineIdx != null) {
                if(!isADeadAfter(allLines, targetLineIdx + 1, refBranch.scope)) continue;

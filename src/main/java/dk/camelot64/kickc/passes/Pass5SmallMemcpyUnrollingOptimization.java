@@ -118,13 +118,23 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
       }
    }
 
-   private static String stripMinusOne(String op) {
+   /**
+    * CF-15: Strips a trailing "- 1" (with optional whitespace) from an operand.
+    * Returns null if the operand does NOT end with "-1" (distinguishing 0-based src-1,y from 1-based src,y!).
+    */
+   private static String stripMinusOneExact(String op) {
       if(op == null) return null;
       String t = op.trim();
-      if(t.endsWith("-1")) {
-         return t.substring(0, t.length() - 2).trim();
+      java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(.*?)\\s*-\\s*1$").matcher(t);
+      if(m.matches()) {
+         return m.group(1).trim();
       }
-      return t;
+      return null;
+   }
+
+   private static String formatOffsetOperand(String base, int offset) {
+      if(offset == 0) return base;
+      return base + "+" + offset;
    }
 
    @Override
@@ -134,6 +144,15 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
       CpuOpcode ldaAbs = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lda", CpuAddressingMode.ABS, false);
       CpuOpcode staAbs = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("sta", CpuAddressingMode.ABS, false);
       CpuOpcode inyOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("iny", CpuAddressingMode.NON, false);
+
+      List<LineRef> allLines = flattenLines(getAsmProgram());
+      Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
+      Map<AsmInstruction, Integer> instToGlobalIdx = new IdentityHashMap<>();
+      for(int gi = 0; gi < allLines.size(); gi++) {
+         if(allLines.get(gi).line instanceof AsmInstruction ai) {
+            instToGlobalIdx.put(ai, gi);
+         }
+      }
 
       for(AsmChunk chunk : getAsmProgram().getChunks()) {
          List<AsmLine> lines = chunk.getLines();
@@ -145,8 +164,8 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
             // Pattern C: Countdown loop (6 lines)
             // 0: LDY #N (or LDX #N)
             // 1: Label
-            // 2: LDA src-1,Y
-            // 3: STA dst-1,Y
+            // 2: LDA src[-1],Y
+            // 3: STA dst[-1],Y
             // 4: DEY (or DEX)
             // 5: BNE label
             for(int i = 0; i <= lines.size() - 6; i++) {
@@ -157,6 +176,9 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
                   lines.get(i + 4) instanceof AsmInstruction inst4 &&
                   lines.get(i + 5) instanceof AsmInstruction inst5) {
 
+                  if(inst0.isNoOptimize() || inst2.isNoOptimize() || inst3.isNoOptimize() || inst4.isNoOptimize() || inst5.isNoOptimize()) {
+                     continue;
+                  }
                   String m0 = inst0.getCpuOpcode().getMnemonic().toLowerCase();
                   String m2 = inst2.getCpuOpcode().getMnemonic().toLowerCase();
                   String m3 = inst3.getCpuOpcode().getMnemonic().toLowerCase();
@@ -178,13 +200,33 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
                      if(isY || isX) {
                         int count = getImmOrConstVal(inst0.getOperand1());
                         if(count >= 2 && count <= 4) {
-                           String src = stripMinusOne(inst2.getOperand1());
-                           String dst = stripMinusOne(inst3.getOperand1());
+                           Integer endGlobalIdx = instToGlobalIdx.get(inst5);
+                           if(endGlobalIdx == null) continue;
+                           String scope = allLines.get(endGlobalIdx).scope;
+                           CanonicalResolver resolver = scopeResolvers.getOrDefault(scope, scopeResolvers.get(""));
+                           if(isVolatileOrHardwareOperand(inst2, scope, resolver, getProgram()) ||
+                              isVolatileOrHardwareOperand(inst3, scope, resolver, getProgram())) {
+                              continue;
+                           }
+                           // CF-15: Preserve post-loop X/Y value and flags if live
+                           String idxReg = isY ? "Y" : "X";
+                           boolean idxDead = isRegDeadAlongPath(idxReg, allLines, endGlobalIdx + 1, new HashSet<>(), scope, getProgram());
+                           if(!idxDead || (getLiveFlagsAfter(allLines, endGlobalIdx, scope, getProgram()) & FLAG_NZ) != 0) {
+                              continue;
+                           }
 
+                           String srcStripped = stripMinusOneExact(inst2.getOperand1());
+                           String dstStripped = stripMinusOneExact(inst3.getOperand1());
+                           String srcBase = (srcStripped != null) ? srcStripped : inst2.getOperand1().trim();
+                           String dstBase = (dstStripped != null) ? dstStripped : inst3.getOperand1().trim();
+                           int srcShift = (srcStripped != null) ? -1 : 0;
+                           int dstShift = (dstStripped != null) ? -1 : 0;
+
+                           // CF-15: Preserve exact descending copy direction (y = count .. 1) for overlapping buffers!
                            List<AsmLine> unrolled = new ArrayList<>();
-                           for(int b = 0; b < count; b++) {
-                              String srcOp = (b == 0) ? src : (src + "+" + b);
-                              String dstOp = (b == 0) ? dst : (dst + "+" + b);
+                           for(int y = count; y >= 1; y--) {
+                              String srcOp = formatOffsetOperand(srcBase, y + srcShift);
+                              String dstOp = formatOffsetOperand(dstBase, y + dstShift);
                               unrolled.add(new AsmInstruction(ldaAbs, srcOp, null, null));
                               unrolled.add(new AsmInstruction(staAbs, dstOp, null, null));
                            }
@@ -195,6 +237,11 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
                            lines.addAll(i, unrolled);
                            chunkModified = true;
                            modified = true;
+                           allLines = flattenLines(getAsmProgram());
+                           instToGlobalIdx.clear();
+                           for(int gi = 0; gi < allLines.size(); gi++) {
+                              if(allLines.get(gi).line instanceof AsmInstruction ai) instToGlobalIdx.put(ai, gi);
+                           }
                            break;
                         }
                      }
@@ -214,6 +261,10 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
                   lines.get(i + 5) instanceof AsmInstruction inst5 &&
                   lines.get(i + 6) instanceof AsmInstruction inst6) {
 
+                  if(inst0.isNoOptimize() || inst2.isNoOptimize() || inst3.isNoOptimize() ||
+                     inst4.isNoOptimize() || inst5.isNoOptimize() || inst6.isNoOptimize()) {
+                     continue;
+                  }
                   String m0 = inst0.getCpuOpcode().getMnemonic().toLowerCase();
                   String m2 = inst2.getCpuOpcode().getMnemonic().toLowerCase();
                   String m3 = inst3.getCpuOpcode().getMnemonic().toLowerCase();
@@ -226,6 +277,11 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
                   boolean targetsLoop = branchTarget.equals(loopLabel) || branchTarget.equals("!-") || branchTarget.equals("!n-");
 
                   if(targetsLoop && "bne".equals(m6)) {
+                     Integer endGlobalIdx = instToGlobalIdx.get(inst6);
+                     if(endGlobalIdx == null) continue;
+                     String scope = allLines.get(endGlobalIdx).scope;
+                     CanonicalResolver resolver = scopeResolvers.getOrDefault(scope, scopeResolvers.get(""));
+
                      // Check X-indexed absolute:
                      if("ldx".equals(m0) && isImmVal(inst0.getOperand1(), 0) &&
                         "lda".equals(m2) && inst2.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.ABX) &&
@@ -233,14 +289,18 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
                         "inx".equals(m4) && "cpx".equals(m5)) {
 
                         int count = getImmOrConstVal(inst5.getOperand1());
-                        if(count >= 2 && count <= 4) {
+                        if(count >= 2 && count <= 4 &&
+                           !isVolatileOrHardwareOperand(inst2, scope, resolver, getProgram()) &&
+                           !isVolatileOrHardwareOperand(inst3, scope, resolver, getProgram()) &&
+                           isRegDeadAlongPath("X", allLines, endGlobalIdx + 1, new HashSet<>(), scope, getProgram()) &&
+                           (getLiveFlagsAfter(allLines, endGlobalIdx, scope, getProgram()) & FLAG_NZC) == 0) {
                            String src = inst2.getOperand1();
                            String dst = inst3.getOperand1();
 
                            List<AsmLine> unrolled = new ArrayList<>();
                            for(int b = 0; b < count; b++) {
-                              String srcOp = (b == 0) ? src : (src + "+" + b);
-                              String dstOp = (b == 0) ? dst : (dst + "+" + b);
+                              String srcOp = formatOffsetOperand(src, b);
+                              String dstOp = formatOffsetOperand(dst, b);
                               unrolled.add(new AsmInstruction(ldaAbs, srcOp, null, null));
                               unrolled.add(new AsmInstruction(staAbs, dstOp, null, null));
                            }
@@ -251,6 +311,11 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
                            lines.addAll(i, unrolled);
                            chunkModified = true;
                            modified = true;
+                           allLines = flattenLines(getAsmProgram());
+                           instToGlobalIdx.clear();
+                           for(int gi = 0; gi < allLines.size(); gi++) {
+                              if(allLines.get(gi).line instanceof AsmInstruction ai) instToGlobalIdx.put(ai, gi);
+                           }
                            break;
                         }
                      }
@@ -261,14 +326,18 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
                              "iny".equals(m4) && "cpy".equals(m5)) {
 
                         int count = getImmOrConstVal(inst5.getOperand1());
-                        if(count >= 2 && count <= 4) {
+                        if(count >= 2 && count <= 4 &&
+                           !isVolatileOrHardwareOperand(inst2, scope, resolver, getProgram()) &&
+                           !isVolatileOrHardwareOperand(inst3, scope, resolver, getProgram()) &&
+                           isRegDeadAlongPath("Y", allLines, endGlobalIdx + 1, new HashSet<>(), scope, getProgram()) &&
+                           (getLiveFlagsAfter(allLines, endGlobalIdx, scope, getProgram()) & FLAG_NZC) == 0) {
                            String src = inst2.getOperand1();
                            String dst = inst3.getOperand1();
 
                            List<AsmLine> unrolled = new ArrayList<>();
                            for(int b = 0; b < count; b++) {
-                              String srcOp = (b == 0) ? src : (src + "+" + b);
-                              String dstOp = (b == 0) ? dst : (dst + "+" + b);
+                              String srcOp = formatOffsetOperand(src, b);
+                              String dstOp = formatOffsetOperand(dst, b);
                               unrolled.add(new AsmInstruction(ldaAbs, srcOp, null, null));
                               unrolled.add(new AsmInstruction(staAbs, dstOp, null, null));
                            }
@@ -279,6 +348,11 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
                            lines.addAll(i, unrolled);
                            chunkModified = true;
                            modified = true;
+                           allLines = flattenLines(getAsmProgram());
+                           instToGlobalIdx.clear();
+                           for(int gi = 0; gi < allLines.size(); gi++) {
+                              if(allLines.get(gi).line instanceof AsmInstruction ai) instToGlobalIdx.put(ai, gi);
+                           }
                            break;
                         }
                      }
@@ -289,7 +363,11 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
                              "iny".equals(m4) && "cpy".equals(m5)) {
 
                         int count = getImmOrConstVal(inst5.getOperand1());
-                        if(count >= 2 && count <= 4) {
+                        if(count >= 2 && count <= 4 &&
+                           !isVolatileOrHardwareOperand(inst2, scope, resolver, getProgram()) &&
+                           !isVolatileOrHardwareOperand(inst3, scope, resolver, getProgram()) &&
+                           (getLiveFlagsAfter(allLines, endGlobalIdx, scope, getProgram()) & FLAG_NZC) == 0) {
+                           boolean yDead = isRegDeadAlongPath("Y", allLines, endGlobalIdx + 1, new HashSet<>(), scope, getProgram());
                            List<AsmLine> unrolled = new ArrayList<>();
                            unrolled.add(inst0); // ldy #0
                            for(int b = 0; b < count; b++) {
@@ -299,6 +377,10 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
                               unrolled.add(new AsmInstruction(inst2.getCpuOpcode(), inst2.getOperand1(), null, null));
                               unrolled.add(new AsmInstruction(inst3.getCpuOpcode(), inst3.getOperand1(), null, null));
                            }
+                           if(!yDead) {
+                              // Restore post-loop Y == count if Y is live after the loop
+                              unrolled.add(new AsmInstruction(inyOp, null, null, null));
+                           }
 
                            for(int k = 0; k < 7; k++) {
                               lines.remove(i);
@@ -306,6 +388,11 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
                            lines.addAll(i, unrolled);
                            chunkModified = true;
                            modified = true;
+                           allLines = flattenLines(getAsmProgram());
+                           instToGlobalIdx.clear();
+                           for(int gi = 0; gi < allLines.size(); gi++) {
+                              if(allLines.get(gi).line instanceof AsmInstruction ai) instToGlobalIdx.put(ai, gi);
+                           }
                            break;
                         }
                      }

@@ -213,12 +213,20 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
             String scopeName = entry.getKey();
             List<LineRef> linesInScope = entry.getValue();
 
-            // Verify procedure is in writable RAM (never ROM)
+            // Verify procedure is in writable RAM (never ROM) — prefer exact fullName match over localName (CF-16)
             Procedure proc = null;
             for(Procedure p : rootScope.getAllProcedures(true)) {
-               if(p.getLocalName().equals(scopeName) || p.getFullName().equals(scopeName)) {
+               if(p.getFullName().equals(scopeName)) {
                   proc = p;
                   break;
+               }
+            }
+            if(proc == null) {
+               for(Procedure p : rootScope.getAllProcedures(true)) {
+                  if(p.getLocalName().equals(scopeName)) {
+                     proc = p;
+                     break;
+                  }
                }
             }
 
@@ -231,12 +239,16 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
                }
             }
 
-            // Safety: Never apply Pointer-to-SMC in procedures containing inline assembly
+            // Safety: Never apply Pointer-to-SMC in procedures containing inline assembly (StatementAsm or StatementKickAsm)
             boolean hasInlineAsm = false;
             for(LineRef r : linesInScope) {
+               if(r.line instanceof AsmInlineKickAsm) {
+                  hasInlineAsm = true;
+                  break;
+               }
                if(r.chunk.getStatementIdx() != null) {
                   Statement st = getProgram().getStatementInfos().getStatement(r.chunk.getStatementIdx());
-                  if(st instanceof StatementAsm) {
+                  if(st instanceof StatementAsm || st instanceof dk.camelot64.kickc.model.statements.StatementKickAsm) {
                      hasInlineAsm = true;
                      break;
                   }

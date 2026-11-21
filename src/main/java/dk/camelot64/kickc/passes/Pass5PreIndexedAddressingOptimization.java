@@ -53,10 +53,24 @@ public class Pass5PreIndexedAddressingOptimization extends Pass5AsmOptimization 
 
    @Override
    public boolean optimize() {
-      Set<String> zpSymbols = getZeroPageSymbols();
+      List<LineRef> allLines = flattenLines(getAsmProgram());
+      Map<String, Set<String>> scopeZpSymbols = new HashMap<>();
+      Set<String> globalZpSymbols = new HashSet<>();
+      Map<String, Set<String>> scopeNonZpSymbols = new HashMap<>();
+      collectZeroPageSymbols(scopeZpSymbols, globalZpSymbols, scopeNonZpSymbols);
+
+      // Map each AsmInstruction to its global flattened index for Y-register and flag liveness checks
+      Map<AsmInstruction, Integer> instToGlobalIdx = new IdentityHashMap<>();
+      for(int idx = 0; idx < allLines.size(); idx++) {
+         if(allLines.get(idx).line instanceof AsmInstruction ai) {
+            instToGlobalIdx.put(ai, idx);
+         }
+      }
+
       boolean modified = false;
 
       for(AsmChunk chunk : getAsmProgram().getChunks()) {
+         String chunkScope = chunk.getScopeLabel() != null ? chunk.getScopeLabel() : "";
          List<AsmLine> lines = chunk.getLines();
          List<InstRef> instRefs = new ArrayList<>();
          for(int i = 0; i < lines.size(); i++) {
@@ -90,7 +104,15 @@ public class Pass5PreIndexedAddressingOptimization extends Pass5AsmOptimization 
             if(table == null) continue;
             table = table.trim();
 
-            if(!isZeroPageSymbol(table, zpSymbols)) continue;
+            if(!isZeroPageSymbol(table, chunkScope, scopeZpSymbols, globalZpSymbols, scopeNonZpSymbols)) continue;
+
+            // CF-14: Removing r4 (ldy #0) requires Y to be dead after r5!
+            Integer r5GlobalIdx = instToGlobalIdx.get(r5.inst);
+            if(r5GlobalIdx == null) continue;
+            String instScope = allLines.get(r5GlobalIdx).scope;
+            if(!isRegDeadAlongPath("Y", allLines, r5GlobalIdx + 1, new HashSet<>(), instScope, getProgram())) {
+               continue;
+            }
 
             // Check Pattern 1: Read (LDA)
             if(matchRead(r0.inst, r1.inst, r2.inst, r3.inst, r4.inst, r5.inst, table)) {
@@ -112,8 +134,9 @@ public class Pass5PreIndexedAddressingOptimization extends Pass5AsmOptimization 
                }
             }
 
-            // Check Pattern 2: Write (STA)
-            if(matchWrite(r0.inst, r1.inst, r2.inst, r3.inst, r4.inst, r5.inst, table)) {
+            // Check Pattern 2: Write (STA) — also verify N/Z flags from removed ldy #0 are not live after r5
+            if(matchWrite(r0.inst, r1.inst, r2.inst, r3.inst, r4.inst, r5.inst, table) &&
+               (getLiveFlagsAfter(allLines, r5GlobalIdx, instScope, getProgram()) & FLAG_NZ) == 0) {
                CpuOpcode staIzx = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("sta", CpuAddressingMode.IZX, false);
                if(staIzx != null) {
                   getLog().append("Optimizing pre-indexed zero-page pointer write: STA (" + table + ",X)");
@@ -232,39 +255,60 @@ public class Pass5PreIndexedAddressingOptimization extends Pass5AsmOptimization 
       return s.equals("0") || s.equals("$0") || s.equals("$00") || s.equals("0x0") || s.equals("0x00");
    }
 
-   private Set<String> getZeroPageSymbols() {
-      Set<String> zpSymbols = new HashSet<>();
-      for(Variable var : getProgram().getScope().getAllVariables(true)) {
-         if(Variable.MemoryArea.ZEROPAGE_MEMORY.equals(var.getMemoryArea())) {
-            addVarAliases(zpSymbols, var);
-         } else if(var.getMemoryAddress() != null) {
-            ConstantValue addr = var.getMemoryAddress();
-            if(addr instanceof ConstantInteger && ((ConstantInteger) addr).getValue() < 256) {
-               addVarAliases(zpSymbols, var);
+   private void collectZeroPageSymbols(Map<String, Set<String>> scopeZpSymbols, Set<String> globalZpSymbols, Map<String, Set<String>> scopeNonZpSymbols) {
+      if(getProgram() != null && getProgram().getScope() != null) {
+         for(Variable var : getProgram().getScope().getAllVariables(true)) {
+            boolean isZp = false;
+            if(Variable.MemoryArea.ZEROPAGE_MEMORY.equals(var.getMemoryArea())) {
+               isZp = true;
+            } else if(var.getMemoryAddress() != null) {
+               ConstantValue addr = var.getMemoryAddress();
+               if(addr instanceof ConstantInteger && ((ConstantInteger) addr).getValue() < 256) {
+                  isZp = true;
+               }
+            } else if(var.getAllocation() instanceof Registers.RegisterZpMem) {
+               isZp = true;
             }
-         } else if(var.getAllocation() instanceof Registers.RegisterZpMem) {
-            addVarAliases(zpSymbols, var);
+            String varScope = (var.getScope() != null && !var.getScope().getFullName().isEmpty()) ? var.getScope().getFullName() : "";
+            if(isZp) {
+               if(varScope.isEmpty()) {
+                  addVarAliases(globalZpSymbols, var);
+               } else {
+                  addVarAliases(scopeZpSymbols.computeIfAbsent(varScope, k -> new HashSet<>()), var);
+                  if(var.getFullName() != null) globalZpSymbols.add(var.getFullName());
+               }
+            } else if(!varScope.isEmpty()) {
+               if(var.getLocalName() != null) scopeNonZpSymbols.computeIfAbsent(varScope, k -> new HashSet<>()).add(var.getLocalName());
+            }
          }
       }
 
+      String scanScope = "";
       for(AsmChunk chunk : getAsmProgram().getChunks()) {
          for(AsmLine line : chunk.getLines()) {
-            if(line instanceof AsmSetPc) {
-               AsmSetPc setPc = (AsmSetPc) line;
+            if(line instanceof AsmScopeBegin sb) {
+               scanScope = sb.getLabel() != null ? sb.getLabel() : "";
+            } else if(line instanceof AsmScopeEnd) {
+               scanScope = "";
+            } else if(line instanceof AsmSetPc setPc) {
                if(isAddressUnder256(setPc.getAddress())) {
-                  zpSymbols.add(setPc.getName());
+                  if(scanScope.isEmpty()) globalZpSymbols.add(setPc.getName());
+                  else scopeZpSymbols.computeIfAbsent(scanScope, k -> new HashSet<>()).add(setPc.getName());
                }
-            } else if(line instanceof AsmLabelDecl) {
-               AsmLabelDecl decl = (AsmLabelDecl) line;
+            } else if(line instanceof AsmLabelDecl decl) {
+               String dName = decl.getName().trim();
                if(isAddressUnder256(decl.getValue())) {
-                  zpSymbols.add(decl.getName());
-                  int dot = decl.getName().lastIndexOf('.');
-                  if(dot >= 0) zpSymbols.add(decl.getName().substring(dot + 1));
+                  if(scanScope.isEmpty()) {
+                     globalZpSymbols.add(dName);
+                  } else {
+                     scopeZpSymbols.computeIfAbsent(scanScope, k -> new HashSet<>()).add(dName);
+                     int dot = dName.lastIndexOf('.');
+                     if(dot >= 0) scopeZpSymbols.computeIfAbsent(scanScope, k -> new HashSet<>()).add(dName.substring(dot + 1));
+                  }
                }
             }
          }
       }
-      return zpSymbols;
    }
 
    private static void addVarAliases(Set<String> set, Variable var) {
@@ -272,13 +316,31 @@ public class Pass5PreIndexedAddressingOptimization extends Pass5AsmOptimization 
       if(var.getFullName() != null) set.add(var.getFullName());
    }
 
-   private static boolean isZeroPageSymbol(String name, Set<String> zpSymbols) {
+   private static boolean isZeroPageSymbol(String name, String currentScope, Map<String, Set<String>> scopeZpSymbols, Set<String> globalZpSymbols, Map<String, Set<String>> scopeNonZpSymbols) {
       if(name == null) return false;
       String n = name.trim();
-      if(zpSymbols.contains(n)) return true;
-      int dot = n.lastIndexOf('.');
-      if(dot >= 0 && zpSymbols.contains(n.substring(dot + 1))) return true;
-      return isAddressUnder256(n);
+      if(isAddressUnder256(n)) return true;
+      // Qualified reference (e.g. procA.tab)
+      if(n.contains(".")) {
+         if(globalZpSymbols.contains(n)) return true;
+         int dot = n.lastIndexOf('.');
+         String sc = n.substring(0, dot);
+         String local = n.substring(dot + 1);
+         Set<String> scSet = scopeZpSymbols.get(sc);
+         return scSet != null && (scSet.contains(n) || scSet.contains(local));
+      }
+      // Unqualified reference: check current scope first (respecting non-ZP local shadowing!), then global ZP
+      if(currentScope != null && !currentScope.isEmpty()) {
+         Set<String> nonZp = scopeNonZpSymbols.get(currentScope);
+         if(nonZp != null && nonZp.contains(n)) {
+            return false;
+         }
+         Set<String> scSet = scopeZpSymbols.get(currentScope);
+         if(scSet != null && scSet.contains(n)) {
+            return true;
+         }
+      }
+      return globalZpSymbols.contains(n);
    }
 
    private static boolean isAddressUnder256(String addrStr) {

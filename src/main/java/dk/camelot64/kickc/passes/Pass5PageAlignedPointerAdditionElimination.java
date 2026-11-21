@@ -54,7 +54,7 @@ public class Pass5PageAlignedPointerAdditionElimination extends Pass5AsmOptimiza
       super(program);
    }
 
-   private Long parseSingleTerm(String term, Scope scope, Map<String, String> asmConstants, Map<String, String> localAliases, Map<String, String> globalAliases) {
+   private Long parseSingleTerm(String term, Scope scope, Map<String, String> localConstants, Map<String, String> globalConstants, Map<String, String> localAliases, Map<String, String> globalAliases) {
       if(term == null) return null;
       String t = term.trim();
       if(t.isEmpty()) return null;
@@ -81,17 +81,20 @@ public class Pass5PageAlignedPointerAdditionElimination extends Pass5AsmOptimiza
          }
       }
 
-      // Check ASM constants (.const NAME = VAL)
-      if(asmConstants != null && asmConstants.containsKey(t)) {
-         return evaluateConstantExpr(asmConstants.get(t), scope, asmConstants, localAliases, globalAliases);
+      // CF-14: Check scoped ASM constants (.const NAME = VAL) strictly within currentScope first, then global constants
+      if(localConstants != null && localConstants.containsKey(t)) {
+         return evaluateConstantExpr(localConstants.get(t), scope, localConstants, globalConstants, localAliases, globalAliases);
+      }
+      if(globalConstants != null && globalConstants.containsKey(t)) {
+         return evaluateConstantExpr(globalConstants.get(t), scope, localConstants, globalConstants, localAliases, globalAliases);
       }
 
       // Check aliases (.label)
       if(localAliases != null && localAliases.containsKey(t)) {
-         return evaluateConstantExpr(localAliases.get(t), scope, asmConstants, localAliases, globalAliases);
+         return evaluateConstantExpr(localAliases.get(t), scope, localConstants, globalConstants, localAliases, globalAliases);
       }
       if(globalAliases != null && globalAliases.containsKey(t)) {
-         return evaluateConstantExpr(globalAliases.get(t), scope, asmConstants, localAliases, globalAliases);
+         return evaluateConstantExpr(globalAliases.get(t), scope, localConstants, globalConstants, localAliases, globalAliases);
       }
 
       // Check Program scope symbols
@@ -117,21 +120,21 @@ public class Pass5PageAlignedPointerAdditionElimination extends Pass5AsmOptimiza
       return null;
    }
 
-   private Long evaluateProductTerm(String term, Scope scope, Map<String, String> asmConstants, Map<String, String> localAliases, Map<String, String> globalAliases) {
+   private Long evaluateProductTerm(String term, Scope scope, Map<String, String> localConstants, Map<String, String> globalConstants, Map<String, String> localAliases, Map<String, String> globalAliases) {
       if(!term.contains("*")) {
-         return parseSingleTerm(term, scope, asmConstants, localAliases, globalAliases);
+         return parseSingleTerm(term, scope, localConstants, globalConstants, localAliases, globalAliases);
       }
       String[] factors = term.split("\\*");
       long product = 1;
       for(String f : factors) {
-         Long val = parseSingleTerm(f, scope, asmConstants, localAliases, globalAliases);
+         Long val = parseSingleTerm(f, scope, localConstants, globalConstants, localAliases, globalAliases);
          if(val == null) return null;
          product *= val;
       }
       return product;
    }
 
-   private Long evaluateConstantExpr(String expr, Scope scope, Map<String, String> asmConstants, Map<String, String> localAliases, Map<String, String> globalAliases) {
+   private Long evaluateConstantExpr(String expr, Scope scope, Map<String, String> localConstants, Map<String, String> globalConstants, Map<String, String> localAliases, Map<String, String> globalAliases) {
       if(expr == null) return null;
       String e = expr.trim();
       if(e.startsWith("(") && e.endsWith(")")) {
@@ -143,7 +146,7 @@ public class Pass5PageAlignedPointerAdditionElimination extends Pass5AsmOptimiza
          String[] parts = e.split("\\+");
          long sum = 0;
          for(String p : parts) {
-            Long val = evaluateProductTerm(p, scope, asmConstants, localAliases, globalAliases);
+            Long val = evaluateProductTerm(p, scope, localConstants, globalConstants, localAliases, globalAliases);
             if(val == null) return null;
             sum += val;
          }
@@ -152,18 +155,18 @@ public class Pass5PageAlignedPointerAdditionElimination extends Pass5AsmOptimiza
 
       if(e.contains("-") && !e.startsWith("-")) {
          String[] parts = e.split("-");
-         Long first = evaluateProductTerm(parts[0], scope, asmConstants, localAliases, globalAliases);
+         Long first = evaluateProductTerm(parts[0], scope, localConstants, globalConstants, localAliases, globalAliases);
          if(first == null) return null;
          long diff = first;
          for(int i = 1; i < parts.length; i++) {
-            Long val = evaluateProductTerm(parts[i], scope, asmConstants, localAliases, globalAliases);
+            Long val = evaluateProductTerm(parts[i], scope, localConstants, globalConstants, localAliases, globalAliases);
             if(val == null) return null;
             diff -= val;
          }
          return diff;
       }
 
-      return evaluateProductTerm(e, scope, asmConstants, localAliases, globalAliases);
+      return evaluateProductTerm(e, scope, localConstants, globalConstants, localAliases, globalAliases);
    }
 
    @Override
@@ -177,7 +180,8 @@ public class Pass5PageAlignedPointerAdditionElimination extends Pass5AsmOptimiza
          List<LineRef> allLines = new ArrayList<>();
          Map<String, Map<String, String>> scopeAliasMap = new HashMap<>();
          Map<String, String> globalAliasMap = new HashMap<>();
-         Map<String, String> asmConstants = new HashMap<>();
+         Map<String, Map<String, String>> scopeConstantsMap = new HashMap<>();
+         Map<String, String> globalConstantsMap = new HashMap<>();
          String scanScope = "";
 
          for(AsmChunk chunk : getAsmProgram().getChunks()) {
@@ -190,7 +194,13 @@ public class Pass5PageAlignedPointerAdditionElimination extends Pass5AsmOptimiza
                } else if(line instanceof AsmConstant) {
                   AsmConstant ac = (AsmConstant) line;
                   if(ac.getName() != null && ac.getValue() != null) {
-                     asmConstants.put(ac.getName().trim(), ac.getValue().trim());
+                     String cName = ac.getName().trim();
+                     String cVal = ac.getValue().trim();
+                     if(scanScope != null && !scanScope.isEmpty()) {
+                        scopeConstantsMap.computeIfAbsent(scanScope, k -> new HashMap<>()).put(cName, cVal);
+                     } else {
+                        globalConstantsMap.put(cName, cVal);
+                     }
                   }
                } else if(line instanceof AsmLabelDecl) {
                   AsmLabelDecl decl = (AsmLabelDecl) line;
@@ -238,7 +248,8 @@ public class Pass5PageAlignedPointerAdditionElimination extends Pass5AsmOptimiza
             else continue;
 
             Map<String, String> localAliases = scopeAliasMap.get(currentScopeName);
-            Long constVal = evaluateConstantExpr(constExprLo, currentScope, asmConstants, localAliases, globalAliasMap);
+            Map<String, String> localConstants = scopeConstantsMap.get(currentScopeName);
+            Long constVal = evaluateConstantExpr(constExprLo, currentScope, localConstants, globalConstantsMap, localAliases, globalAliasMap);
             if(constVal == null || (constVal.longValue() & 0xffL) != 0L) continue;
 
             // Found ADC #<CONST with low byte == 0.
@@ -272,7 +283,7 @@ public class Pass5PageAlignedPointerAdditionElimination extends Pass5AsmOptimiza
             else continue;
 
             if(!constExprHi.equals(constExprLo)) {
-               Long constValHi = evaluateConstantExpr(constExprHi, currentScope, asmConstants, localAliases, globalAliasMap);
+               Long constValHi = evaluateConstantExpr(constExprHi, currentScope, localConstants, globalConstantsMap, localAliases, globalAliasMap);
                if(constValHi == null || !constValHi.equals(constVal)) continue;
             }
 
