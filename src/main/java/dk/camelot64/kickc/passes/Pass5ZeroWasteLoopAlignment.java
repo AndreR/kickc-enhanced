@@ -187,11 +187,27 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
 
          // Ensure target is not entered via linear fall-through from previous instruction.
          // KickAssembler pads .align with $00 (BRK), so fall-through into padding causes CPU crash.
+         // CF-02: If the loop immediately follows AsmScopeBegin (proc: {), place AsmLoopAlign BEFORE AsmScopeBegin
+         // so $00 padding is never inserted between the procedure entry label and its first instruction.
          boolean hasFallThrough = false;
+         AlignedLineRef insertBeforeRef = targetRef;
          for(int j = targetRef.index - 1; j >= 0; j--) {
             AlignedLineRef prev = allLines.get(j);
             if(prev.line instanceof AsmComment || prev.line instanceof AsmLabel) continue;
-            if(prev.line instanceof AsmScopeBegin || prev.line instanceof AsmScopeEnd) {
+            if(prev.line instanceof AsmScopeBegin) {
+               insertBeforeRef = prev;
+               // Check if already aligned immediately before AsmScopeBegin
+               for(int k = j - 1; k >= 0; k--) {
+                  AlignedLineRef beforeScope = allLines.get(k);
+                  if(beforeScope.line instanceof AsmComment) continue;
+                  if(beforeScope.line instanceof AsmLoopAlign || beforeScope.line instanceof AsmDataAlignment) {
+                     alreadyAligned = true;
+                  }
+                  break;
+               }
+               break;
+            }
+            if(prev.line instanceof AsmScopeEnd) {
                break;
             }
             if(prev.line instanceof AsmInstruction) {
@@ -208,7 +224,7 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
          }
 
          if(!alreadyAligned && !hasFallThrough) {
-            targetRef.chunk.addLineBefore(targetRef.line, new AsmLoopAlign(loopLen));
+            insertBeforeRef.chunk.addLineBefore(insertBeforeRef.line, new AsmLoopAlign(loopLen));
             insertedCount++;
          }
       }

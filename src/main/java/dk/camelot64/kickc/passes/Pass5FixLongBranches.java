@@ -97,11 +97,15 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
 
       // Second relaxation pass after long branch resolution and code shrinking
       int postRelaxedCount = relaxShortBranches();
-      if(postRelaxedCount > 0 && getLog().isVerboseFixLongBranch()) {
-         System.out.println(String.format("      [PASS5 POST-RELAX SHORT BRANCHES] relaxed %d trampolines", postRelaxedCount));
+      if(postRelaxedCount > 0) {
+         if(getLog().isVerboseFixLongBranch()) {
+            System.out.println(String.format("      [PASS5 POST-RELAX SHORT BRANCHES] relaxed %d trampolines", postRelaxedCount));
+         }
          anyOptimized = true;
-         // Verify with KickAssembler that no branch was pushed out of range
-         step();
+         // CF-01: Always verify iteratively with KickAssembler that no branch was pushed out of range
+         while(step()) {
+            new Pass5DoubleJumpElimination(getProgram()).optimize();
+         }
       }
 
       return anyOptimized;
@@ -251,13 +255,15 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
             }
          }
 
-         // Phase 1: Collect label offsets, RTS instructions, and targeted labels per scope
+         // Phase 1: Collect label offsets, segments, line indices, RTS instructions, and targeted labels per scope
          Map<String, Integer> labelOffsets = new HashMap<>();
+         Map<String, String> labelSegments = new HashMap<>();
+         Map<String, Integer> labelLineIndices = new HashMap<>();
          Map<String, List<RtsRef>> scopeRts = new HashMap<>();
          Set<String> targetedLabels = new HashSet<>();
          String currentScope = null;
-         boolean inCode = true;
-         int currentOffset = 0;
+         String currentSegment = "Code";
+         Map<String, Integer> segmentOffsets = new HashMap<>();
          String lastNonAnonLabel = null;
 
          for(LineRef ref : allLines) {
@@ -277,27 +283,27 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
             AsmLine line = ref.line;
             if(line instanceof AsmScopeBegin) {
                currentScope = ((AsmScopeBegin) line).getLabel();
-               inCode = true;
-               currentOffset = 0;
+               currentSegment = "Code";
+               segmentOffsets.clear();
                lastNonAnonLabel = null;
             } else if(line instanceof AsmScopeEnd) {
                currentScope = null;
-               inCode = true;
-               currentOffset = 0;
+               currentSegment = "Code";
+               segmentOffsets.clear();
                lastNonAnonLabel = null;
             } else if(currentScope != null) {
                if(line instanceof AsmSegment) {
                   String seg = ((AsmSegment) line).getName();
-                  if(seg != null && seg.toLowerCase().contains("data")) {
-                     inCode = false;
-                  } else {
-                     inCode = true;
-                  }
-               } else if(inCode) {
+                  currentSegment = (seg != null) ? seg : "Code";
+               } else {
+                  int currentOffset = segmentOffsets.getOrDefault(currentSegment, 0);
                   if(line instanceof AsmLabel) {
                      String label = ((AsmLabel) line).getLabel();
                      if(!label.startsWith("!")) {
-                        labelOffsets.put(currentScope + "::" + label, currentOffset);
+                        String key = currentScope + "::" + label;
+                        labelOffsets.put(key, currentOffset);
+                        labelSegments.put(key, currentSegment);
+                        labelLineIndices.put(key, lIdx);
                         lastNonAnonLabel = label;
                      }
                   } else if(line instanceof AsmInstruction) {
@@ -326,15 +332,15 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                      }
                      lastNonAnonLabel = null;
                   }
-                  currentOffset += line.getLineBytes();
+                  segmentOffsets.put(currentSegment, currentOffset + line.getLineBytes());
                }
             }
          }
 
          // Phase 2: Find and relax trampolines across chunk boundaries
          currentScope = null;
-         inCode = true;
-         currentOffset = 0;
+         currentSegment = "Code";
+         segmentOffsets.clear();
 
          for(int i = 0; i < allLines.size(); i++) {
             LineRef ref1 = allLines.get(i);
@@ -342,13 +348,19 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
 
             if(line1 instanceof AsmScopeBegin) {
                currentScope = ((AsmScopeBegin) line1).getLabel();
-               inCode = true;
-               currentOffset = 0;
+               currentSegment = "Code";
+               segmentOffsets.clear();
             } else if(line1 instanceof AsmScopeEnd) {
                currentScope = null;
-               inCode = true;
-               currentOffset = 0;
-            } else if(currentScope != null && inCode) {
+               currentSegment = "Code";
+               segmentOffsets.clear();
+            } else if(currentScope != null) {
+               if(line1 instanceof AsmSegment) {
+                  String seg = ((AsmSegment) line1).getName();
+                  currentSegment = (seg != null) ? seg : "Code";
+                  continue;
+               }
+               int currentOffset = segmentOffsets.getOrDefault(currentSegment, 0);
                if(line1 instanceof AsmInstruction) {
                   AsmInstruction instr1 = (AsmInstruction) line1;
                   CpuOpcode inv1 = invertBranch(instr1.getCpuOpcode());
@@ -364,7 +376,9 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                            AsmInstruction instr2 = (AsmInstruction) ref2.line;
                            AsmLabel label3 = (AsmLabel) ref3.line;
 
-                           if(instr2.getCpuOpcode() != null && "jmp".equals(instr2.getCpuOpcode().getMnemonic())) {
+                           if(instr2.getCpuOpcode() != null
+                                 && "jmp".equals(instr2.getCpuOpcode().getMnemonic())
+                                 && instr2.getCpuOpcode().getAddressingMode() == CpuAddressingMode.ABS) {
                               String branchTarget = instr1.getOperandJumpTarget();
                               String jmpTarget = instr2.getOperand1();
                               String fallthroughLabel = label3.getLabel();
@@ -377,11 +391,13 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                                  !jmpTarget.startsWith("!"));
 
                               if(isTrampoline && jmpTarget != null) {
-                                 Integer targetOffset = labelOffsets.get(currentScope + "::" + jmpTarget);
-                                 if(targetOffset != null) {
+                                 String key = currentScope + "::" + jmpTarget;
+                                 Integer targetOffset = labelOffsets.get(key);
+                                 Integer targetLineIdx = labelLineIndices.get(key);
+                                 if(targetOffset != null && currentSegment.equals(labelSegments.get(key))) {
                                     int branchPc = currentOffset + 2;
                                     int distance = targetOffset - branchPc;
-                                    if(distance >= -120 && distance <= 120) {
+                                    if(isSafeRelaxDistance(allLines, i, targetLineIdx, distance)) {
                                        getLog().append("Relaxing long branch trampoline to " + inv1.getMnemonic() + " " + jmpTarget);
                                        instr1.setCpuOpcode(inv1);
                                        instr1.setOperandJumpTarget(jmpTarget);
@@ -400,11 +416,13 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                                  branchTarget.equals(fallthroughLabel));
 
                               if(isInvertedBranch && jmpTarget != null) {
-                                 Integer targetOffset = labelOffsets.get(currentScope + "::" + jmpTarget);
-                                 if(targetOffset != null) {
+                                 String key = currentScope + "::" + jmpTarget;
+                                 Integer targetOffset = labelOffsets.get(key);
+                                 Integer targetLineIdx = labelLineIndices.get(key);
+                                 if(targetOffset != null && currentSegment.equals(labelSegments.get(key))) {
                                     int branchPc = currentOffset + 2;
                                     int distance = targetOffset - branchPc;
-                                    if(distance >= -120 && distance <= 120) {
+                                    if(isSafeRelaxDistance(allLines, i, targetLineIdx, distance)) {
                                        getLog().append("Folding inverted branch over jmp to " + inv1.getMnemonic() + " " + jmpTarget);
                                        instr1.setCpuOpcode(inv1);
                                        instr1.setOperandJumpTarget(jmpTarget);
@@ -536,11 +554,36 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                      }
                   }
                }
-               currentOffset += line1.getLineBytes();
+               segmentOffsets.put(currentSegment, currentOffset + line1.getLineBytes());
             }
          }
       }
       return totalRelaxed;
+   }
+
+   /**
+    * CF-01: Conservatively verify that relaxing a trampoline across [fromIdx..toIdx] cannot exceed
+    * relative branch range due to alignment directives or inline KickAsm blocks whose getLineBytes() is 0.
+    */
+   private boolean isSafeRelaxDistance(List<LineRef> allLines, int fromIdx, Integer toIdx, int distance) {
+      if(Math.abs(distance) > 120) {
+         return false;
+      }
+      if(toIdx == null) {
+         return true;
+      }
+      int lo = Math.min(fromIdx, toIdx);
+      int hi = Math.max(fromIdx, toIdx);
+      int extraPadding = 0;
+      for(int k = lo + 1; k < hi; k++) {
+         AsmLine mid = allLines.get(k).line;
+         if(mid instanceof AsmLoopAlign loopAlign) {
+            extraPadding += Math.max(0, loopAlign.getLoopLength() - 1);
+         } else if(mid instanceof AsmDataAlignment || mid instanceof AsmInlineKickAsm) {
+            return false;
+         }
+      }
+      return (Math.abs(distance) + extraPadding) <= 120;
    }
 
    /**

@@ -20,23 +20,20 @@ public class Pass5NextJumpElimination extends Pass5AsmOptimization {
       AsmInstruction candidate = null;
       for(AsmChunk chunk : getAsmProgram().getChunks()) {
          for(AsmLine line : chunk.getLines()) {
-            if(line instanceof AsmScopeBegin || line instanceof AsmScopeEnd) {
-               candidate = null;
-            }
-            if(candidate != null) {
-               if(line instanceof AsmLabel) {
-                  if(((AsmLabel) line).getLabel().equals(candidate.getOperandJumpTarget())) {
-                     removeLines.add(candidate);
-                  }
+            if(candidate != null && line instanceof AsmLabel) {
+               if(((AsmLabel) line).getLabel().equals(candidate.getOperandJumpTarget())) {
+                  removeLines.add(candidate);
                }
             }
-            if(line instanceof AsmInstruction) {
+            if(line instanceof AsmInstruction instruction) {
                candidate = null;
-               AsmInstruction instruction = (AsmInstruction) line;
                if(instruction.getCpuOpcode().isJump() && !instruction.getCpuOpcode().getMnemonic().equals("jsr")) {
                   candidate = instruction;
                }
-            } else if(line instanceof AsmDataString || line instanceof AsmDataNumeric || line instanceof AsmDataZeroFill || line instanceof AsmInlineKickAsm ) {
+            } else if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl || line instanceof AsmLabel) {
+               // CF-05: Allowlist of zero-byte directives that cannot break fall-through to the target label
+            } else {
+               // Any other directive (.align, AsmLoopAlign, .segment, .pc, data, inline kickasm, scope) breaks fall-through
                candidate = null;
             }
          }
