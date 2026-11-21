@@ -14,6 +14,7 @@ import dk.camelot64.kickc.passes.calcs.*;
 import dk.camelot64.kickc.passes.utils.ProcedureUtils;
 import dk.camelot64.kickc.passes.Pass2ConstantIdentification;
 import dk.camelot64.kickc.passes.Pass4RegisterUpliftCombinations;
+import dk.camelot64.kickc.passes.Pass5AsmOptimization;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -118,6 +119,9 @@ public class Program {
    /** Per-program cache for Pass 4 register uplift analysis. */
    private volatile Pass4RegisterUpliftCombinations.UpliftProgramCache upliftProgramCache;
 
+   /** Cached O(1) variable lookup index for Pass 5 ASM optimizations. */
+   private volatile Pass5AsmOptimization.AsmVarLookupIndex asmVarLookupIndex;
+
    /** Custom string encodings registered for this program (via #pragma charmap). */
    private final Map<String, StringEncoding> customStringEncodings = new LinkedHashMap<>();
    /** Custom string encoding suffixes registered for this program. */
@@ -164,6 +168,7 @@ public class Program {
       this.liveRangeVariablesEffective = null;
       this.registerPotentials = null;
       this.registerUpliftProgram = null;
+      this.asmVarLookupIndex = null;
    }
 
    private final Graph totalGraph = new Graph() {
@@ -360,6 +365,20 @@ public class Program {
 
    public void setScope(ProgramScope scope) {
       this.scope = scope;
+      this.asmVarLookupIndex = null;
+   }
+
+   public Pass5AsmOptimization.AsmVarLookupIndex getAsmVarLookupIndex() {
+      Pass5AsmOptimization.AsmVarLookupIndex idx = this.asmVarLookupIndex;
+      if(idx == null && this.scope != null) {
+         idx = Pass5AsmOptimization.AsmVarLookupIndex.build(this.scope);
+         this.asmVarLookupIndex = idx;
+      }
+      return idx;
+   }
+
+   public void clearAsmVarLookupIndex() {
+      this.asmVarLookupIndex = null;
    }
 
    public ProcedureRef getStartProcedure() {

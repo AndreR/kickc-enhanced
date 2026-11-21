@@ -621,7 +621,95 @@ public abstract class Pass5AsmOptimization {
    }
 
    /**
-    * Looks up a Variable symbol in the ProgramScope (checking currentScope first, then global root scope).
+    * Immutable O(1) lookup index for resolving ASM operand names to ProgramScope Variables
+    * during Pass 5 without repeated linear getAllVars() scans or regex splitting.
+    */
+   public static final class AsmVarLookupIndex {
+      private final Map<String, Variable> qualifiedMap;
+      private final Map<String, Variable> rootMap;
+      private final Map<String, Map<String, Variable>> scopedMap;
+
+      private AsmVarLookupIndex(
+            Map<String, Variable> qualifiedMap,
+            Map<String, Variable> rootMap,
+            Map<String, Map<String, Variable>> scopedMap) {
+         this.qualifiedMap = qualifiedMap;
+         this.rootMap = rootMap;
+         this.scopedMap = scopedMap;
+      }
+
+      public static AsmVarLookupIndex build(dk.camelot64.kickc.model.symbols.ProgramScope programScope) {
+         Map<String, Variable> qualifiedMap = new HashMap<>();
+         Map<String, Variable> rootMap = new HashMap<>();
+         Map<String, Map<String, Variable>> scopedMap = new HashMap<>();
+
+         for(Variable v : programScope.getAllVars(true)) {
+            if(v == null) continue;
+            String localName = v.getLocalName();
+            String asmName = v.getAsmName();
+            String fullName = v.getFullName();
+            if(fullName != null && !fullName.isEmpty()) {
+               qualifiedMap.putIfAbsent(fullName, v);
+            }
+            Scope sc = v.getScope();
+            if(sc == null || sc == programScope) {
+               if(localName != null && !localName.isEmpty()) {
+                  rootMap.putIfAbsent(localName, v);
+               }
+               if(asmName != null && !asmName.isEmpty()) {
+                  rootMap.putIfAbsent(asmName, v);
+               }
+            } else {
+               String scLocal = sc.getLocalName();
+               String scFull = sc.getFullName();
+               if(scLocal != null && !scLocal.isEmpty()) {
+                  Map<String, Variable> sm = scopedMap.computeIfAbsent(scLocal, k -> new HashMap<>());
+                  if(localName != null && !localName.isEmpty()) {
+                     sm.putIfAbsent(localName, v);
+                     qualifiedMap.putIfAbsent(scLocal + "." + localName, v);
+                  }
+                  if(asmName != null && !asmName.isEmpty()) {
+                     sm.putIfAbsent(asmName, v);
+                     qualifiedMap.putIfAbsent(scLocal + "." + asmName, v);
+                  }
+               }
+               if(scFull != null && !scFull.isEmpty() && !scFull.equals(scLocal)) {
+                  Map<String, Variable> sm = scopedMap.computeIfAbsent(scFull, k -> new HashMap<>());
+                  if(localName != null && !localName.isEmpty()) {
+                     sm.putIfAbsent(localName, v);
+                     qualifiedMap.putIfAbsent(scFull + "." + localName, v);
+                  }
+                  if(asmName != null && !asmName.isEmpty()) {
+                     sm.putIfAbsent(asmName, v);
+                     qualifiedMap.putIfAbsent(scFull + "." + asmName, v);
+                  }
+               }
+            }
+         }
+         return new AsmVarLookupIndex(qualifiedMap, rootMap, scopedMap);
+      }
+
+      public Variable find(String base, String currentScope) {
+         if(base.indexOf('.') != -1 || base.indexOf(':') != -1) {
+            Variable v = qualifiedMap.get(base);
+            if(v != null) return v;
+         }
+         if(currentScope != null && !currentScope.isEmpty()) {
+            Map<String, Variable> sm = scopedMap.get(currentScope);
+            if(sm != null) {
+               Variable v = sm.get(base);
+               if(v != null) return v;
+            }
+         }
+         Variable rootVar = rootMap.get(base);
+         if(rootVar != null) return rootVar;
+         return qualifiedMap.get(base);
+      }
+   }
+
+   /**
+    * Looks up a Variable symbol in the ProgramScope in O(1) via the cached AsmVarLookupIndex
+    * (checking qualified names, currentScope locals, then global root scope).
     */
    public static Variable findVariableInScope(String name, String currentScope, Program program) {
       if(name == null || name.isEmpty() || program == null || program.getScope() == null) return null;
@@ -635,40 +723,12 @@ public abstract class Pass5AsmOptimization {
          clean = clean.substring(1, clean.length() - 1).trim();
       }
       String base = getBaseVar(clean);
-      if(base.isEmpty() || base.startsWith("$") || base.startsWith("#")) return null;
+      if(base.isEmpty()) return null;
+      char first = base.charAt(0);
+      if(first == '$' || first == '#' || first == '%' || (first >= '0' && first <= '9')) return null;
 
-      // 1. Direct global lookup (handles qualified names like "func.var" and root globals)
-      Symbol sym = program.getScope().getGlobalSymbol(base);
-      if(sym instanceof Variable) return (Variable) sym;
-
-      // 2. Procedure-local lookup if currentScope is known
-      if(currentScope != null && !currentScope.isEmpty()) {
-         sym = program.getScope().getGlobalSymbol(currentScope + "." + base);
-         if(sym instanceof Variable) return (Variable) sym;
-
-         Symbol scopeSym = program.getScope().getLocalSymbol(currentScope);
-         if(scopeSym instanceof Scope) {
-            Scope localScope = (Scope) scopeSym;
-            Symbol localVar = localScope.getLocalSymbol(base);
-            if(localVar instanceof Variable) return (Variable) localVar;
-            // Match by asmName in local scope (e.g. mangled or versioned variables)
-            for(Variable v : localScope.getAllVars(false)) {
-               if(base.equals(v.getAsmName()) || base.equals(v.getLocalName())) {
-                  return v;
-               }
-            }
-         }
-      }
-
-      // 3. Root scope local lookup & asmName fallback
-      Symbol rootLocal = program.getScope().getLocalSymbol(base);
-      if(rootLocal instanceof Variable) return (Variable) rootLocal;
-      for(Variable v : program.getScope().getAllVars(false)) {
-         if(base.equals(v.getAsmName()) || base.equals(v.getLocalName())) {
-            return v;
-         }
-      }
-      return null;
+      AsmVarLookupIndex idx = program.getAsmVarLookupIndex();
+      return idx != null ? idx.find(base, currentScope) : null;
    }
 
    public static boolean isIndirectAddressingMode(CpuAddressingMode mode) {
