@@ -213,6 +213,7 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
                }
                if("jsr".equals(m) && opTrim != null && procName.equals(opTrim)) {
                   callCount++;
+                  CanonicalResolver callerResolver = scopeResolvers.getOrDefault(refScope, scopeResolvers.get(""));
                   int nextIdx = findNextInstruction(allLines, i + 1);
                   if(nextIdx != -1) {
                      AsmInstruction nextInst = (AsmInstruction) allLines.get(nextIdx).line;
@@ -227,12 +228,18 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
                            callersOk = false;
                            break;
                         }
+                        // Ensure retZpHex is not later read in caller via a memory-coalesced ZP variable
+                        if(!isZpAddrDeadAlongPath(allLines, nextIdx + 1, zpReg.getZp(), retZpHex, retCanon, callerResolver, refScope, new HashSet<>())) {
+                           callersOk = false;
+                           break;
+                        }
                         callerLoadIndices.add(nextIdx);
                         continue;
                      }
                   }
-                  // If not followed by lda.z procName.return, only safe if A is dead after jsr
-                  if(!isRegDeadAlongPath("A", allLines, i + 1, new HashSet<>(), refScope, getProgram())) {
+                  // If not followed by lda.z procName.return, only safe if A is dead AND retZpHex is not read via a coalesced ZP variable
+                  if(!isRegDeadAlongPath("A", allLines, i + 1, new HashSet<>(), refScope, getProgram())
+                        || !isZpAddrDeadAlongPath(allLines, i + 1, zpReg.getZp(), retZpHex, retCanon, callerResolver, refScope, new HashSet<>())) {
                      callersOk = false;
                      break;
                   }
@@ -275,5 +282,116 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
       }
 
       return modified;
+   }
+
+   /**
+    * Verifies that the zero-page byte at retZp (retZpHex / retCanon) is not read along any
+    * execution path starting at startIdx within currentScope before being overwritten.
+    * Guards against Pass4MemoryCoalesce placing a caller local variable, parameter, or return
+    * variable onto the exact same ZP address as the callee's return slot.
+    */
+   private boolean isZpAddrDeadAlongPath(
+         List<LineRef> allLines,
+         int startIdx,
+         int retZp,
+         String retZpHex,
+         String retCanon,
+         CanonicalResolver resolver,
+         String currentScope,
+         Set<Integer> visited) {
+      for(int m = startIdx; m < allLines.size(); m++) {
+         if(!visited.add(m)) return true;
+         LineRef ref = allLines.get(m);
+         if(currentScope != null && !currentScope.isEmpty() && !currentScope.equals(ref.scope)) {
+            return true;
+         }
+         AsmLine line = ref.line;
+         if(line instanceof AsmScopeEnd) return true;
+         if(line instanceof AsmInlineKickAsm) return false;
+         if(!(line instanceof AsmInstruction inst) || inst.getCpuOpcode() == null) continue;
+
+         String mnem = inst.getCpuOpcode().getMnemonic();
+         CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+         String op = inst.getOperand1();
+
+         if("rts".equals(mnem) || "rti".equals(mnem)) {
+            if("rts".equals(mnem) && currentScope != null && !currentScope.isEmpty() && getProgram().getScope() != null) {
+               var sym = getProgram().getScope().findSymbol(currentScope);
+               if(sym instanceof Procedure callerProc) {
+                  if(SymbolType.VOID.equals(callerProc.getReturnType())) return true;
+                  Variable callerRet = callerProc.getLocalVariable("return");
+                  if(callerRet == null || !(callerRet.getAllocation() instanceof Registers.RegisterZpMem callerZp)) return true;
+                  int cZp = callerZp.getZp();
+                  int cSize = Math.max(1, callerRet.getType().getSizeBytes());
+                  return retZp < cZp || retZp >= cZp + cSize;
+               }
+            }
+            return false;
+         }
+         if("jmp".equals(mnem)) {
+            if(mode == CpuAddressingMode.ABS && op != null) {
+               int targetIdx = findLabelIndex(allLines, op.trim(), m, currentScope);
+               if(targetIdx != -1) {
+                  return isZpAddrDeadAlongPath(allLines, targetIdx + 1, retZp, retZpHex, retCanon, resolver, currentScope, visited);
+               }
+            }
+            return false;
+         }
+         if(op != null && (mode == CpuAddressingMode.ZP || mode == CpuAddressingMode.ZPX || mode == CpuAddressingMode.ZPY
+               || mode == CpuAddressingMode.IZX || mode == CpuAddressingMode.IZY || mode == CpuAddressingMode.ABS)) {
+            String opTrim = op.trim();
+            String opCanon = resolver != null ? resolver.resolve(opTrim) : opTrim;
+            boolean matches = opCanon.equalsIgnoreCase(retZpHex) || opCanon.equals(retCanon);
+            if(!matches && (mode == CpuAddressingMode.IZX || mode == CpuAddressingMode.IZY) && resolver != null) {
+               String hiCanon = resolver.resolve(opTrim + "+1");
+               if(hiCanon.equalsIgnoreCase(retZpHex) || hiCanon.equals(retCanon)) {
+                  matches = true;
+               }
+            }
+            if(matches) {
+               if(mode == CpuAddressingMode.ZP && ("sta".equals(mnem) || "stx".equals(mnem) || "sty".equals(mnem) || "stz".equals(mnem) || "sax".equals(mnem))) {
+                  return true;
+               }
+               return false;
+            }
+         }
+         if("jsr".equals(mnem)) {
+            if(op != null && getProgram().getScope() != null) {
+               var sym = getProgram().getScope().findSymbol(op.trim());
+               if(sym instanceof Procedure targetProc) {
+                  if(targetProc.getParameterNames() != null) {
+                     for(Variable p : targetProc.getParameters()) {
+                        if(p.getAllocation() instanceof Registers.RegisterZpMem pZp) {
+                           int zp = pZp.getZp();
+                           int sz = Math.max(1, p.getType().getSizeBytes());
+                           if(retZp >= zp && retZp < zp + sz) {
+                              return false;
+                           }
+                        }
+                     }
+                  }
+                  Variable tRet = targetProc.getLocalVariable("return");
+                  if(tRet != null && tRet.getAllocation() instanceof Registers.RegisterZpMem tRetZp) {
+                     int zp = tRetZp.getZp();
+                     int sz = Math.max(1, tRet.getType().getSizeBytes());
+                     if(retZp >= zp && retZp < zp + sz) {
+                        return true;
+                     }
+                  }
+                  continue;
+               }
+            }
+            return false;
+         }
+         if(mnem.startsWith("b")) {
+            if(op == null) return false;
+            int targetIdx = findLabelIndex(allLines, op.trim(), m, currentScope);
+            if(targetIdx == -1) return false;
+            if(!isZpAddrDeadAlongPath(allLines, targetIdx + 1, retZp, retZpHex, retCanon, resolver, currentScope, visited)) {
+               return false;
+            }
+         }
+      }
+      return false;
    }
 }

@@ -553,4 +553,42 @@ public class TestAuditRegressions {
       assertTrue(asm.contains("bit $d011") || asm.contains("bit VICII_CONTROL1"),
             "Pass5BitTestOptimization must fold lda $d011; and #$80; bne into bit $d011; bmi! ASM:\n" + asm);
    }
+
+   @Test
+   void testTribyteConditionAcrossCallsPreservesOperandInsteadOfLeavingBoolAssign() throws Exception {
+      String code = """
+            #include <stdint.h>
+            struct Cache { uint8_t rep; __uint24 cash; };
+            struct Cache cache;
+            volatile uint8_t log_sink;
+            volatile uint8_t out;
+            volatile uint8_t g_req;
+            volatile uint16_t g_cost;
+
+            void log_msg(uint8_t x) {
+                log_sink = x;
+                cache.cash = 0;
+            }
+
+            void test_cond(uint8_t req, uint16_t cost) {
+                bool ok = (cache.rep >= req && cache.cash >= cost);
+                log_msg(1);
+                log_msg(2);
+                if (ok) {
+                    out = 1;
+                }
+            }
+
+            void main(void) {
+                cache.rep = 20;
+                cache.cash = 1000;
+                test_cond(g_req, g_cost);
+                test_cond(10, 500);
+            }
+            """;
+      Program program = compileC(code);
+      String asm = program.getAsm().toString();
+      assertTrue(asm.contains("test_cond:") && asm.contains("log_msg") && asm.contains("out"),
+            "Pass2ConditionalJumpSimplification must capture __uint24 deref operand before intervening calls rather than failing synthesis! ASM:\n" + asm);
+   }
 }

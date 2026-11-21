@@ -115,11 +115,15 @@ public class TestPackage4E {
       int procIdx = asm.indexOf("check_and_clear:");
       assertTrue(procIdx >= 0, "Expected check_and_clear in ASM:\n" + asm);
       String procAsm = asm.substring(procIdx);
-      int cmpFive = procAsm.indexOf("#5");
-      int storeZero = procAsm.indexOf("#0");
-      assertTrue(cmpFive > 0 && storeZero > 0, "Expected #5 comparison and #0 store in check_and_clear:\n" + procAsm);
-      assertTrue(cmpFive < storeZero,
-            "buf[0] == 5 must be evaluated BEFORE buf[0] = 0! LOG:\n" + program.getLog().toString() + "\nASM:\n" + procAsm);
+      int loadBuf = Math.min(
+            Math.min(procAsm.contains("lda main.b") ? procAsm.indexOf("lda main.b") : Integer.MAX_VALUE,
+                     procAsm.contains("ldx main.b") ? procAsm.indexOf("ldx main.b") : Integer.MAX_VALUE),
+            procAsm.contains("ldy main.b") ? procAsm.indexOf("ldy main.b") : Integer.MAX_VALUE);
+      int storeZero = procAsm.indexOf("sta main.b");
+      assertTrue(loadBuf < Integer.MAX_VALUE && storeZero > 0,
+            "Expected load and store of main.b in check_and_clear:\n" + procAsm);
+      assertTrue(loadBuf < storeZero,
+            "buf[0] must be read BEFORE buf[0] = 0! LOG:\n" + program.getLog().toString() + "\nASM:\n" + procAsm);
    }
 
    @Test

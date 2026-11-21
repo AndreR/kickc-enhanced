@@ -13,6 +13,7 @@ import dk.camelot64.kickc.model.statements.StatementKickAsm;
 import dk.camelot64.kickc.model.symbols.Scope;
 import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.types.SymbolType;
+import dk.camelot64.kickc.model.types.SymbolTypeInference;
 import dk.camelot64.kickc.model.values.LValue;
 import dk.camelot64.kickc.model.values.PointerDereference;
 import dk.camelot64.kickc.model.values.RValue;
@@ -26,6 +27,7 @@ import dk.camelot64.kickc.passes.utils.StatementsBetween;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
@@ -123,52 +125,90 @@ public class Pass2ConditionalJumpSimplification extends Pass2SsaOptimization {
       final Graph.Block conditionDefineBlock = statementInfos.getBlock(simpleCondition.conditionAssignment);
       Collection<Statement> statementsBetween = StatementsBetween.find(simpleCondition.conditionAssignment, conditionDefineBlock, simpleCondition.conditionalJump, getGraph());
 
-      // SSA-11: Do not sink pointer dereferences or volatile reads across intervening stores, calls, or inline asm
-      boolean condReadsMemoryOrVolatile = hasPointerOrVolatileRead(getProgramScope(), rValue1) || hasPointerOrVolatileRead(getProgramScope(), rValue2);
-      if(condReadsMemoryOrVolatile && !statementsBetween.isEmpty()) {
+      // SSA-11: Do not sink pointer dereferences or volatile reads across intervening stores, calls, or inline asm.
+      // Instead of aborting (which can leave un-synthesizable boolean comparison assignments for 24/32-bit types),
+      // capture any memory/volatile operand into an intermediate right at the original condition assignment point.
+      boolean hasSideEffectBetween = false;
+      if(!statementsBetween.isEmpty()) {
          for(Statement statementBetween : statementsBetween) {
             if(hasMemoryOrSideEffect(getProgramScope(), statementBetween)) {
-               getLog().append("Condition not sunk across side-effecting statement " + simpleCondition.conditionVar.toString(getProgram()));
-               return false;
+               hasSideEffectBetween = true;
+               break;
             }
          }
       }
 
-      final Collection<Variable> referencedLoadStoreVariables = getReferencedLoadStoreVariables(rValue1);
+      Statement insertAnchor = simpleCondition.conditionAssignment;
+      final ScopeRef conditionDefineScopeRef = conditionDefineBlock.getScope();
+      final Scope conditionDefineScope = getProgramScope().getScope(conditionDefineScopeRef);
+      if(hasSideEffectBetween) {
+         if(hasPointerOrVolatileRead(getProgramScope(), rValue1)) {
+            SymbolType inferred1 = SymbolTypeInference.inferType(getProgramScope(), rValue1);
+            if(inferred1 == null || SymbolType.VOID.equals(inferred1)) {
+               getLog().append("Condition not sunk across side-effecting statement " + simpleCondition.conditionVar.toString(getProgram()));
+               return false;
+            }
+            SymbolType valType1 = inferred1.getQualified(false, false);
+            Variable tmpVar1 = VariableBuilder.createIntermediate(conditionDefineScope, valType1, getProgram());
+            StatementAssignment tmpAssign1 = new StatementAssignment(tmpVar1.getVariableRef(), rValue1, true, simpleCondition.conditionAssignment.getSource(), Comment.NO_COMMENTS);
+            conditionDefineBlock.addStatementAfter(tmpAssign1, insertAnchor);
+            insertAnchor = tmpAssign1;
+            rValue1 = tmpVar1.getRef();
+            getLog().append("Preserved condition rValue1 before side-effecting statement " + tmpAssign1.toString(getProgram(), false));
+         }
+         if(hasPointerOrVolatileRead(getProgramScope(), rValue2)) {
+            SymbolType inferred2 = SymbolTypeInference.inferType(getProgramScope(), rValue2);
+            if(inferred2 == null || SymbolType.VOID.equals(inferred2)) {
+               getLog().append("Condition not sunk across side-effecting statement " + simpleCondition.conditionVar.toString(getProgram()));
+               return false;
+            }
+            SymbolType valType2 = inferred2.getQualified(false, false);
+            Variable tmpVar2 = VariableBuilder.createIntermediate(conditionDefineScope, valType2, getProgram());
+            StatementAssignment tmpAssign2 = new StatementAssignment(tmpVar2.getVariableRef(), rValue2, true, simpleCondition.conditionAssignment.getSource(), Comment.NO_COMMENTS);
+            conditionDefineBlock.addStatementAfter(tmpAssign2, insertAnchor);
+            insertAnchor = tmpAssign2;
+            rValue2 = tmpVar2.getRef();
+            getLog().append("Preserved condition rValue2 before side-effecting statement " + tmpAssign2.toString(getProgram(), false));
+         }
+      }
+
+      final Collection<Variable> referencedLoadStoreVariables = new LinkedHashSet<>(getReferencedLoadStoreVariables(rValue1));
       referencedLoadStoreVariables.addAll(getReferencedLoadStoreVariables(rValue2));
-      if(referencedLoadStoreVariables.size() > 0) {
-         // Found referenced load/store variables
-         // Examine all statements between the conditionAssignment and conditionalJump for modifications
-         for(Statement statementBetween : statementsBetween) {
-            boolean stmtHasCallOrIndirectWrite = hasMemoryOrSideEffect(getProgramScope(), statementBetween);
-            for(Variable referencedLoadStoreVariable : referencedLoadStoreVariables) {
-               if(variableReferenceInfos.getDefinedVars(statementBetween).contains(referencedLoadStoreVariable.getVariableRef())
-                     || stmtHasCallOrIndirectWrite) {
-                  // A referenced load/store-variable may be modified in a statement between the assignment and the condition!
-                  getLog().append("Condition not simple " + simpleCondition.conditionVar.toString(getProgram()) + " " + simpleCondition.conditionalJump.toString(getProgram(), false));
-                  // Create an intermediate variable copy of the load/store-variable at the position of the condition-variable to preserve the value
-                  final ScopeRef conditionDefineScopeRef = conditionDefineBlock.getScope();
-                  final Scope conditionDefineScope = getProgramScope().getScope(conditionDefineScopeRef);
-                  SymbolType typeQualified = referencedLoadStoreVariable.getType().getQualified(false, referencedLoadStoreVariable.getType().isNomodify());
-                  final Variable intermediateLoadStoreVar = VariableBuilder.createIntermediate(conditionDefineScope, typeQualified, getProgram());
-                  final StatementAssignment intermediateLoadStoreAssignment = new StatementAssignment(intermediateLoadStoreVar.getVariableRef(), referencedLoadStoreVariable.getRef(), true, simpleCondition.conditionAssignment.getSource(), Comment.NO_COMMENTS);
-                  conditionDefineBlock.addStatementAfter(intermediateLoadStoreAssignment, simpleCondition.conditionAssignment);
-                  // Replace all references to the load/store variable in the expressions with the new intermediate
-                  final LinkedHashMap<SymbolRef, RValue> aliases = new LinkedHashMap<>();
-                  aliases.put(referencedLoadStoreVariable.getRef(), intermediateLoadStoreVar.getRef());
-                  {
-                     final ProgramValue.GenericValue programValue1 = new ProgramValue.GenericValue(rValue1);
-                     ProgramValueIterator.execute(programValue1, new AliasReplacer(aliases), null, null, null);
-                     rValue1 = (RValue) programValue1.get();
+      if(!referencedLoadStoreVariables.isEmpty() && !statementsBetween.isEmpty()) {
+         // Found referenced load/store variables: preserve each modified variable at most once
+         for(Variable referencedLoadStoreVariable : referencedLoadStoreVariables) {
+            boolean mayBeModified = hasSideEffectBetween;
+            if(!mayBeModified) {
+               for(Statement statementBetween : statementsBetween) {
+                  if(variableReferenceInfos.getDefinedVars(statementBetween).contains(referencedLoadStoreVariable.getVariableRef())) {
+                     mayBeModified = true;
+                     break;
                   }
-                  {
-                     final ProgramValue.GenericValue programValue2 = new ProgramValue.GenericValue(rValue2);
-                     ProgramValueIterator.execute(programValue2, new AliasReplacer(aliases), null, null, null);
-                     rValue2 = (RValue) programValue2.get();
-                  }
-                  getLog().append("Introduced intermediate condition variable " + intermediateLoadStoreAssignment.toString(getProgram(), false));
-                  break;
                }
+            }
+            if(mayBeModified) {
+               // A referenced load/store-variable may be modified in a statement between the assignment and the condition!
+               getLog().append("Condition not simple " + simpleCondition.conditionVar.toString(getProgram()) + " " + simpleCondition.conditionalJump.toString(getProgram(), false));
+               // Create an intermediate variable copy of the load/store-variable at the position of the condition-variable to preserve the value
+               SymbolType typeQualified = referencedLoadStoreVariable.getType().getQualified(false, referencedLoadStoreVariable.getType().isNomodify());
+               final Variable intermediateLoadStoreVar = VariableBuilder.createIntermediate(conditionDefineScope, typeQualified, getProgram());
+               final StatementAssignment intermediateLoadStoreAssignment = new StatementAssignment(intermediateLoadStoreVar.getVariableRef(), referencedLoadStoreVariable.getRef(), true, simpleCondition.conditionAssignment.getSource(), Comment.NO_COMMENTS);
+               conditionDefineBlock.addStatementAfter(intermediateLoadStoreAssignment, insertAnchor);
+               insertAnchor = intermediateLoadStoreAssignment;
+               // Replace all references to the load/store variable in the expressions with the new intermediate
+               final LinkedHashMap<SymbolRef, RValue> aliases = new LinkedHashMap<>();
+               aliases.put(referencedLoadStoreVariable.getRef(), intermediateLoadStoreVar.getRef());
+               {
+                  final ProgramValue.GenericValue programValue1 = new ProgramValue.GenericValue(rValue1);
+                  ProgramValueIterator.execute(programValue1, new AliasReplacer(aliases), null, null, null);
+                  rValue1 = (RValue) programValue1.get();
+               }
+               {
+                  final ProgramValue.GenericValue programValue2 = new ProgramValue.GenericValue(rValue2);
+                  ProgramValueIterator.execute(programValue2, new AliasReplacer(aliases), null, null, null);
+                  rValue2 = (RValue) programValue2.get();
+               }
+               getLog().append("Introduced intermediate condition variable " + intermediateLoadStoreAssignment.toString(getProgram(), false));
             }
          }
       }

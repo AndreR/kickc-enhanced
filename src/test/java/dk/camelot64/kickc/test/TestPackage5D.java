@@ -6,11 +6,18 @@ import dk.camelot64.kickc.Compiler;
 import dk.camelot64.kickc.TmpDirManager;
 import dk.camelot64.kickc.asm.*;
 import dk.camelot64.kickc.model.Program;
+import dk.camelot64.kickc.model.Registers;
 import dk.camelot64.kickc.model.TargetCpu;
 import dk.camelot64.kickc.model.TargetPlatform;
+import dk.camelot64.kickc.model.symbols.Bank;
+import dk.camelot64.kickc.model.symbols.Procedure;
+import dk.camelot64.kickc.model.symbols.Variable;
+import dk.camelot64.kickc.model.types.SymbolType;
+import dk.camelot64.kickc.model.types.SymbolTypeProcedure;
 import dk.camelot64.kickc.model.values.ScopeRef;
 import dk.camelot64.kickc.parser.CTargetPlatformParser;
 import dk.camelot64.kickc.passes.Pass4RegisterUpliftCombinations;
+import dk.camelot64.kickc.passes.Pass5ARegisterReturnOptimization;
 import dk.camelot64.kickc.passes.Pass5DeadStoreElimination;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -147,5 +154,50 @@ public class TestPackage5D {
       assertTrue(asm.contains("jsr add_vals"), "Expected calls to add_vals:\n" + asm);
       assertFalse(asm.contains("lda.z add_vals.return"),
             "8-bit return value should be returned directly in A, not reloaded from add_vals.return! ASM:\n" + asm);
+   }
+
+   @Test
+   void testGen06_CoalescedCallerZpVariableBlocksARegisterReturnOptimization() {
+      Program program = new Program();
+      Cpu65xx cpu = TargetCpu.MOS6502X.getCpu65xx();
+      AsmProgram asm = new AsmProgram(TargetCpu.MOS6502X);
+      program.setAsm(asm);
+
+      Procedure callee = new Procedure("callee", new SymbolTypeProcedure(SymbolType.BYTE, Collections.emptyList()), program.getScope(), "Code", "Data", Procedure.CallingConvention.PHI_CALL, Bank.COMMON);
+      program.getScope().add(callee);
+      Variable retVar = new Variable("return", Variable.Kind.PHI_MASTER, SymbolType.BYTE, callee, Variable.MemoryArea.ZEROPAGE_MEMORY, "Data", null);
+      retVar.setAllocation(new Registers.RegisterZpMem(2, 1, false));
+      callee.add(retVar);
+
+      Procedure caller = new Procedure("caller", new SymbolTypeProcedure(SymbolType.VOID, Collections.emptyList()), program.getScope(), "Code", "Data", Procedure.CallingConvention.PHI_CALL, Bank.COMMON);
+      program.getScope().add(caller);
+
+      // Callee: sta.z return; rts
+      AsmChunk calleeChunk = asm.startChunk(callee.getRef(), null, "callee");
+      calleeChunk.addLine(new AsmScopeBegin("callee"));
+      calleeChunk.addLine(new AsmLabelDecl("return", "2"));
+      calleeChunk.addLine(new AsmInstruction(cpu.getOpcode("lda", CpuAddressingMode.IMM, false), "42", null, null));
+      calleeChunk.addLine(new AsmInstruction(cpu.getOpcode("sta", CpuAddressingMode.ZP, false), "return", null, null));
+      calleeChunk.addLine(new AsmInstruction(cpu.getOpcode("rts", CpuAddressingMode.NON, false), null, null, null));
+      calleeChunk.addLine(new AsmScopeEnd());
+
+      // Caller: one direct load site + one coalesced site (.label x = 2; jsr callee; lda #1; sta $0400; lda.z x; sta $0401; rts)
+      AsmChunk callerChunk = asm.startChunk(caller.getRef(), null, "caller");
+      callerChunk.addLine(new AsmScopeBegin("caller"));
+      callerChunk.addLine(new AsmLabelDecl("x", "2"));
+      callerChunk.addLine(new AsmInstruction(cpu.getOpcode("jsr", CpuAddressingMode.ABS, false), "callee", null, null));
+      callerChunk.addLine(new AsmInstruction(cpu.getOpcode("lda", CpuAddressingMode.ZP, false), "callee.return", null, null));
+      callerChunk.addLine(new AsmInstruction(cpu.getOpcode("sta", CpuAddressingMode.ABS, false), "$0402", null, null));
+      callerChunk.addLine(new AsmInstruction(cpu.getOpcode("jsr", CpuAddressingMode.ABS, false), "callee", null, null));
+      callerChunk.addLine(new AsmInstruction(cpu.getOpcode("lda", CpuAddressingMode.IMM, false), "1", null, null));
+      callerChunk.addLine(new AsmInstruction(cpu.getOpcode("sta", CpuAddressingMode.ABS, false), "$0400", null, null));
+      callerChunk.addLine(new AsmInstruction(cpu.getOpcode("lda", CpuAddressingMode.ZP, false), "x", null, null));
+      callerChunk.addLine(new AsmInstruction(cpu.getOpcode("sta", CpuAddressingMode.ABS, false), "$0401", null, null));
+      callerChunk.addLine(new AsmInstruction(cpu.getOpcode("rts", CpuAddressingMode.NON, false), null, null, null));
+      callerChunk.addLine(new AsmScopeEnd());
+
+      assertFalse(new Pass5ARegisterReturnOptimization(program).optimize(),
+            "GEN-06 must NOT eliminate sta.z return when caller later reads coalesced ZP slot $02 via .label x = 2!");
+      assertTrue(asm.toString().contains("sta.z return"), "sta.z return must remain intact! ASM:\n" + asm);
    }
 }
