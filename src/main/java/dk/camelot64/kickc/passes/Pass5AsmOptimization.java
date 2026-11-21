@@ -690,7 +690,7 @@ public abstract class Pass5AsmOptimization {
                   mnem.equals("cmp") || mnem.equals("adc") || mnem.equals("sbc") || mnem.equals("and") ||
                   mnem.equals("ora") || mnem.equals("eor") || mnem.equals("sax") ||
                   mnem.equals("alr") || mnem.equals("anc") || mnem.equals("arr") || mnem.equals("axs") ||
-                  mnem.equals("dcp") || mnem.equals("isc") || mnem.equals("rla") || mnem.equals("rra") ||
+                  mnem.equals("isc") || mnem.equals("rla") || mnem.equals("rra") ||
                   mnem.equals("slo") || mnem.equals("sre") ||
                   ((mnem.equals("asl") || mnem.equals("lsr") || mnem.equals("rol") || mnem.equals("ror")) && CpuAddressingMode.NON.equals(mode))) {
                   return false;

@@ -452,6 +452,17 @@ public class AsmProgramStaticRegisterValues {
          if(mnemnonic.equals("clc")) {
             current.setFlagC(Boolean.FALSE);
          }
+         if(mnemnonic.equals("bcs")) {
+            current.setFlagC(Boolean.FALSE);
+         }
+         if(mnemnonic.equals("bcc")) {
+            current.setFlagC(Boolean.TRUE);
+         }
+         if((mnemnonic.equals("cmp") || mnemnonic.equals("cpx") || mnemnonic.equals("cpy") || mnemnonic.equals("axs"))
+               && addressingMode.equals(CpuAddressingMode.IMM)
+               && ("0".equals(instruction.getOperand1()) || "$0".equals(instruction.getOperand1()) || "$00".equals(instruction.getOperand1()))) {
+            current.setFlagC(Boolean.TRUE);
+         }
          if(mnemnonic.equals("tsx")) {
             current.setXIsSp(true);
          }
