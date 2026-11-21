@@ -33,20 +33,6 @@ public class Pass5HighSpeedJumpTableSwitch extends Pass5AsmOptimization {
       super(program);
    }
 
-   private static class LineRef {
-      final int index;
-      final AsmChunk chunk;
-      final AsmLine line;
-      final String scope;
-
-      LineRef(int index, AsmChunk chunk, AsmLine line, String scope) {
-         this.index = index;
-         this.chunk = chunk;
-         this.line = line;
-         this.scope = scope;
-      }
-   }
-
    private static class CaseBranch {
       final int value;
       final String targetLabel;
@@ -364,15 +350,6 @@ public class Pass5HighSpeedJumpTableSwitch extends Pass5AsmOptimization {
       } catch(NumberFormatException e) {
          return null;
       }
-   }
-
-   private static int findNextInstruction(List<LineRef> allLines, int start) {
-      for(int i = start; i < allLines.size(); i++) {
-         AsmLine line = allLines.get(i).line;
-         if(line instanceof AsmInstruction) return i;
-         if(line instanceof AsmLabel || line instanceof AsmScopeBegin || line instanceof AsmScopeEnd) return -1;
-      }
-      return -1;
    }
 
    /**

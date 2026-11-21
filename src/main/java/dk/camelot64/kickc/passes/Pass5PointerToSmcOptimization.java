@@ -36,20 +36,6 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
       super(program);
    }
 
-   public static class LineRef {
-      final AsmChunk chunk;
-      final int indexInChunk;
-      final AsmLine line;
-      final String scope;
-
-      LineRef(AsmChunk chunk, int indexInChunk, AsmLine line, String scope) {
-         this.chunk = chunk;
-         this.indexInChunk = indexInChunk;
-         this.line = line;
-         this.scope = scope;
-      }
-   }
-
    private static String stripZp(String op) {
       if(op == null) return null;
       String t = op.trim();
@@ -191,7 +177,7 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
 
       while(passModified) {
          passModified = false;
-         AsmProgramStaticRegisterValues staticValues = new AsmProgramStaticRegisterValues(getAsmProgram());
+         AsmProgramStaticRegisterValues staticValues = new AsmProgramStaticRegisterValues(getAsmProgram(), getProgram());
 
          List<LineRef> allLines = new ArrayList<>();
          String currentScope = null;

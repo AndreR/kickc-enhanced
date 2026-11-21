@@ -35,20 +35,6 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
       super(program);
    }
 
-   private static class LineRef {
-      final AsmChunk chunk;
-      final int indexInChunk;
-      final AsmLine line;
-      final String scopeLabel;
-
-      LineRef(AsmChunk chunk, int indexInChunk, AsmLine line, String scopeLabel) {
-         this.chunk = chunk;
-         this.indexInChunk = indexInChunk;
-         this.line = line;
-         this.scopeLabel = scopeLabel;
-      }
-   }
-
    private Procedure findProcedure(String name, Procedure caller, Map<String, Procedure> procMap) {
       if(name == null || name.isEmpty()) return null;
       String cleanName = name.trim();
@@ -219,11 +205,11 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
             if(!inst1.getCpuOpcode().getMnemonic().equals("jsr")) continue;
 
             // Exclude root scope and calls to main
-            if(ref1.scopeLabel != null && ref1.scopeLabel.equals(ScopeRef.ROOT.getFullName())) continue;
+            if(ref1.scope != null && ref1.scope.equals(ScopeRef.ROOT.getFullName())) continue;
             if(inst1.getOperand1() != null && inst1.getOperand1().equals(SymbolRef.MAIN_PROC_NAME)) continue;
 
             // Verify tail call compatibility (same segment/bank, identical return calling conventions)
-            Procedure caller = findProcedure(ref1.scopeLabel, null, procMap);
+            Procedure caller = findProcedure(ref1.scope, null, procMap);
             Procedure callee = findProcedure(inst1.getOperand1(), caller, procMap);
             if(!isTailCallCompatible(caller, callee)) {
                continue;

@@ -21,27 +21,8 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
    private static final java.util.regex.Pattern SSA_TEMP_PATTERN = java.util.regex.Pattern.compile("__\\d+");
    private static final java.util.regex.Pattern DIGITS_PATTERN = java.util.regex.Pattern.compile("\\d+");
 
-   private static class LineRef {
-      final AsmChunk chunk;
-      final AsmLine line;
-
-      LineRef(AsmChunk chunk, AsmLine line) {
-         this.chunk = chunk;
-         this.line = line;
-      }
-   }
-
    public Pass5DeadStoreElimination(Program program) {
       super(program);
-   }
-
-   private static String getBaseVar(String op) {
-      if(op == null) return "";
-      int idx = op.indexOf('+');
-      if(idx != -1) return op.substring(0, idx).trim();
-      int minusIdx = op.indexOf('-');
-      if(minusIdx != -1) return op.substring(0, minusIdx).trim();
-      return op.trim();
    }
 
    private static boolean isExactVarMatch(String operand, String var) {
@@ -81,106 +62,6 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
              mnem.equals("arr") || mnem.equals("axs") || mnem.equals("dcp") || mnem.equals("isc") ||
              mnem.equals("rla") || mnem.equals("rra") || mnem.equals("slo") || mnem.equals("sre") ||
              ((mnem.equals("asl") || mnem.equals("lsr") || mnem.equals("rol") || mnem.equals("ror")) && mode.equals(CpuAddressingMode.NON));
-   }
-
-   public static class CanonicalResolver {
-      private final Map<String, String> aliasMap = new HashMap<>();
-
-      public CanonicalResolver() {}
-
-      public CanonicalResolver(Map<String, String> initialAliases) {
-         if(initialAliases != null) {
-            aliasMap.putAll(initialAliases);
-         }
-      }
-
-      public void addAlias(String name, String value) {
-         if(name == null || value == null) return;
-         String n = name.trim();
-         String v = value.trim();
-         if(v.startsWith(".z ")) v = v.substring(3).trim();
-         aliasMap.put(n, v);
-         int dotIdx = n.lastIndexOf('.');
-         if(dotIdx != -1) {
-            aliasMap.put(n.substring(dotIdx + 1), v);
-         }
-      }
-
-      public String resolve(String operand) {
-         if(operand == null) return "";
-         String op = operand.trim();
-         if(op.startsWith(".z ")) op = op.substring(3).trim();
-
-         // Extract base and initial offset
-         String base = op;
-         int offset = 0;
-         int plusIdx = base.indexOf('+');
-         int minusIdx = base.indexOf('-');
-         if(plusIdx != -1) {
-            try {
-               offset = Integer.parseInt(base.substring(plusIdx + 1).trim());
-               base = base.substring(0, plusIdx).trim();
-            } catch(Exception ignored) {}
-         } else if(minusIdx != -1) {
-            try {
-               offset = -Integer.parseInt(base.substring(minusIdx + 1).trim());
-               base = base.substring(0, minusIdx).trim();
-            } catch(Exception ignored) {}
-         }
-
-         // Follow alias chains
-         Set<String> visited = new HashSet<>();
-         visited.add(base);
-         for(int i = 0; i < 20; i++) {
-            String next = aliasMap.get(base);
-            if(next == null) {
-               int dotIdx = base.lastIndexOf('.');
-               if(dotIdx != -1) {
-                  next = aliasMap.get(base.substring(dotIdx + 1));
-               }
-            }
-            if(next == null) break;
-            if(next.startsWith(".z ")) next = next.substring(3).trim();
-
-            int nPlus = next.indexOf('+');
-            int nMinus = next.indexOf('-');
-            if(nPlus != -1) {
-               try {
-                  offset += Integer.parseInt(next.substring(nPlus + 1).trim());
-                  base = next.substring(0, nPlus).trim();
-               } catch(Exception e) {
-                  base = next;
-               }
-            } else if(nMinus != -1) {
-               try {
-                  offset -= Integer.parseInt(next.substring(nMinus + 1).trim());
-                  base = next.substring(0, nMinus).trim();
-               } catch(Exception e) {
-                  base = next;
-               }
-            } else {
-               base = next;
-            }
-
-            if(!visited.add(base)) break; // cycle protection
-         }
-
-         // If base is a numeric hardware address, fold the offset into the address
-         Integer addr = parseAddress(base);
-         if(addr != null) {
-            int finalAddr = addr + offset;
-            if(finalAddr >= 0 && finalAddr <= 0xff) {
-               return String.format("$%02x", finalAddr);
-            } else {
-               return String.format("$%04x", finalAddr & 0xffff);
-            }
-         }
-
-         if(offset != 0) {
-            return base + (offset > 0 ? "+" + offset : "" + offset);
-         }
-         return base;
-      }
    }
 
    private static List<String> extractReferencedTokens(String operand) {

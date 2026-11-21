@@ -26,20 +26,6 @@ import java.util.*;
  */
 public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
 
-   public static class LineRef {
-      final AsmChunk chunk;
-      final int indexInChunk;
-      final AsmLine line;
-      final String scope;
-
-      LineRef(AsmChunk chunk, int indexInChunk, AsmLine line, String scope) {
-         this.chunk = chunk;
-         this.indexInChunk = indexInChunk;
-         this.line = line;
-         this.scope = scope;
-      }
-   }
-
    private static class ProcedureData {
       final String name;
       final List<AsmChunk> chunks = new ArrayList<>();

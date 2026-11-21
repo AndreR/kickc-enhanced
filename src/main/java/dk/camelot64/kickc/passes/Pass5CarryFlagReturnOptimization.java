@@ -32,20 +32,6 @@ import java.util.*;
  */
 public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
 
-   private static class LineRef {
-      final int index;
-      final AsmChunk chunk;
-      final AsmLine line;
-      final String scope;
-
-      LineRef(int index, AsmChunk chunk, AsmLine line, String scope) {
-         this.index = index;
-         this.chunk = chunk;
-         this.line = line;
-         this.scope = scope;
-      }
-   }
-
    public Pass5CarryFlagReturnOptimization(Program program) {
       super(program);
    }

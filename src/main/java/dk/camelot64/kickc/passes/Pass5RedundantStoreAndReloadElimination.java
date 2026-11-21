@@ -29,28 +29,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
    }
 
    public static boolean isHardwareAddress(String op) {
-      if(op == null) return false;
-      String t = op.trim().toLowerCase();
-      if(t.startsWith("$")) {
-         try {
-            int addr = Integer.parseInt(t.substring(1), 16);
-            if((addr >= 0xd000 && addr <= 0xdfff) || (addr >= 0xde00 && addr <= 0xdfff)) {
-               return true;
-            }
-         } catch(Exception e) {}
-      }
-      if(t.startsWith("0x")) {
-         try {
-            int addr = Integer.parseInt(t.substring(2), 16);
-            if((addr >= 0xd000 && addr <= 0xdfff) || (addr >= 0xde00 && addr <= 0xdfff)) {
-               return true;
-            }
-         } catch(Exception e) {}
-      }
-      if(t.contains("bank_reg") || t.contains("vicii") || t.contains("sid") || t.contains("cia") || t.contains("colorram")) {
-         return true;
-      }
-      return false;
+      return Pass5AsmOptimization.isHardwareAddress(op);
    }
 
 
@@ -102,30 +81,22 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
       while(passModified) {
          passModified = false;
 
-         List<LineRef> allLines = new ArrayList<>();
+         List<LineRef> allLines = flattenLines(getAsmProgram());
+         Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
          Map<String, Map<String, String>> scopeAliasMap = new HashMap<>();
          Map<String, String> globalAliasMap = new HashMap<>();
-         String scanScope = "";
-
-         for(AsmChunk chunk : getAsmProgram().getChunks()) {
-            for(AsmLine line : chunk.getLines()) {
-               allLines.add(new LineRef(chunk, line));
-               if(line instanceof AsmScopeBegin) {
-                  scanScope = ((AsmScopeBegin) line).getLabel();
-               } else if(line instanceof AsmScopeEnd) {
-                  scanScope = "";
-               } else if(line instanceof AsmLabelDecl) {
-                  AsmLabelDecl decl = (AsmLabelDecl) line;
-                  String rawName = decl.getName();
-                  String rawVal = decl.getValue();
-                  if(scanScope != null && !scanScope.isEmpty()) {
-                     scopeAliasMap.computeIfAbsent(scanScope, k -> new HashMap<>()).put(rawName, rawVal);
-                     String qualName = rawName.contains(".") ? rawName : (scanScope + "." + rawName);
-                     String qualVal = (rawVal.contains(".") || rawVal.startsWith("$") || rawVal.startsWith("#")) ? rawVal : (scanScope + "." + rawVal);
-                     globalAliasMap.put(qualName, qualVal);
-                  } else {
-                     globalAliasMap.put(rawName, rawVal);
-                  }
+         for(LineRef ref : allLines) {
+            if(ref.line instanceof AsmLabelDecl) {
+               AsmLabelDecl decl = (AsmLabelDecl) ref.line;
+               String rawName = decl.getName();
+               String rawVal = decl.getValue();
+               if(ref.scope != null && !ref.scope.isEmpty()) {
+                  scopeAliasMap.computeIfAbsent(ref.scope, k -> new HashMap<>()).put(rawName, rawVal);
+                  String qualName = rawName.contains(".") ? rawName : (ref.scope + "." + rawName);
+                  String qualVal = (rawVal.contains(".") || rawVal.startsWith("$") || rawVal.startsWith("#")) ? rawVal : (ref.scope + "." + rawVal);
+                  globalAliasMap.put(qualName, qualVal);
+               } else {
+                  globalAliasMap.put(rawName, rawVal);
                }
             }
          }
@@ -177,6 +148,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
             }
 
             Map<String, String> localAliases = scopeAliasMap.get(currentScope);
+            CanonicalResolver resolver = scopeResolvers.getOrDefault(currentScope, scopeResolvers.get(""));
             CpuOpcode op = inst.getCpuOpcode();
             String mnem = op.getMnemonic();
             CpuAddressingMode mode = op.getAddressingMode();
@@ -197,10 +169,10 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
             // -----------------------------------------------------------------
             if(mnem.equals("lda")) {
                if(mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS)) {
-                  if(!isHardwareAddress(operand)) {
+                  if(!isVolatileOrHardwareOperand(operand, currentScope, resolver, getProgram())) {
                      String canon = getCanonical(operand, localAliases, globalAliasMap);
                      if(aMems.contains(canon)) {
-                        if(!areFlagsNeededAfter(allLines, i) || areFlagsEstablishedForReg(allLines, i, "A", currentScope)) {
+                        if(!areModifiedFlagsLiveAfter(allLines, i, currentScope, getProgram()) || areFlagsEstablishedForReg(allLines, i, "A", currentScope)) {
                            getLog().append("Eliminating redundant load " + inst.getAsm() + " (A already contains " + canon + ")");
                            ref.chunk.getLines().remove(inst);
                            passModified = true;
@@ -222,7 +194,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
             // -----------------------------------------------------------------
             if(mnem.equals("sta")) {
                if(mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS)) {
-                  if(!isHardwareAddress(operand)) {
+                  if(!isVolatileOrHardwareOperand(operand, currentScope, resolver, getProgram())) {
                      String canon = getCanonical(operand, localAliases, globalAliasMap);
                      if(aMems.contains(canon)) {
                         getLog().append("Eliminating redundant self-store " + inst.getAsm() + " (A already loaded from " + canon + ")");
@@ -247,10 +219,10 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
             // -----------------------------------------------------------------
             if(mnem.equals("ldx")) {
                if(mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS)) {
-                  if(!isHardwareAddress(operand)) {
+                  if(!isVolatileOrHardwareOperand(operand, currentScope, resolver, getProgram())) {
                      String canon = getCanonical(operand, localAliases, globalAliasMap);
                      if(xMems.contains(canon)) {
-                        if(!areFlagsNeededAfter(allLines, i) || areFlagsEstablishedForReg(allLines, i, "X", currentScope)) {
+                        if(!areModifiedFlagsLiveAfter(allLines, i, currentScope, getProgram()) || areFlagsEstablishedForReg(allLines, i, "X", currentScope)) {
                            getLog().append("Eliminating redundant load " + inst.getAsm() + " (X already contains " + canon + ")");
                            ref.chunk.getLines().remove(inst);
                            passModified = true;
@@ -272,7 +244,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
             // -----------------------------------------------------------------
             if(mnem.equals("stx")) {
                if(mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS)) {
-                  if(!isHardwareAddress(operand)) {
+                  if(!isVolatileOrHardwareOperand(operand, currentScope, resolver, getProgram())) {
                      String canon = getCanonical(operand, localAliases, globalAliasMap);
                      if(xMems.contains(canon)) {
                         getLog().append("Eliminating redundant self-store " + inst.getAsm() + " (X already loaded from " + canon + ")");
@@ -295,10 +267,10 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
             // -----------------------------------------------------------------
             if(mnem.equals("ldy")) {
                if(mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS)) {
-                  if(!isHardwareAddress(operand)) {
+                  if(!isVolatileOrHardwareOperand(operand, currentScope, resolver, getProgram())) {
                      String canon = getCanonical(operand, localAliases, globalAliasMap);
                      if(yMems.contains(canon)) {
-                        if(!areFlagsNeededAfter(allLines, i) || areFlagsEstablishedForReg(allLines, i, "Y", currentScope)) {
+                        if(!areModifiedFlagsLiveAfter(allLines, i, currentScope, getProgram()) || areFlagsEstablishedForReg(allLines, i, "Y", currentScope)) {
                            getLog().append("Eliminating redundant load " + inst.getAsm() + " (Y already contains " + canon + ")");
                            ref.chunk.getLines().remove(inst);
                            passModified = true;
@@ -320,7 +292,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
             // -----------------------------------------------------------------
             if(mnem.equals("sty")) {
                if(mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS)) {
-                  if(!isHardwareAddress(operand)) {
+                  if(!isVolatileOrHardwareOperand(operand, currentScope, resolver, getProgram())) {
                      String canon = getCanonical(operand, localAliases, globalAliasMap);
                      if(yMems.contains(canon)) {
                         getLog().append("Eliminating redundant self-store " + inst.getAsm() + " (Y already loaded from " + canon + ")");
@@ -396,7 +368,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                aMems.clear();
                if(mnem.equals("lax")) {
                   xMems.clear();
-                  if((mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS)) && !isHardwareAddress(operand)) {
+                  if((mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS)) && !isVolatileOrHardwareOperand(operand, currentScope, resolver, getProgram())) {
                      String canon = getCanonical(operand, localAliases, globalAliasMap);
                      aMems.add(canon);
                      xMems.add(canon);

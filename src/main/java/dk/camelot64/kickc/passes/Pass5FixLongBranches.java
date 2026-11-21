@@ -222,30 +222,6 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
       return totalFixed;
    }
 
-   private static class LineRef {
-      final AsmChunk chunk;
-      final AsmLine line;
-
-      LineRef(AsmChunk chunk, AsmLine line) {
-         this.chunk = chunk;
-         this.line = line;
-      }
-   }
-
-   private static int findNextInstruction(List<LineRef> allLines, int start) {
-      for(int i = start; i < allLines.size(); i++) {
-         LineRef ref = allLines.get(i);
-         if(ref.line instanceof AsmComment || ref.line instanceof AsmConstant || ref.line instanceof AsmLabelDecl) {
-            continue;
-         }
-         if(ref.line instanceof AsmInstruction) {
-            return i;
-         }
-         return -1;
-      }
-      return -1;
-   }
-
    private static int findNextNonComment(List<LineRef> allLines, int start) {
       for(int i = start; i < allLines.size(); i++) {
          LineRef ref = allLines.get(i);

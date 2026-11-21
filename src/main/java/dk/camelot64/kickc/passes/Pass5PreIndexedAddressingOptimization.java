@@ -35,12 +35,12 @@ public class Pass5PreIndexedAddressingOptimization extends Pass5AsmOptimization 
 
    private static final java.util.regex.Pattern WHITESPACE_PATTERN = java.util.regex.Pattern.compile("\\s+");
 
-   private static class LineRef {
+   private static class InstRef {
       final int index;
       final AsmChunk chunk;
       final AsmInstruction inst;
 
-      LineRef(int index, AsmChunk chunk, AsmInstruction inst) {
+      InstRef(int index, AsmChunk chunk, AsmInstruction inst) {
          this.index = index;
          this.chunk = chunk;
          this.inst = inst;
@@ -58,23 +58,23 @@ public class Pass5PreIndexedAddressingOptimization extends Pass5AsmOptimization 
 
       for(AsmChunk chunk : getAsmProgram().getChunks()) {
          List<AsmLine> lines = chunk.getLines();
-         List<LineRef> instRefs = new ArrayList<>();
+         List<InstRef> instRefs = new ArrayList<>();
          for(int i = 0; i < lines.size(); i++) {
             AsmLine line = lines.get(i);
             if(line instanceof AsmInstruction) {
-               instRefs.add(new LineRef(i, chunk, (AsmInstruction) line));
+               instRefs.add(new InstRef(i, chunk, (AsmInstruction) line));
             }
          }
 
          if(instRefs.size() < 6) continue;
 
          for(int i = 0; i <= instRefs.size() - 6; i++) {
-            LineRef r0 = instRefs.get(i);
-            LineRef r1 = instRefs.get(i + 1);
-            LineRef r2 = instRefs.get(i + 2);
-            LineRef r3 = instRefs.get(i + 3);
-            LineRef r4 = instRefs.get(i + 4);
-            LineRef r5 = instRefs.get(i + 5);
+            InstRef r0 = instRefs.get(i);
+            InstRef r1 = instRefs.get(i + 1);
+            InstRef r2 = instRefs.get(i + 2);
+            InstRef r3 = instRefs.get(i + 3);
+            InstRef r4 = instRefs.get(i + 4);
+            InstRef r5 = instRefs.get(i + 5);
 
             // Ensure no labels are between r0 and r5
             boolean hasInterveningLabel = false;

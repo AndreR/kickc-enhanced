@@ -50,16 +50,6 @@ import java.util.*;
  */
 public class Pass5PageAlignedPointerAdditionElimination extends Pass5AsmOptimization {
 
-   private static class LineRef {
-      final AsmChunk chunk;
-      final AsmLine line;
-
-      LineRef(AsmChunk chunk, AsmLine line) {
-         this.chunk = chunk;
-         this.line = line;
-      }
-   }
-
    public Pass5PageAlignedPointerAdditionElimination(Program program) {
       super(program);
    }
@@ -377,33 +367,5 @@ public class Pass5PageAlignedPointerAdditionElimination extends Pass5AsmOptimiza
       }
 
       return overallModified;
-   }
-
-   private static int findNextInstruction(List<LineRef> allLines, int startIdx) {
-      for(int k = startIdx; k < allLines.size(); k++) {
-         AsmLine line = allLines.get(k).line;
-         if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
-         if(line instanceof AsmLabel || line instanceof AsmScopeBegin || line instanceof AsmScopeEnd || line instanceof AsmInlineKickAsm) {
-            return -1;
-         }
-         if(line instanceof AsmInstruction) {
-            return k;
-         }
-      }
-      return -1;
-   }
-
-   private static int findPrevInstruction(List<LineRef> allLines, int startIdx) {
-      for(int k = startIdx; k >= 0; k--) {
-         AsmLine line = allLines.get(k).line;
-         if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) continue;
-         if(line instanceof AsmLabel || line instanceof AsmScopeBegin || line instanceof AsmScopeEnd || line instanceof AsmInlineKickAsm) {
-            return -1;
-         }
-         if(line instanceof AsmInstruction) {
-            return k;
-         }
-      }
-      return -1;
    }
 }

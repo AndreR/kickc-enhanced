@@ -11,16 +11,6 @@ import java.util.*;
  */
 public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
 
-   private static class LineRef {
-      final AsmChunk chunk;
-      final AsmLine line;
-
-      LineRef(AsmChunk chunk, AsmLine line) {
-         this.chunk = chunk;
-         this.line = line;
-      }
-   }
-
    private static class BasicBlock {
       final String labelName;
       final LineRef labelRef;

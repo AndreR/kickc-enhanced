@@ -18,49 +18,20 @@ import java.util.*;
  */
 public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
 
-   private static class LineRef {
-      final AsmChunk chunk;
-      final AsmLine line;
-
-      LineRef(AsmChunk chunk, AsmLine line) {
-         this.chunk = chunk;
-         this.line = line;
-      }
-   }
-
    public Pass5PointerReloadElimination(Program program) {
       super(program);
    }
 
    private static boolean isZpFe(String op) {
-      if(op == null) return false;
-      String t = op.trim().toLowerCase();
-      return t.equals("$fe") || t.equals("254") || t.equals("0xfe");
+      return isZpAddressOperand(op, "$fe") || (op != null && op.trim().equals("254"));
    }
 
    private static boolean isZpFf(String op) {
-      if(op == null) return false;
-      String t = op.trim().toLowerCase();
-      return t.equals("$ff") || t.equals("255") || t.equals("0xff");
-   }
-
-   private static boolean isZeroOperand(String op) {
-      if(op == null) return false;
-      String t = op.trim();
-      return t.equals("0") || t.equals("#0") || t.equals("$0") || t.equals("#$0") || t.equals("#$00") || t.equals("0x0");
+      return isZpAddressOperand(op, "$ff") || (op != null && op.trim().equals("255"));
    }
 
    private static boolean isZpFd(String op) {
-      if(op == null) return false;
-      String t = op.trim().toLowerCase();
-      return t.equals("$fd") || t.equals("253") || t.equals("0xfd");
-   }
-
-   private static String getBaseVar(String op) {
-      if(op == null) return null;
-      int plusIdx = op.indexOf('+');
-      if(plusIdx > 0) return op.substring(0, plusIdx).trim();
-      return op.trim();
+      return isZpAddressOperand(op, "$fd") || (op != null && op.trim().equals("253"));
    }
 
    @Override
@@ -71,12 +42,8 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
       while(passModified) {
          passModified = false;
 
-         List<LineRef> allLines = new ArrayList<>();
-         for(AsmChunk chunk : getAsmProgram().getChunks()) {
-            for(AsmLine line : chunk.getLines()) {
-               allLines.add(new LineRef(chunk, line));
-            }
-         }
+         List<LineRef> allLines = flattenLines(getAsmProgram());
+         Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
 
          String currentFe = null;
          String currentFf = null;
@@ -173,16 +140,22 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
 
             // Track / Eliminate redundant indirect LDA ($fe),y
             if(mnem.equals("lda") && mode.equals(CpuAddressingMode.IZY) && isZpFe(inst.getOperand1()) && !inst.isNoOptimize()) {
-               if(derefValid && currentY != null && currentY.equals(derefY)) {
-                  getLog().append("Eliminating redundant LDA ($fe),y (A already contains dereferenced value)");
-                  ref.chunk.getLines().remove(inst);
-                  passModified = true;
-                  overallModified = true;
-                  break;
-               }
-               if(currentFe != null && currentFf != null && currentY != null) {
-                  derefValid = true;
-                  derefY = currentY;
+               CanonicalResolver resolver = scopeResolvers.getOrDefault(ref.scope, scopeResolvers.get(""));
+               boolean volOrHwPtr = isPointerToVolatileOrHardware(currentFe, currentFf, ref.scope, resolver, getProgram());
+               if(!volOrHwPtr) {
+                  if(derefValid && currentY != null && currentY.equals(derefY)) {
+                     getLog().append("Eliminating redundant LDA ($fe),y (A already contains dereferenced value)");
+                     ref.chunk.getLines().remove(inst);
+                     passModified = true;
+                     overallModified = true;
+                     break;
+                  }
+                  if(currentFe != null && currentFf != null && currentY != null) {
+                     derefValid = true;
+                     derefY = currentY;
+                  }
+               } else {
+                  derefValid = false;
                }
             }
 
@@ -367,36 +340,6 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
       }
 
       return overallModified;
-   }
-
-   private static int findPrevInstruction(List<LineRef> allLines, int start) {
-      for(int i = start; i >= 0; i--) {
-         LineRef ref = allLines.get(i);
-         if(ref.line instanceof AsmComment || ref.line instanceof AsmConstant || ref.line instanceof AsmLabelDecl) {
-            continue;
-         }
-         if(ref.line instanceof AsmInstruction) {
-            return i;
-         }
-         // Hit boundary (label, scope, inline asm)
-         return -1;
-      }
-      return -1;
-   }
-
-   private static int findNextInstruction(List<LineRef> allLines, int start) {
-      for(int i = start; i < allLines.size(); i++) {
-         LineRef ref = allLines.get(i);
-         if(ref.line instanceof AsmComment || ref.line instanceof AsmConstant || ref.line instanceof AsmLabelDecl) {
-            continue;
-         }
-         if(ref.line instanceof AsmInstruction) {
-            return i;
-         }
-         // Hit boundary
-         return -1;
-      }
-      return -1;
    }
 
    private static boolean isYOverwrittenAfter(List<LineRef> allLines, int startIdx) {

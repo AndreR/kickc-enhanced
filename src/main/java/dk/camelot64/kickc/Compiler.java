@@ -887,6 +887,7 @@ public class Compiler {
       pass5Optimizations.add(new Pass5RedundantStoreAndReloadElimination(program));
       pass5Optimizations.add(new Pass5InterproceduralParameterPreservation(program));
       pass5Optimizations.add(new Pass5DeadStoreElimination(program));
+      pass5Optimizations.add(new Pass5StandardPeepholeOptimization(program));
       pass5Optimizations.add(new Pass5IllegalOpcodeOptimization(program));
       pass5Optimizations.add(new Pass5BitTestOptimization(program));
       pass5Optimizations.add(new Pass5MultiEntryByteSkipping(program));

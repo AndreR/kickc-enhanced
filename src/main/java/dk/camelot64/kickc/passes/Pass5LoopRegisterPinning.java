@@ -33,15 +33,6 @@ import java.util.*;
  */
 public class Pass5LoopRegisterPinning extends Pass5AsmOptimization {
 
-   private static class LineRef {
-      final AsmChunk chunk;
-      final AsmLine line;
-      LineRef(AsmChunk chunk, AsmLine line) {
-         this.chunk = chunk;
-         this.line = line;
-      }
-   }
-
    public Pass5LoopRegisterPinning(Program program) {
       super(program);
    }
