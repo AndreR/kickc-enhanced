@@ -17,10 +17,18 @@ public class OperatorDivide extends OperatorBinary {
    @Override
    public ConstantLiteral calculateLiteral(ConstantLiteral left, ConstantLiteral right) {
       if(left instanceof ConstantEnumerable && right instanceof ConstantEnumerable) {
-         return new ConstantInteger(((ConstantEnumerable) left).getInteger() / ((ConstantEnumerable) right).getInteger());
+         long divisor = ((ConstantEnumerable) right).getInteger();
+         if(divisor == 0L) {
+            throw new CompileError("Division by zero in constant expression");
+         }
+         return new ConstantInteger(((ConstantEnumerable) left).getInteger() / divisor);
       } else if(left instanceof ConstantPointer && right instanceof ConstantEnumerable) {
+         long divisor = ((ConstantEnumerable) right).getInteger();
+         if(divisor == 0L) {
+            throw new CompileError("Division by zero in constant expression");
+         }
          return new ConstantPointer(
-               ((ConstantPointer) left).getLocation() / ((ConstantEnumerable) right).getInteger(),
+               ((ConstantPointer) left).getLocation() / divisor,
                ((ConstantPointer) left).getElementType()
          );
       }

@@ -13,7 +13,8 @@ public class NumberParser {
       boolean isHex = literal.startsWith("0x") || literal.startsWith("$");
       double scale = -1.0;
       String fixedPointSuffix = null;
-      if(!isHex || literal.contains(".")) {
+      boolean allowFloatSuffix = !isHex || literal.contains("p");
+      if(allowFloatSuffix) {
          if(literal.endsWith("f24")) {
             scale = 16777216.0;
             fixedPointSuffix = "f24";
@@ -33,6 +34,9 @@ public class NumberParser {
          } else if(literal.contains(".")) {
             scale = 256.0;
          }
+      } else if(literal.contains(".")) {
+         // Hex float without binary exponent 'p': trailing 'f' is a hex digit, not a float suffix
+         scale = 256.0;
       }
 
       if(scale > 0.0) {

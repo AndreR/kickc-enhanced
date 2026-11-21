@@ -75,12 +75,51 @@ public class PassNSimplifyExpressionWithZero extends Pass2SsaOptimization {
                   getLog().append("Simplifying shift of zero in " + (currentStmt == null ? "" : currentStmt.toString(getProgram(), false)));
                   programExpression.set(binary.getLeft());
                   modified.set(true);
+               } else {
+                  Long shiftVal = getConstantIntegerValue(right);
+                  if(shiftVal != null) {
+                     dk.camelot64.kickc.model.types.SymbolType leftType = dk.camelot64.kickc.model.types.SymbolTypeInference.inferType(getProgramScope(), left);
+                     if(leftType instanceof dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed fixedLeft) {
+                        int bitWidth = fixedLeft.getBits();
+                        if(shiftVal < 0) {
+                           getLog().append("Simplifying shift by negative count " + shiftVal + " to 0");
+                           programExpression.set(new ConstantInteger(0L, fixedLeft));
+                           modified.set(true);
+                        } else if(shiftVal >= bitWidth) {
+                           if(Operators.SHIFT_LEFT.equals(operator) || !fixedLeft.isSigned()) {
+                              getLog().append("Simplifying shift >= bitwidth (" + shiftVal + " >= " + bitWidth + ") to 0");
+                              programExpression.set(new ConstantInteger(0L, fixedLeft));
+                              modified.set(true);
+                           } else if(shiftVal > bitWidth - 1) {
+                              // Signed right shift >= bitwidth fills all bits with sign bit: clamp to bitWidth - 1
+                              getLog().append("Clamping signed right shift " + shiftVal + " to " + (bitWidth - 1));
+                              binary.getRightValue().set(new ConstantInteger(bitWidth - 1L, dk.camelot64.kickc.model.types.SymbolType.BYTE));
+                              modified.set(true);
+                           }
+                        }
+                     }
+                  }
                }
             }
          }
       });
 
       return modified.get();
+   }
+
+   public Long getConstantIntegerValue(RValue val) {
+      if(val instanceof ConstantInteger ci) {
+         return ci.getInteger();
+      } else if(val instanceof ConstantValue cv) {
+         try {
+            ConstantLiteral literal = cv.calculateLiteral(getProgram().getScope());
+            if(literal instanceof ConstantInteger ci)
+               return ci.getInteger();
+         } catch(ConstantNotLiteral e) {
+            // Ignore
+         }
+      }
+      return null;
    }
 
    /**

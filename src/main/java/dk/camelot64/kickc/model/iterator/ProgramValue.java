@@ -550,6 +550,25 @@ public interface ProgramValue {
 
    }
 
+   /** Value inside a union/struct designator initializer. */
+   class ProgramValueUnionDesignator implements ProgramValue {
+      private final UnionDesignator designator;
+
+      public ProgramValueUnionDesignator(UnionDesignator designator) {
+         this.designator = designator;
+      }
+
+      @Override
+      public Value get() {
+         return designator.getMemberValue();
+      }
+
+      @Override
+      public void set(Value val) {
+         designator.setMemberValue((RValue) val);
+      }
+   }
+
    /** Left value inside a constant binary expression. */
    class ProgramValueConstantBinaryLeft implements ProgramValue {
       private final ConstantBinary binary;

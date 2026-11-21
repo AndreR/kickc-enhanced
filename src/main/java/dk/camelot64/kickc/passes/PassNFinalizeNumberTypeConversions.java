@@ -61,10 +61,20 @@ public class PassNFinalizeNumberTypeConversions extends Pass2SsaOptimization {
                if(constantCastValue.getValue() instanceof ConstantRef) {
                   ConstantRef constRef = (ConstantRef) constantCastValue.getValue();
                   Variable constant = getProgramScope().getConstant(constRef);
-                  if(constant.isKindIntermediate())
+                  if(constant.isKindIntermediate()) {
                      constant.setType(toType);
-                  else
-                     throw new InternalError("Cannot cast declared type!" + constant.toString());
+                  } else {
+                     try {
+                        ConstantLiteral constantLiteral = constantCastValue.getValue().calculateLiteral(getProgram().getScope());
+                        SymbolType smallestUnsigned = SymbolTypeConversion.getSmallestUnsignedFixedIntegerType(constantLiteral, getProgramScope());
+                        if(smallestUnsigned != null) {
+                           constantCastValue.setToType(smallestUnsigned);
+                           modified.set(true);
+                        }
+                     } catch(ConstantNotLiteral e) {
+                        throw new InternalError("Cannot cast declared type!" + constant.toString());
+                     }
+                  }
                } else {
                   ConstantLiteral constantLiteral;
                   try {
@@ -81,10 +91,20 @@ public class PassNFinalizeNumberTypeConversions extends Pass2SsaOptimization {
                if(constantCastValue.getValue() instanceof ConstantRef) {
                   ConstantRef constRef = (ConstantRef) constantCastValue.getValue();
                   Variable constant = getProgramScope().getConstant(constRef);
-                  if(constant.isKindIntermediate())
+                  if(constant.isKindIntermediate()) {
                      constant.setType(toType);
-                  else
-                     throw new InternalError("Cannot cast declared type!" + constant.toString());
+                  } else {
+                     try {
+                        ConstantLiteral constantLiteral = constantCastValue.getValue().calculateLiteral(getProgram().getScope());
+                        SymbolType smallestSigned = SymbolTypeConversion.getSmallestSignedFixedIntegerType(constantLiteral, getProgramScope());
+                        if(smallestSigned != null) {
+                           constantCastValue.setToType(smallestSigned);
+                           modified.set(true);
+                        }
+                     } catch(ConstantNotLiteral e) {
+                        throw new InternalError("Cannot cast declared type!" + constant.toString());
+                     }
+                  }
                } else {
                   ConstantLiteral constantLiteral = constantCastValue.getValue().calculateLiteral(getProgram().getScope());
                   SymbolType smallestSigned = SymbolTypeConversion.getSmallestSignedFixedIntegerType(constantLiteral, getProgramScope());

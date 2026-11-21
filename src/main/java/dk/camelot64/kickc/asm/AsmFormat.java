@@ -303,10 +303,13 @@ public class AsmFormat {
    
    public static String getAsmNumber(Number number) {
       if(number instanceof Long || number instanceof Integer) {
-         if(number.longValue() < 0) {
-            return "-" + getAsmNumber(-number.longValue());
-         } else if(number.longValue()<10){
-            return String.format("%d", number.longValue());
+         long lv = number.longValue();
+         if(lv == Long.MIN_VALUE) {
+            return "-$8000000000000000";
+         } else if(lv < 0) {
+            return "-" + getAsmNumber(-lv);
+         } else if(lv < 10) {
+            return String.format("%d", lv);
          } else {
             return String.format("$%x", number.longValue());
          }

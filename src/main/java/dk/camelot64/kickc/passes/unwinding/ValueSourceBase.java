@@ -56,6 +56,7 @@ public abstract class ValueSourceBase implements ValueSource {
          Collection<Variable> structMemberVars = structDefinition.getAllVars(false);
          ArrayList<String> memberNames = new ArrayList<>();
          for(Variable structMemberVar : structMemberVars) {
+            if(structMemberVar.isBitField()) continue;
             memberNames.add(structMemberVar.getLocalName());
          }
          return memberNames;

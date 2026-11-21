@@ -581,15 +581,70 @@ public class CPreprocessor implements TokenSource {
          }
 
          @Override
+         public Long visitExprBool(KickCParser.ExprBoolContext ctx) {
+            return "true".equals(ctx.getText()) ? 1L : 0L;
+         }
+
+         @Override
+         public Long visitExprChar(KickCParser.ExprCharContext ctx) {
+            String text = ctx.getText();
+            // Strip surrounding single quotes (and any trailing encoding suffix)
+            int firstQuote = text.indexOf('\'');
+            int lastQuote = text.lastIndexOf('\'');
+            if(firstQuote < 0 || lastQuote <= firstQuote) {
+               throw new CompileError("Invalid character literal in preprocessor expression: " + text, new StatementSource(ctx));
+            }
+            String inner = text.substring(firstQuote + 1, lastQuote);
+            if(inner.startsWith("\\")) {
+               if(inner.length() < 2) return 0L;
+               char esc = inner.charAt(1);
+               return switch(esc) {
+                  case 'n' -> (long) '\n';
+                  case 'r' -> (long) '\r';
+                  case 'f' -> (long) '\f';
+                  case 't' -> (long) '\t';
+                  case '\\' -> (long) '\\';
+                  case '\'' -> (long) '\'';
+                  case '"' -> (long) '"';
+                  case 'x' -> Long.parseLong(inner.substring(2), 16);
+                  default -> {
+                     if(esc >= '0' && esc <= '7') {
+                        yield Long.parseLong(inner.substring(1), 8);
+                     }
+                     yield (long) esc;
+                  }
+               };
+            }
+            return inner.isEmpty() ? 0L : (long) inner.charAt(0);
+         }
+
+         @Override
+         public Long visitExprTernary(KickCParser.ExprTernaryContext ctx) {
+            Long cond = this.visit(ctx.expr(0));
+            return (cond != null && cond != 0L) ? this.visit(ctx.expr(1)) : this.visit(ctx.expr(2));
+         }
+
+         @Override
          public Long visitExprId(KickCParser.ExprIdContext ctx) {
             return 0L;
          }
 
          @Override
          public Long visitExprBinary(KickCParser.ExprBinaryContext ctx) {
-            Long left = this.visit(ctx.expr(0));
-            Long right = this.visit(ctx.expr(1));
             String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
+            Long left = this.visit(ctx.expr(0));
+            // Short-circuit logical && and || (ISO C99 6.10.1)
+            if("&&".equals(op)) {
+               if(left == null || left == 0L) return 0L;
+               Long right = this.visit(ctx.expr(1));
+               return (right != null && right != 0L) ? 1L : 0L;
+            }
+            if("||".equals(op)) {
+               if(left != null && left != 0L) return 1L;
+               Long right = this.visit(ctx.expr(1));
+               return (right != null && right != 0L) ? 1L : 0L;
+            }
+            Long right = this.visit(ctx.expr(1));
             OperatorBinary operator = (OperatorBinary) Operators.getBinary(op);
             ConstantLiteral result = operator.calculateLiteral(new ConstantInteger(left), new ConstantInteger(right));
             if(result instanceof ConstantInteger) {

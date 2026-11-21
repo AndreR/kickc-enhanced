@@ -248,12 +248,6 @@ public class SymbolTypeConversion {
          // Pointer types assigned from each other
          return true;
       }
-      if(isInt24(lValueType) && SymbolType.isInteger(rValueType)) {
-         return true;
-      }
-      if(isInt24(rValueType) && SymbolType.isInteger(lValueType)) {
-         return true;
-      }
       if(lValueType instanceof SymbolTypeStruct && ((SymbolTypeStruct) lValueType).isUnion()) {
          if(lValueType.getSizeBytes() != 3 && SymbolType.isInteger(rValueType) && rValueType.getSizeBytes() <= lValueType.getSizeBytes()) {
             return true;
@@ -328,10 +322,6 @@ public class SymbolTypeConversion {
       if(first.isPermanent() != second.isPermanent())
          return false;
       return true;
-   }
-
-   public static boolean isInt24(SymbolType type) {
-      return false;
    }
 
 }

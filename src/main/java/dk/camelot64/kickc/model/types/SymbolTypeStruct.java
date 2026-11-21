@@ -120,7 +120,11 @@ public class SymbolTypeStruct implements SymbolType {
          if(programScope != null) {
             ConstantLiteral sizeLiteral = arraySize.calculateLiteral(programScope);
             if(sizeLiteral instanceof ConstantInteger) {
-               return elementType.getSizeBytes() * ((ConstantInteger) sizeLiteral).getInteger().intValue();
+               int count = ((ConstantInteger) sizeLiteral).getInteger().intValue();
+               if(SymbolType.NIBBLE.equals(elementType.getQualified(false, false))) {
+                  return (count + 1) / 2;
+               }
+               return elementType.getSizeBytes() * count;
             }
          } else {
             return 5; // Add a token size

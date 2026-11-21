@@ -225,6 +225,8 @@ public class ProgramValueIterator {
          for(int i = 0; i < size; i++) {
             subValues.add(new ProgramValue.ProgramValueListElement(valueList, i));
          }
+      } else if(value instanceof UnionDesignator unionDesignator) {
+         subValues.add(new ProgramValue.ProgramValueUnionDesignator(unionDesignator));
       } else if(value instanceof ConstantArrayList constantArrayList) {
          int size = constantArrayList.getElements().size();
          for(int i = 0; i < size; i++) {

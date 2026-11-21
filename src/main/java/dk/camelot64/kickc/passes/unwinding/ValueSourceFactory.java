@@ -34,11 +34,28 @@ public class ValueSourceFactory {
       if(valueType instanceof SymbolTypeStruct && value instanceof CastValue && ((CastValue) value).getValue() instanceof ValueList) {
          ValueList valueList = (ValueList) ((CastValue) value).getValue();
          final StructDefinition structDefinition = ((SymbolTypeStruct) valueType).getStructDefinition(programScope);
+         if(valueList.getList().isEmpty()) {
+            return new ValueSourceZero((SymbolTypeStruct) valueType, null);
+         }
          int expectSize;
          if(structDefinition.isUnion()) {
+            boolean allDesignated = !valueList.getList().isEmpty();
+            for(RValue rv : valueList.getList()) {
+               if(!(rv instanceof UnionDesignator)) {
+                  allDesignated = false;
+                  break;
+               }
+            }
+            if(allDesignated) {
+               return new ValueSourceStructValueList(valueList, structDefinition);
+            }
             expectSize = 1;
-         }  else {
-            expectSize = structDefinition.getAllVars(false).size();
+         } else {
+            int storageCount = 0;
+            for(Variable m : structDefinition.getAllVars(false)) {
+               if(!m.isBitField()) storageCount++;
+            }
+            expectSize = storageCount;
          }
          if(expectSize != valueList.getList().size()) {
             throw new CompileError("Struct/Union initialization list has wrong size. Need  " + expectSize + " got " + valueList.getList().size(), currentStmt);
