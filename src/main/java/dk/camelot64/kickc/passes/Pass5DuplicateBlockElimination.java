@@ -99,6 +99,7 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
                LineRef lRef = sLines.get(i);
                if(lRef.line instanceof AsmLabel) {
                   AsmLabel label = (AsmLabel) lRef.line;
+                  if(label.isNoOptimize()) continue;
                   String labelName = label.getLabel();
                   // Only consider compiler-generated local block labels (__b1, __b2, etc.)
                   if(labelName == null || !labelName.startsWith("__b")) continue;

@@ -176,6 +176,14 @@ public class PassNEliminateUnusedVars extends Pass2SsaOptimization {
          // Do not eliminate variables with hardcoded register / address
          return false;
       }
+      if(variable.isVolatile()) {
+         // Do not eliminate volatile variables
+         return false;
+      }
+      if(statement instanceof StatementAssignment assignment && hasVolatileRhs(assignment)) {
+         // Do not eliminate assignments whose RHS performs a volatile read or pointer dereference
+         return false;
+      }
       final boolean unused = referenceInfos.isUnused(variable.getRef());
       if(!unused)
          // Do not eliminate is not unused
@@ -189,6 +197,32 @@ public class PassNEliminateUnusedVars extends Pass2SsaOptimization {
          return assignment.getOperator() == null && assignment.getrValue2() instanceof StructUnwoundPlaceholder;
       }
       return false;
+   }
+
+   private boolean hasVolatileRhs(StatementAssignment assignment) {
+      final boolean[] found = {false};
+      if(assignment.getrValue1() != null) {
+         dk.camelot64.kickc.model.iterator.ProgramValueIterator.execute(new dk.camelot64.kickc.model.iterator.ProgramValue.GenericValue(assignment.getrValue1()), (pv, s, it, b) -> {
+            dk.camelot64.kickc.model.values.Value v = pv.get();
+            if(v instanceof dk.camelot64.kickc.model.values.PointerDereference) found[0] = true;
+            else if(v instanceof VariableRef vr) {
+               Variable var = getProgramScope().getVariable(vr);
+               if(var != null && var.isVolatile()) found[0] = true;
+            }
+         }, null, null, null);
+      }
+      if(found[0]) return true;
+      if(assignment.getrValue2() != null) {
+         dk.camelot64.kickc.model.iterator.ProgramValueIterator.execute(new dk.camelot64.kickc.model.iterator.ProgramValue.GenericValue(assignment.getrValue2()), (pv, s, it, b) -> {
+            dk.camelot64.kickc.model.values.Value v = pv.get();
+            if(v instanceof dk.camelot64.kickc.model.values.PointerDereference) found[0] = true;
+            else if(v instanceof VariableRef vr) {
+               Variable var = getProgramScope().getVariable(vr);
+               if(var != null && var.isVolatile()) found[0] = true;
+            }
+         }, null, null, null);
+      }
+      return found[0];
    }
 
    /**

@@ -226,6 +226,9 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                               }
                               currentProc.directZpWrites.add(op.trim());
                            }
+                        } else if(mode == CpuAddressingMode.IZY || mode == CpuAddressingMode.IZX
+                              || mode == CpuAddressingMode.ABX || mode == CpuAddressingMode.ABY) {
+                           currentProc.hasUnknownWrites = true;
                         }
                      }
                   }
@@ -512,14 +515,24 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                      // Invalidate any aliases depending on target
                      final String zpTarget = "zp:" + target;
                      knownZp.values().removeIf(val -> val.equals(zpTarget));
+                     if(zpTarget.equals(currentValA)) { currentValA = null; loadRefA = null; }
+                     if(zpTarget.equals(currentValX)) { currentValX = null; loadRefX = null; }
+                     if(zpTarget.equals(currentValY)) { currentValY = null; loadRefY = null; }
                      knownZp.put(target, storedVal);
                   }
                } else {
                   knownZp.remove(target);
                   final String zpTarget = "zp:" + target;
                   knownZp.values().removeIf(val -> val.equals(zpTarget));
+                  if(zpTarget.equals(currentValA)) { currentValA = null; loadRefA = null; }
+                  if(zpTarget.equals(currentValX)) { currentValX = null; loadRefX = null; }
+                  if(zpTarget.equals(currentValY)) { currentValY = null; loadRefY = null; }
                }
-            } else if(ZP_MODIFY_MNEMONICS.contains(mnem) && operand != null) {
+            } else if(ZP_MODIFY_MNEMONICS.contains(mnem)) {
+               if(mode == CpuAddressingMode.IZY || mode == CpuAddressingMode.IZX
+                     || mode == CpuAddressingMode.ABX || mode == CpuAddressingMode.ABY) {
+                  knownZp.clear();
+               } else if(operand != null) {
                // Any other instruction that modifies ZP memory invalidates that ZP location
                String canon = Pass5RedundantStoreAndReloadElimination.getCanonical(operand, currentScopeAliases, globalAliasMap);
                String modifiedZp = (canon != null && !canon.isEmpty()) ? canon : operand.trim();
@@ -529,6 +542,7 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                if(zpMod.equals(currentValA)) { currentValA = null; loadRefA = null; }
                if(zpMod.equals(currentValX)) { currentValX = null; loadRefX = null; }
                if(zpMod.equals(currentValY)) { currentValY = null; loadRefY = null; }
+               }
             }
          }
       }

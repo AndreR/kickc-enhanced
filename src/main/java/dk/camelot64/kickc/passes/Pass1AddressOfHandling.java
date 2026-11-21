@@ -77,7 +77,7 @@ public class Pass1AddressOfHandling extends Pass2SsaOptimization {
             }
          } else if(toSymbol instanceof Procedure) {
             Procedure procedure = (Procedure) toSymbol;
-            if(procedure.getParameters().size() > 0 || !SymbolType.VOID.equals(procedure.getReturnType())) {
+            if(Procedure.CallingConvention.PHI_CALL.equals(procedure.getCallingConvention())) {
                procedure.setCallingConvention(Procedure.CallingConvention.STACK_CALL);
                getLog().append("Setting inferred __stackcall on procedure affected by address-of " + toSymbol.toString(getProgram()) + " caused by statement " + stmtStr);
             }

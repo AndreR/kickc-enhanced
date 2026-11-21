@@ -38,9 +38,22 @@ public class NumberParser {
       if(scale > 0.0) {
          double d;
          if(literal.startsWith("$")) {
-            d = Double.parseDouble("0x" + literal.substring(1) + "p0");
+            String hex = literal.substring(1);
+            d = Double.parseDouble("0x" + (hex.contains("p") ? hex : hex + "p0"));
          } else if(literal.startsWith("0x")) {
-            d = Double.parseDouble(literal + "p0");
+            d = Double.parseDouble(literal.contains("p") ? literal : literal + "p0");
+         } else if(literal.startsWith("0b") || literal.startsWith("%")) {
+            String bin = literal.startsWith("0b") ? literal.substring(2) : literal.substring(1);
+            int dotIdx = bin.indexOf('.');
+            String intPart = dotIdx >= 0 ? bin.substring(0, dotIdx) : bin;
+            String fracPart = dotIdx >= 0 ? bin.substring(dotIdx + 1) : "";
+            double val = intPart.isEmpty() ? 0.0 : Long.parseLong(intPart, 2);
+            double fracScale = 0.5;
+            for(int i = 0; i < fracPart.length(); i++) {
+               if(fracPart.charAt(i) == '1') val += fracScale;
+               fracScale *= 0.5;
+            }
+            d = val;
          } else {
             d = Double.parseDouble(literal);
          }
@@ -56,10 +69,16 @@ public class NumberParser {
       }  else if(literal.endsWith("sb") || literal.endsWith("sc")) {
          type = SymbolType.SBYTE;
          literal = literal.substring(0, literal.length()-2);
-      }  else if(literal.endsWith("ut") || literal.endsWith("u24")) {
+      }  else if(literal.endsWith("u24")) {
+         type = SymbolType.TRIBYTE;
+         literal = literal.substring(0, literal.length()-3);
+      }  else if(literal.endsWith("ut")) {
          type = SymbolType.TRIBYTE;
          literal = literal.substring(0, literal.length()-2);
-      }  else if(literal.endsWith("st") || literal.endsWith("s24")) {
+      }  else if(literal.endsWith("s24")) {
+         type = SymbolType.STRIBYTE;
+         literal = literal.substring(0, literal.length()-3);
+      }  else if(literal.endsWith("st")) {
          type = SymbolType.STRIBYTE;
          literal = literal.substring(0, literal.length()-2);
       }  else if(literal.endsWith("uw") || literal.endsWith("ui")|| literal.endsWith("us")) {

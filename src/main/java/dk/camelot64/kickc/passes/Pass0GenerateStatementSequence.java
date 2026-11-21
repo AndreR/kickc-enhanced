@@ -2605,9 +2605,16 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public RValue visitInitUnion(KickCParser.InitUnionContext ctx) {
-      final String memberName = ctx.NAME().getText();
-      final RValue rValue = (RValue) visit(ctx.expr());
-      return new UnionDesignator(memberName, rValue);
+      if(ctx.NAME().size() == 1) {
+         final String memberName = ctx.NAME(0).getText();
+         final RValue rValue = (RValue) visit(ctx.expr(0));
+         return new UnionDesignator(memberName, rValue);
+      }
+      List<RValue> values = new ArrayList<>();
+      for(int i = 0; i < ctx.NAME().size(); i++) {
+         values.add((RValue) visit(ctx.expr(i)));
+      }
+      return new ValueList(values);
    }
 
    @Override
@@ -2815,6 +2822,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             enumUnderlyingType = varDecl.getEffectiveType();
          }
          EnumDefinition enumDefinition = new EnumDefinition(enumDefName, getCurrentScope());
+         enumDefinition.setUnderlyingType(enumUnderlyingType);
          getCurrentScope().add(enumDefinition);
          this.currentEnum = enumDefinition;
          this.currentEnumUnderlyingType = enumUnderlyingType;
@@ -2894,7 +2902,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       if(enumDefinition == null) {
          throw new CompileError("Unknown enum " + enumDefName, new StatementSource(ctx));
       }
-      varDecl.setDeclType(SymbolType.BYTE);
+      varDecl.setDeclType(enumDefinition.getUnderlyingType());
       return null;
    }
 
@@ -3187,11 +3195,21 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       throw new CompileError("Unexpected bitfield expression: " + exprCtx.getText());
    }
 
+   private int getBitfieldContainerSize(Variable member) {
+      if(member.getScope() instanceof StructDefinition structDef && member.getBitFieldContainerName() != null) {
+         Variable container = structDef.getLocalVar(member.getBitFieldContainerName());
+         if(container != null && container.getType() != null) {
+            return container.getType().getSizeBytes();
+         }
+      }
+      return member.getType().getSizeBytes();
+   }
+
    public RValue desugarBitfieldRead(ParserRuleContext ctx, StructMemberRef containerRef, Variable member) {
       int offset = member.getBitFieldOffset();
       int width = member.getBitFieldWidth();
       long valMask = (1L << width) - 1;
-      int containerSize = member.getType().getSizeBytes();
+      int containerSize = getBitfieldContainerSize(member);
 
       RValue val = containerRef;
       if(offset > 0) {
@@ -3201,10 +3219,14 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       if(needsMask) {
          val = addExprBinary(ctx, val, Operators.BOOL_AND, new ConstantInteger(valMask));
       }
-      if((member.getType() instanceof SymbolTypeIntegerFixed && ((SymbolTypeIntegerFixed) member.getType()).isSigned()) && width < (containerSize * 8)) {
-         long signBit = 1L << (width - 1);
-         RValue xored = addExprBinary(ctx, val, Operators.BOOL_XOR, new ConstantInteger(signBit));
-         val = addExprBinary(ctx, xored, Operators.MINUS, new ConstantInteger(signBit));
+      if(member.getType() instanceof SymbolTypeIntegerFixed fixedType && fixedType.isSigned()) {
+         if(width < (containerSize * 8)) {
+            long signBit = 1L << (width - 1);
+            RValue xored = addExprBinary(ctx, val, Operators.BOOL_XOR, new ConstantInteger(signBit));
+            val = addExprBinary(ctx, xored, Operators.MINUS, new ConstantInteger(signBit));
+         }
+         SymbolType signedType = (containerSize == 1) ? SymbolType.SBYTE : SymbolType.SWORD;
+         val = addExprUnary(ctx, Operators.getCastUnary(signedType), val);
       }
       return val;
    }
@@ -3212,7 +3234,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    public RValue writeBitfield(ParserRuleContext ctx, LValue containerLVal, Variable bitfieldMember, RValue rhsVal) {
       int offset = bitfieldMember.getBitFieldOffset();
       int width = bitfieldMember.getBitFieldWidth();
-      int containerSize = bitfieldMember.getType().getSizeBytes();
+      int containerSize = getBitfieldContainerSize(bitfieldMember);
       long valMask = (1L << width) - 1;
       long fullMask = (valMask << offset);
       long invMask = (~fullMask) & (containerSize == 1 ? 0xFFL : 0xFFFFL);
@@ -3538,11 +3560,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    }
 
    public boolean isInt24Type(SymbolType type) {
-      if(type instanceof SymbolTypeStruct structType) {
-         if(!structType.isUnion() && structType.getSizeBytes() == 3) {
-            return true;
-         }
-      }
       return false;
    }
 

@@ -274,7 +274,7 @@ expr
     | <assoc=right> expr ASSIGN expr  #exprAssignment
     | <assoc=right> expr ASSIGN_COMPOUND expr  #exprAssignmentCompound
     | CURLY_BEGIN (expr (COMMA expr )* COMMA?)? CURLY_END #initList
-    | CURLY_BEGIN DOT NAME ASSIGN expr CURLY_END #initUnion
+    | CURLY_BEGIN DOT NAME ASSIGN expr (COMMA DOT NAME ASSIGN expr)* COMMA? CURLY_END #initUnion
     | NAME  #exprId
     | NULLPTR #exprNullPtr
     | NUMBER #exprNumber

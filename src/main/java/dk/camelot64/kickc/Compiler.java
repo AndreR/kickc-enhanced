@@ -486,8 +486,8 @@ public class Compiler {
       });
       if(enableLoopHeadConstant) {
          optimizations.add(new Pass2LoopHeadConstantIdentification(program));
-         optimizations.add(new Pass2LoopInvariantCodeMotion(program));
       }
+      optimizations.add(new Pass2LoopInvariantCodeMotion(program));
       optimizations.add(() -> {
          program.clearStatementIndices();
          return false;

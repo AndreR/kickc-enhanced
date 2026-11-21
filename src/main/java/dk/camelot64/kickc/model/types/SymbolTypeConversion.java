@@ -331,11 +331,6 @@ public class SymbolTypeConversion {
    }
 
    public static boolean isInt24(SymbolType type) {
-      if(type instanceof SymbolTypeStruct structType) {
-         if(!structType.isUnion() && structType.getSizeBytes() == 3) {
-            return true;
-         }
-      }
       return false;
    }
 
