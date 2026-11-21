@@ -205,7 +205,7 @@ stmt
     | kasmContent #stmtDeclKasm
     | staticAssert ';' #stmtStaticAssert
     | ';' #stmtEmpty
-    | NAME COLON #stmtLabel
+    | NAME COLON stmt? #stmtLabel
     | GOTO NAME ';' #stmtGoto
     ;
 

@@ -1,2 +1,2 @@
-anc #$80
-asl
+alr #$01
+ror

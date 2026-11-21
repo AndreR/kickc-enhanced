@@ -1,3 +1,3 @@
 eor #$ff
 tax
-axs #-$01-1
+axs #-1

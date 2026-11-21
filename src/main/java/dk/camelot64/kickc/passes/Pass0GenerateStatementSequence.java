@@ -1785,6 +1785,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          BlockScope blockScope = getCurrentScope().addBlockScope();
          scopeStack.push(blockScope);
          this.visit(ctx.stmtSeq());
+         pendingLoopLabel = null;
          scopeStack.pop();
       }
       return null;
@@ -2375,7 +2376,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          throw new CompileError("label already defined '" + labelName + "'.", new StatementSource(ctx));
       Label label = targetScope.addLabel(labelName);
       addStatement(new StatementLabel(label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
-      pendingLoopLabel = labelName;
+      KickCParser.StmtContext childStmt = ctx.stmt();
+      if(childStmt != null) {
+         boolean isLoopOrSwitch = (childStmt instanceof KickCParser.StmtWhileContext)
+               || (childStmt instanceof KickCParser.StmtDoWhileContext)
+               || (childStmt instanceof KickCParser.StmtForContext)
+               || (childStmt instanceof KickCParser.StmtSwitchContext);
+         pendingLoopLabel = isLoopOrSwitch ? labelName : null;
+         this.visit(childStmt);
+         pendingLoopLabel = null;
+      } else {
+         pendingLoopLabel = null;
+      }
       return null;
    }
 

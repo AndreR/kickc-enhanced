@@ -291,11 +291,14 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
             // Helper for 2-instruction RMW sequences on the same memory operand:
             // inst1 <mem>; inst2 <mem> -> combined <mem>
             // -------------------------------------------------------------
-            boolean sameOperand = inst1.getOperand1() != null &&
-                                  inst1.getOperand1().equals(inst2.getOperand1()) &&
-                                  mode1.equals(mode2);
+            boolean sameOperand = inst1.getOperand1() != null && inst2.getOperand1() != null &&
+                                  mode1.equals(mode2) &&
+                                  (inst1.getOperand1().equals(inst2.getOperand1())
+                                     || (resolver != null && resolver.resolve(inst1.getOperand1()).equals(resolver.resolve(inst2.getOperand1()))));
 
-            if(sameOperand) {
+            if(sameOperand &&
+               !isVolatileOrHardwareOperand(inst1.getOperand1(), currentScope, resolver, getProgram()) &&
+               !isVolatileOrHardwareOperand(inst2.getOperand1(), currentScope, resolver, getProgram())) {
                String combinedMnemonic = null;
 
                if(mnem1.equals("dec") && mnem2.equals("cmp")) {
