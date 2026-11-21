@@ -313,7 +313,8 @@ public class AsmProgramStaticRegisterValues {
          lastInstructionWasUnconditionalControlFlow = false;
       } else if(line instanceof AsmInstruction) {
          AsmInstruction instruction = (AsmInstruction) line;
-         values.put(instruction, current);
+         AsmRegisterValues preValues = current;
+         values.put(instruction, preValues);
          current = new AsmRegisterValues(current);
          CpuOpcode cpuOpcode = instruction.getCpuOpcode();
          CpuClobber cpuClobber = cpuOpcode.getClobber();
@@ -323,6 +324,24 @@ public class AsmProgramStaticRegisterValues {
          handleClobber(current, cpuClobber);
          String mnemnonic = cpuOpcode.getMnemonic();
          CpuAddressingMode addressingMode = cpuOpcode.getAddressingMode();
+         // ZP-02: Track constant X/Y across INX/DEX/INY/DEY
+         if(mnemnonic.equals("iny") || mnemnonic.equals("dey")) {
+            Integer prevY = getImmValue(preValues.getY());
+            if(prevY != null) {
+               int nextY = (mnemnonic.equals("iny") ? (prevY + 1) : (prevY - 1)) & 0xff;
+               current.setY("$" + Integer.toHexString(nextY));
+               current.setFlagZ(nextY == 0);
+               current.setFlagN(nextY > 127);
+            }
+         } else if(mnemnonic.equals("inx") || mnemnonic.equals("dex")) {
+            Integer prevX = getImmValue(preValues.getX());
+            if(prevX != null) {
+               int nextX = (mnemnonic.equals("inx") ? (prevX + 1) : (prevX - 1)) & 0xff;
+               current.setX("$" + Integer.toHexString(nextX));
+               current.setFlagZ(nextX == 0);
+               current.setFlagN(nextX > 127);
+            }
+         }
          if((mnemnonic.equals("inc") || mnemnonic.equals("dec") || mnemnonic.equals("ror") || mnemnonic.equals("rol") || mnemnonic.equals("lsr") || mnemnonic.equals("asl")) && (addressingMode.equals(CpuAddressingMode.ZP) || addressingMode.equals(CpuAddressingMode.ABS))) {
             String modParam = instruction.getOperand1();
             if(current.getaMem() != null && current.getaMem().equals(modParam)) {

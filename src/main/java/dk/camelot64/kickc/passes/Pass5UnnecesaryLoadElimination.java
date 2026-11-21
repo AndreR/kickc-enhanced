@@ -101,6 +101,24 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                   getLog().append("Replacing instruction " + instruction + " with TAX");
                   instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tax", CpuAddressingMode.NON, false));
                   instruction.setOperand1(null);
+                  modified = true;
+               } else {
+                  // ZP-02: Strength-reduce LDX #(k±1) -> INX / DEX (saves 1 byte, identical N/Z/C/V)
+                  Integer prevX = AsmProgramStaticRegisterValues.getImmValue(instructionValues.getX());
+                  Integer targetX = AsmProgramStaticRegisterValues.getImmValue(immValue);
+                  if(prevX != null && targetX != null) {
+                     if(((prevX + 1) & 0xff) == targetX) {
+                        getLog().append("Replacing instruction " + instruction + " with INX");
+                        instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("inx", CpuAddressingMode.NON, false));
+                        instruction.setOperand1(null);
+                        modified = true;
+                     } else if(((prevX - 1) & 0xff) == targetX) {
+                        getLog().append("Replacing instruction " + instruction + " with DEX");
+                        instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("dex", CpuAddressingMode.NON, false));
+                        instruction.setOperand1(null);
+                        modified = true;
+                     }
+                  }
                }
             }
          } else if(mnem.equals("ldx") && (mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS))) {
@@ -133,6 +151,24 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                   getLog().append("Replacing instruction " + instruction + " with TAY");
                   instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tay", CpuAddressingMode.NON, false));
                   instruction.setOperand1(null);
+                  modified = true;
+               } else {
+                  // ZP-02: Strength-reduce LDY #(k±1) -> INY / DEY (saves 1 byte, identical N/Z/C/V)
+                  Integer prevY = AsmProgramStaticRegisterValues.getImmValue(instructionValues.getY());
+                  Integer targetY = AsmProgramStaticRegisterValues.getImmValue(immValue);
+                  if(prevY != null && targetY != null) {
+                     if(((prevY + 1) & 0xff) == targetY) {
+                        getLog().append("Replacing instruction " + instruction + " with INY");
+                        instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("iny", CpuAddressingMode.NON, false));
+                        instruction.setOperand1(null);
+                        modified = true;
+                     } else if(((prevY - 1) & 0xff) == targetY) {
+                        getLog().append("Replacing instruction " + instruction + " with DEY");
+                        instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("dey", CpuAddressingMode.NON, false));
+                        instruction.setOperand1(null);
+                        modified = true;
+                     }
+                  }
                }
             }
          } else if(mnem.equals("ldy") && (mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS))) {

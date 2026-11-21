@@ -398,8 +398,8 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                continue;
             }
 
-            // Control flow breaks (JMP, RTS, RTI, and conditional branches)
-            if("jmp".equals(mnem) || "rts".equals(mnem) || "rti".equals(mnem) || opcode.isJump()) {
+            // ZP-04: Unconditional control flow breaks reset tracking; conditional branches (Bxx) preserve knownZp into fallthrough
+            if("jmp".equals(mnem) || "rts".equals(mnem) || "rti".equals(mnem)) {
                knownZp.clear();
                currentValA = null; currentValX = null; currentValY = null;
                loadRefA = null; loadRefX = null; loadRefY = null;
@@ -407,26 +407,42 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
             }
 
             // Loads of immediate values into registers
-            if(mode == CpuAddressingMode.IMM && operand != null && operand.startsWith("#")) {
+            if(mode == CpuAddressingMode.IMM && operand != null) {
+               String immVal = operand.startsWith("#") ? operand : ("#" + operand);
                if("lda".equals(mnem)) {
-                  currentValA = operand;
+                  currentValA = immVal;
                   loadRefA = ref;
                   continue;
                } else if("ldx".equals(mnem)) {
-                  currentValX = operand;
+                  currentValX = immVal;
                   loadRefX = ref;
                   continue;
                } else if("ldy".equals(mnem)) {
-                  currentValY = operand;
+                  currentValY = immVal;
                   loadRefY = ref;
                   continue;
                }
             }
 
-            // Loads of zero-page variables into registers
+            // Loads of zero-page variables into registers (with ZP-04 constant read-forwarding)
             if(mode == CpuAddressingMode.ZP && operand != null && !Pass5RedundantStoreAndReloadElimination.isHardwareAddress(operand)) {
                String canon = Pass5RedundantStoreAndReloadElimination.getCanonical(operand, currentScopeAliases, globalAliasMap);
                String varKey = (canon != null && !canon.isEmpty()) ? canon : operand.trim();
+               String knownVal = knownZp.get(varKey);
+               if(knownVal != null && knownVal.startsWith("#") && ("lda".equals(mnem) || "ldx".equals(mnem) || "ldy".equals(mnem))) {
+                  CpuOpcode immOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(mnem, CpuAddressingMode.IMM, false);
+                  if(immOp != null) {
+                     String rawImm = knownVal.substring(1);
+                     getLog().append("Forwarding known ZP constant " + varKey + "=" + knownVal + " into " + mnem + " #" + rawImm);
+                     inst.setCpuOpcode(immOp);
+                     inst.setOperand1(rawImm);
+                     modified = true;
+                     if("lda".equals(mnem)) { currentValA = knownVal; loadRefA = ref; }
+                     else if("ldx".equals(mnem)) { currentValX = knownVal; loadRefX = ref; }
+                     else if("ldy".equals(mnem)) { currentValY = knownVal; loadRefY = ref; }
+                     continue;
+                  }
+               }
                if("lda".equals(mnem)) {
                   currentValA = "zp:" + varKey;
                   loadRefA = ref;
