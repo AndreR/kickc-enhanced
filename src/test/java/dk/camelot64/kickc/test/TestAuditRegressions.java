@@ -513,4 +513,44 @@ public class TestAuditRegressions {
       assertTrue(asm.contains("eor #$ff") && asm.contains("out_bnot"),
             "GEN-02: General little-endian low-byte extraction must synthesize ~(uint8_t)w cleanly! ASM:\n" + asm);
    }
+
+   @Test
+   void testShortCircuitJumpCodeCompactAndBitTestOnHardwareReg() throws Exception {
+      String code = """
+            #include <stdint.h>
+            volatile uint8_t hit;
+            volatile uint8_t ga, gb, gx;
+            volatile uint8_t * const VICII_CONTROL1 = (uint8_t *)0xD011;
+
+            void check_box(uint8_t a, uint8_t b) {
+                if (a >= 19 && a < 25 && b >= 34 && b < 40) {
+                    hit = 1;
+                }
+            }
+
+            void wait_raster_high(void) {
+                while ((*VICII_CONTROL1 & 0x80) != 0) {
+                }
+            }
+
+            void main(void) {
+                check_box(ga, gb);
+                check_box(20, 36);
+                wait_raster_high();
+                uint8_t lv = ga;
+                bool pure_val = (lv >= 19) && (lv < 25);
+                gx = pure_val ? 1 : 0;
+            }
+            """;
+      Program program = compileC(code);
+      String asm = program.getAsm().toString();
+      int boxStart = asm.indexOf("check_box:");
+      int boxEnd = asm.indexOf("}", boxStart);
+      assertTrue(boxStart >= 0 && boxEnd > boxStart, "Expected check_box procedure in ASM:\n" + asm);
+      String boxAsm = asm.substring(boxStart, boxEnd);
+      assertFalse(boxAsm.contains("lda #0"),
+            "Short-circuit jump-code for 4-way && must not materialize lda #0! check_box ASM:\n" + boxAsm);
+      assertTrue(asm.contains("bit $d011") || asm.contains("bit VICII_CONTROL1"),
+            "Pass5BitTestOptimization must fold lda $d011; and #$80; bne into bit $d011; bmi! ASM:\n" + asm);
+   }
 }

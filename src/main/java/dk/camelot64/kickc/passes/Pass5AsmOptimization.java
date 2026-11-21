@@ -826,13 +826,13 @@ public abstract class Pass5AsmOptimization {
                return false;
             }
 
-            if(mnem.equals("jsr")) {
-               // Conservative: subroutines may read A/X/Y parameters or preserve caller registers across calls
+            if(mnem.equals("jsr") || mnem.equals("rti")) {
+               // Conservative: subroutines may read A/X/Y parameters; rti returns to interrupted context
                return false;
             }
             if(mnem.equals("rts")) {
                if(currentScope != null && program != null) {
-                  Symbol sym = program.getScope().getLocalSymbol(currentScope);
+                  Symbol sym = program.getScope().findSymbol(currentScope);
                   if(sym instanceof Procedure) {
                      Procedure proc = (Procedure) sym;
                      if(SymbolType.VOID.equals(proc.getReturnType())) {

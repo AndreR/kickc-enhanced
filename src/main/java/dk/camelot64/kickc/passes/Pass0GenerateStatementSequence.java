@@ -1821,21 +1821,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       }
       KickCParser.StmtContext ifStmt = ctx.stmt(0);
       KickCParser.StmtContext elseStmt = ctx.stmt(1);
-      RValue rValue = addCondition(ctx.commaExpr(), StatementSource.ifThen(ctx));
       List<Comment> comments = ensureUnusedComments(getCommentsSymbol(ctx));
       if(elseStmt == null) {
-         // If without else - skip the entire section if condition not met
-         SymbolVariableRef notExprVar = addIntermediateVar().getRef();
-         addStatement(new StatementAssignment((LValue) notExprVar, null, Operators.LOGIC_NOT, rValue, true, StatementSource.ifThen(ctx), comments));
+         // If without else - skip the entire section if condition not met (short-circuit jump-code)
          Label endJumpLabel = getCurrentScope().addLabelIntermediate();
-         addStatement(new StatementConditionalJump(notExprVar, endJumpLabel.getRef(), StatementSource.ifThen(ctx), Comment.NO_COMMENTS));
+         addConditionBranch(ctx.commaExpr(), null, endJumpLabel.getRef(), StatementSource.ifThen(ctx), comments);
          this.visit(ifStmt);
          // No else statement - just add the label
          addStatement(new StatementLabel(endJumpLabel.getRef(), StatementSource.ifThen(ctx), Comment.NO_COMMENTS));
       } else {
-         // If with else - jump to if section if condition met - fall into else otherwise.
+         // If with else - jump to if section if condition met - fall into else otherwise (short-circuit jump-code)
          Label ifJumpLabel = getCurrentScope().addLabelIntermediate();
-         addStatement(new StatementConditionalJump(rValue, ifJumpLabel.getRef(), StatementSource.ifThen(ctx), comments));
+         addConditionBranch(ctx.commaExpr(), ifJumpLabel.getRef(), null, StatementSource.ifThen(ctx), comments);
          // Add else body
          this.visit(elseStmt);
          // There is an else statement - add the if part and any needed labels/jumps
@@ -1927,11 +1924,17 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       List<Comment> comments = ensureUnusedComments(getCommentsSymbol(ctx));
       StatementLabel beginJumpTarget = new StatementLabel(beginJumpLabel.getRef(), StatementSource.whileDo(ctx), comments);
       addStatement(beginJumpTarget);
-      RValue rValue = addCondition(ctx.commaExpr(), StatementSource.whileDo(ctx));
-      StatementConditionalJump doJmpStmt = new StatementConditionalJump(rValue, doJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
-      addStatement(doJmpStmt);
-      Statement endJmpStmt = new StatementJump(endJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
-      addStatement(endJmpStmt);
+      boolean hasDirectives = ctx.directive() != null && !ctx.directive().isEmpty();
+      StatementConditionalJump doJmpStmt = null;
+      if(!hasDirectives) {
+         addConditionBranch(ctx.commaExpr(), null, endJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
+      } else {
+         RValue rValue = addCondition(ctx.commaExpr(), StatementSource.whileDo(ctx));
+         doJmpStmt = new StatementConditionalJump(rValue, doJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
+         addStatement(doJmpStmt);
+         Statement endJmpStmt = new StatementJump(endJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
+         addStatement(endJmpStmt);
+      }
       StatementLabel doJumpTarget = new StatementLabel(doJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
       addStatement(doJumpTarget);
       // Reuse the begin jump target for continue.
@@ -1942,7 +1945,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       StatementLabel endJumpTarget = new StatementLabel(endJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
       addStatement(endJumpTarget);
       // Add directives
-      addDirectives(doJmpStmt, ctx.directive());
+      if(doJmpStmt != null) {
+         addDirectives(doJmpStmt, ctx.directive());
+      }
       addLoopBreakLabel(loopStack.pop(), ctx);
       scopeStack.pop();
       return null;
@@ -1974,6 +1979,178 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return rValue;
    }
 
+   /**
+    * Emit direct short-circuit control-flow jump code for a comma-expression condition.
+    * A null target means fallthrough to the immediately following statement.
+    */
+   private void addConditionBranch(KickCParser.CommaExprContext commaCtx, LabelRef trueTarget, LabelRef falseTarget, StatementSource source, List<Comment> comments) {
+      if(commaCtx instanceof KickCParser.CommaSimpleContext cs) {
+         PrePostModifierHandler.addPreModifiers(this, cs.commaExpr(), source);
+         RValue discarded = (RValue) this.visit(cs.commaExpr());
+         consumeExpr(discarded);
+         PrePostModifierHandler.addPostModifiers(this, cs.commaExpr(), source);
+         addConditionBranch(cs.expr(), trueTarget, falseTarget, source, comments);
+      } else if(commaCtx instanceof KickCParser.CommaNoneContext cn) {
+         addConditionBranch(cn.expr(), trueTarget, falseTarget, source, comments);
+      }
+   }
+
+   /**
+    * Emit direct short-circuit control-flow jump code for a boolean condition expression
+    * without materializing intermediate 0/1 values or boolean Phi blocks.
+    * A null target means fallthrough to the immediately following statement.
+    */
+   private void addConditionBranch(KickCParser.ExprContext exprCtx, LabelRef trueTarget, LabelRef falseTarget, StatementSource source, List<Comment> comments) {
+      if(exprCtx instanceof KickCParser.ExprParContext par) {
+         addConditionBranch(par.commaExpr(), trueTarget, falseTarget, source, comments);
+         return;
+      }
+      if(exprCtx instanceof KickCParser.ExprUnaryContext unary) {
+         String op = ((TerminalNode) unary.getChild(0)).getSymbol().getText();
+         if("!".equals(op)) {
+            addConditionBranch(unary.expr(), falseTarget, trueTarget, source, comments);
+            return;
+         }
+      }
+      if(exprCtx instanceof KickCParser.ExprBinaryContext bin) {
+         String op = ((TerminalNode) bin.getChild(1)).getSymbol().getText();
+         if("&&".equals(op)) {
+            if(falseTarget != null) {
+               addConditionBranch(bin.expr(0), null, falseTarget, source, comments);
+               addConditionBranch(bin.expr(1), trueTarget, falseTarget, source, Comment.NO_COMMENTS);
+            } else {
+               Label falseLabel = getCurrentScope().addLabelIntermediate();
+               addConditionBranch(bin.expr(0), null, falseLabel.getRef(), source, comments);
+               addConditionBranch(bin.expr(1), trueTarget, null, source, Comment.NO_COMMENTS);
+               addStatement(new StatementLabel(falseLabel.getRef(), source, Comment.NO_COMMENTS));
+            }
+            return;
+         }
+         if("||".equals(op)) {
+            if(trueTarget != null) {
+               addConditionBranch(bin.expr(0), trueTarget, null, source, comments);
+               addConditionBranch(bin.expr(1), trueTarget, falseTarget, source, Comment.NO_COMMENTS);
+            } else {
+               Label trueLabel = getCurrentScope().addLabelIntermediate();
+               addConditionBranch(bin.expr(0), trueLabel.getRef(), null, source, comments);
+               addConditionBranch(bin.expr(1), null, falseTarget, source, Comment.NO_COMMENTS);
+               addStatement(new StatementLabel(trueLabel.getRef(), source, Comment.NO_COMMENTS));
+            }
+            return;
+         }
+      }
+      RValue rVal = evalShortCircuitOperand(exprCtx, source);
+      Boolean constBool = tryEvaluateConstantBool(rVal);
+      if(constBool != null) {
+         consumeExpr(rVal);
+         if(constBool) {
+            if(trueTarget != null) {
+               addStatement(new StatementJump(trueTarget, source, comments));
+            }
+         } else {
+            if(falseTarget != null) {
+               addStatement(new StatementJump(falseTarget, source, comments));
+            }
+         }
+         return;
+      }
+      if(trueTarget != null && falseTarget == null) {
+         addStatement(new StatementConditionalJump(rVal, trueTarget, source, comments));
+         consumeExpr(rVal);
+      } else if(trueTarget == null && falseTarget != null) {
+         SymbolVariableRef notExprVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) notExprVar, null, Operators.LOGIC_NOT, rVal, true, source, comments));
+         addStatement(new StatementConditionalJump(notExprVar, falseTarget, source, Comment.NO_COMMENTS));
+         consumeExpr(rVal);
+      } else if(trueTarget != null) {
+         addStatement(new StatementConditionalJump(rVal, trueTarget, source, comments));
+         addStatement(new StatementJump(falseTarget, source, Comment.NO_COMMENTS));
+         consumeExpr(rVal);
+      }
+   }
+
+   private Boolean tryEvaluateConstantBool(RValue val) {
+      if(val instanceof ConstantValue cv) {
+         try {
+            ConstantLiteral lit = cv.calculateLiteral(program.getScope());
+            if(lit instanceof ConstantBool cb) return cb.getBool();
+            if(lit instanceof ConstantInteger ci) return ci.getValue() != 0;
+            if(lit instanceof ConstantPointer cp) return cp.getLocation() != 0;
+         } catch(ConstantNotLiteral ignored) {
+         }
+      }
+      return null;
+   }
+
+   private boolean containsLogicalAndOr(ParseTree node) {
+      if(node == null) return false;
+      if(node instanceof KickCParser.ExprBinaryContext bin) {
+         String op = ((TerminalNode) bin.getChild(1)).getSymbol().getText();
+         if("&&".equals(op) || "||".equals(op)) {
+            return true;
+         }
+      }
+      for(int i = 0; i < node.getChildCount(); i++) {
+         if(containsLogicalAndOr(node.getChild(i))) return true;
+      }
+      return false;
+   }
+
+   /**
+    * Conservative check whether evaluating an AST subexpression may perform side effects,
+    * trap (division/modulo, pointer dereference), or read volatile/MMIO state.
+    */
+   private boolean mayHaveSideEffectsOrTrap(ParseTree node) {
+      if(node == null) return false;
+      if(node instanceof KickCParser.ExprSizeOfContext
+            || node instanceof KickCParser.ExprSizeOfTypeContext
+            || node instanceof KickCParser.ExprCountOfContext
+            || node instanceof KickCParser.ExprCountOfTypeContext
+            || node instanceof KickCParser.ExprTypeIdContext
+            || node instanceof KickCParser.ExprTypeIdTypeContext
+            || node instanceof KickCParser.ExprDefinedContext) {
+         return false;
+      }
+      if(node instanceof KickCParser.ExprCallContext
+            || node instanceof KickCParser.ExprPreModContext
+            || node instanceof KickCParser.ExprPostModContext
+            || node instanceof KickCParser.ExprAssignmentContext
+            || node instanceof KickCParser.ExprAssignmentCompoundContext
+            || node instanceof KickCParser.ExprPtrContext
+            || node instanceof KickCParser.ExprArrowContext) {
+         return true;
+      }
+      if(node instanceof KickCParser.ExprArrayContext arr) {
+         if(arr.expr() instanceof KickCParser.ExprIdContext baseId) {
+            Symbol sym = getCurrentScope().findSymbol(baseId.NAME().getText());
+            if(sym instanceof Variable v
+                  && !v.isVolatile()
+                  && !v.isToVolatile()
+                  && v.getType() instanceof SymbolTypePointer pt
+                  && pt.getArraySpec() != null) {
+               return mayHaveSideEffectsOrTrap(arr.commaExpr());
+            }
+         }
+         return true;
+      }
+      if(node instanceof KickCParser.ExprBinaryContext bin) {
+         String op = ((TerminalNode) bin.getChild(1)).getSymbol().getText();
+         if("/".equals(op) || "%".equals(op)) {
+            return true;
+         }
+      }
+      if(node instanceof KickCParser.ExprIdContext id) {
+         Symbol sym = getCurrentScope().findSymbol(id.NAME().getText());
+         if(sym instanceof Variable v) {
+            if(v.isVolatile() || v.isToVolatile()) return true;
+         }
+      }
+      for(int i = 0; i < node.getChildCount(); i++) {
+         if(mayHaveSideEffectsOrTrap(node.getChild(i))) return true;
+      }
+      return false;
+   }
+
    @Override
    public Void visitStmtDoWhile(KickCParser.StmtDoWhileContext ctx) {
       // Create the block scope early - to keep all statements of the loop inside it
@@ -1986,10 +2163,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       addStatement(beginJumpTarget);
       addLoopBody(ctx.stmt());
       addLoopContinueLabel(loopStack.peek(), ctx);
-      RValue rValue = addCondition(ctx.commaExpr(), StatementSource.doWhile(ctx));
-      StatementConditionalJump doJmpStmt = new StatementConditionalJump(rValue, beginJumpLabel.getRef(), StatementSource.doWhile(ctx), Comment.NO_COMMENTS);
-      addStatement(doJmpStmt);
-      addDirectives(doJmpStmt, ctx.directive());
+      boolean hasDirectives = ctx.directive() != null && !ctx.directive().isEmpty();
+      if(!hasDirectives) {
+         addConditionBranch(ctx.commaExpr(), beginJumpLabel.getRef(), null, StatementSource.doWhile(ctx), Comment.NO_COMMENTS);
+      } else {
+         RValue rValue = addCondition(ctx.commaExpr(), StatementSource.doWhile(ctx));
+         StatementConditionalJump doJmpStmt = new StatementConditionalJump(rValue, beginJumpLabel.getRef(), StatementSource.doWhile(ctx), Comment.NO_COMMENTS);
+         addStatement(doJmpStmt);
+         addDirectives(doJmpStmt, ctx.directive());
+      }
       addLoopBreakLabel(loopStack.pop(), ctx);
       scopeStack.pop();
       return null;
@@ -2187,12 +2369,17 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          }
 
          if(conditionCtx != null) {
-            RValue conditionRvalue = addCondition(conditionCtx.commaExpr(), StatementSource.forClassic(ctx));
-            StatementConditionalJump doJmpStmt = new StatementConditionalJump(conditionRvalue, doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
-            addStatement(doJmpStmt);
-            doJmpStmt.setDeclaredCountdown(true);
-            if(stmtForCtx.directive() != null)
-               addDirectives(doJmpStmt, stmtForCtx.directive());
+            boolean hasDirectives = stmtForCtx.directive() != null && !stmtForCtx.directive().isEmpty();
+            if(!hasDirectives && containsLogicalAndOr(conditionCtx.commaExpr())) {
+               addConditionBranch(conditionCtx.commaExpr(), doJumpLabel.getRef(), null, StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+            } else {
+               RValue conditionRvalue = addCondition(conditionCtx.commaExpr(), StatementSource.forClassic(ctx));
+               StatementConditionalJump doJmpStmt = new StatementConditionalJump(conditionRvalue, doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+               addStatement(doJmpStmt);
+               doJmpStmt.setDeclaredCountdown(true);
+               if(stmtForCtx.directive() != null)
+                  addDirectives(doJmpStmt, stmtForCtx.directive());
+            }
          } else {
             StatementJump doJmpStmt = new StatementJump(doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
             addStatement(doJmpStmt);
@@ -2213,16 +2400,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       List<Comment> comments = getCommentsSymbol(stmtForCtx);
       StatementLabel repeatTarget = new StatementLabel(beginJumpLabel.getRef(), StatementSource.forClassic(ctx), comments);
       addStatement(repeatTarget);
-      RValue conditionRvalue = null;
+      boolean hasDirectives = stmtForCtx.directive() != null && !stmtForCtx.directive().isEmpty();
+      Statement doJmpStmt = null;
       if(conditionCtx != null) {
-         conditionRvalue = addCondition(conditionCtx.commaExpr(), StatementSource.forClassic(ctx));
-      }
-      Statement doJmpStmt;
-      if(conditionRvalue != null) {
-         doJmpStmt = new StatementConditionalJump(conditionRvalue, doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
-         addStatement(doJmpStmt);
-         Statement endJmpStmt = new StatementJump(endJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
-         addStatement(endJmpStmt);
+         if(!hasDirectives) {
+            addConditionBranch(conditionCtx.commaExpr(), null, endJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+         } else {
+            RValue conditionRvalue = addCondition(conditionCtx.commaExpr(), StatementSource.forClassic(ctx));
+            doJmpStmt = new StatementConditionalJump(conditionRvalue, doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+            addStatement(doJmpStmt);
+            Statement endJmpStmt = new StatementJump(endJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+            addStatement(endJmpStmt);
+         }
       } else {
          doJmpStmt = new StatementJump(doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
          addStatement(doJmpStmt);
@@ -4468,7 +4657,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
       Operator operator = Operators.getBinary(op);
       if((Operators.LOGIC_AND.equals(operator) || Operators.LOGIC_OR.equals(operator)) && getCurrentProcedureCompilation() != null) {
-         return visitExprLogicalShortCircuit(ctx, operator);
+         if(mayHaveSideEffectsOrTrap(ctx.expr(1))) {
+            return visitExprLogicalShortCircuit(ctx, operator);
+         }
+         // RHS is pure & trap-free: emit compact Operators.LOGIC_AND / LOGIC_OR while still
+         // running any pre/post modifiers inside operands (PrePostModifierHandler stops at && / ||)
+         StatementSource source = new StatementSource(ctx);
+         RValue left = evalShortCircuitOperand(ctx.expr(0), source);
+         RValue right = evalShortCircuitOperand(ctx.expr(1), source);
+         return addExprBinary(ctx, left, operator, right);
       }
       RValue left = (RValue) this.visit(ctx.expr(0));
       RValue right = (RValue) this.visit(ctx.expr(1));
