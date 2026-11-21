@@ -20,6 +20,7 @@ public class AsmProgramStaticRegisterValues {
 
    private Map<AsmInstruction, AsmRegisterValues> values;
    private Map<String, List<AsmRegisterValues>> forwardBranches = new HashMap<>();
+   private Set<AsmLabel> backwardTargetLabels = Collections.newSetFromMap(new IdentityHashMap<>());
    private boolean lastInstructionWasUnconditionalControlFlow = false;
 
    private static boolean areImmOrEqual(String s1, String s2) {
@@ -257,9 +258,24 @@ public class AsmProgramStaticRegisterValues {
    private void initValues() {
       AsmRegisterValues current = new AsmRegisterValues();
       forwardBranches.clear();
+      backwardTargetLabels.clear();
       lastInstructionWasUnconditionalControlFlow = false;
       currentScope = "";
-      scopeResolvers = Pass5AsmOptimization.buildScopeResolvers(Pass5AsmOptimization.flattenLines(program));
+      List<Pass5AsmOptimization.LineRef> allLines = Pass5AsmOptimization.flattenLines(program);
+      scopeResolvers = Pass5AsmOptimization.buildScopeResolvers(allLines);
+      // CF-08: Pre-scan backward jumps to multi-labels (!-, !loop-, !--, etc.) and invalidate state at their targets
+      for(int i = 0; i < allLines.size(); i++) {
+         Pass5AsmOptimization.LineRef ref = allLines.get(i);
+         if(ref.line instanceof AsmInstruction inst && inst.getCpuOpcode() != null && inst.getCpuOpcode().isJump()) {
+            String target = inst.getOperandJumpTarget();
+            if(target != null && target.startsWith("!") && target.endsWith("-")) {
+               int targetIdx = Pass5AsmOptimization.findLabelIndex(allLines, target, i, ref.scope);
+               if(targetIdx != -1 && allLines.get(targetIdx).line instanceof AsmLabel targetLbl) {
+                  backwardTargetLabels.add(targetLbl);
+               }
+            }
+         }
+      }
       for(AsmChunk chunk : program.getChunks()) {
          for(AsmLine line : chunk.getLines()) {
             current = updateStaticRegisterValues(current, line);
@@ -287,7 +303,10 @@ public class AsmProgramStaticRegisterValues {
          current = new AsmRegisterValues();
       } else if(line instanceof AsmLabel) {
          String lbl = ((AsmLabel) line).getLabel();
-         if(forwardBranches.containsKey(lbl)) {
+         if(backwardTargetLabels.contains(line)) {
+            forwardBranches.remove(lbl);
+            current = new AsmRegisterValues();
+         } else if(forwardBranches.containsKey(lbl)) {
             List<AsmRegisterValues> branchStates = forwardBranches.remove(lbl);
             AsmRegisterValues merged = null;
             if(!lastInstructionWasUnconditionalControlFlow) {
@@ -490,7 +509,7 @@ public class AsmProgramStaticRegisterValues {
          }
          if(cpuOpcode.isJump() && instruction.getOperandJumpTarget() != null) {
             String target = instruction.getOperandJumpTarget();
-            if(target.startsWith("!") && target.endsWith("+")) {
+            if(target.startsWith("!") && target.endsWith("+") && !target.endsWith("++")) {
                String labelTarget = target.substring(0, target.length() - 1);
                AsmRegisterValues snapshot = new AsmRegisterValues(current);
                snapshot.setFlagC(null);

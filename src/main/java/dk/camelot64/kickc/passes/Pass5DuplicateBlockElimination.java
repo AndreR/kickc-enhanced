@@ -141,6 +141,10 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
                            validBlock = true;
                            break;
                         }
+                     } else {
+                        // CF-13: Data, segment, alignment, or unknown directives inside a block invalidate deduplication
+                        validBlock = false;
+                        break;
                      }
                   }
 

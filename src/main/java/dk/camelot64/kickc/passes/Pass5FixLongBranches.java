@@ -27,13 +27,17 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
    private static class RtsRef {
       final LineRef ref;
       final int offset;
+      final String segment;
+      final int lineIdx;
       String label;
       final boolean isStandalone;
       boolean isTargeted;
 
-      RtsRef(LineRef ref, int offset, String label, boolean isStandalone) {
+      RtsRef(LineRef ref, int offset, String segment, int lineIdx, String label, boolean isStandalone) {
          this.ref = ref;
          this.offset = offset;
+         this.segment = segment;
+         this.lineIdx = lineIdx;
          this.label = label;
          this.isStandalone = isStandalone;
          this.isTargeted = false;
@@ -324,7 +328,7 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                            }
                            break;
                         }
-                        RtsRef rtsRef = new RtsRef(ref, currentOffset, lastNonAnonLabel, !isPartTrampoline);
+                        RtsRef rtsRef = new RtsRef(ref, currentOffset, currentSegment, lIdx, lastNonAnonLabel, !isPartTrampoline);
                         if(lastNonAnonLabel != null && targetedLabels.contains(lastNonAnonLabel)) {
                            rtsRef.isTargeted = true;
                         }
@@ -461,14 +465,18 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                                        LineRef ref4 = allLines.get(idx4);
                                        if(ref4.line instanceof AsmInstruction) {
                                           AsmInstruction instr4 = (AsmInstruction) ref4.line;
-                                          if(instr4.getCpuOpcode() != null && "jmp".equals(instr4.getCpuOpcode().getMnemonic())) {
+                                          if(instr4.getCpuOpcode() != null
+                                                && "jmp".equals(instr4.getCpuOpcode().getMnemonic())
+                                                && instr4.getCpuOpcode().getAddressingMode() == CpuAddressingMode.ABS) {
                                              String jmpTarget = instr4.getOperand1();
                                              if(jmpTarget != null && !jmpTarget.startsWith("!")) {
-                                                Integer targetOffset = labelOffsets.get(currentScope + "::" + jmpTarget);
-                                                if(targetOffset != null) {
+                                                String key = currentScope + "::" + jmpTarget;
+                                                Integer targetOffset = labelOffsets.get(key);
+                                                Integer targetLineIdx = labelLineIndices.get(key);
+                                                if(targetOffset != null && Objects.equals(currentSegment, labelSegments.get(key))) {
                                                    int branchPc = currentOffset + 2;
                                                    int distance = targetOffset - branchPc;
-                                                   if(distance >= -120 && distance <= 120) {
+                                                   if(isSafeRelaxDistance(allLines, i, targetLineIdx, distance)) {
                                                       getLog().append("Relaxing branch-rts-jmp to " + instr1.getCpuOpcode().getMnemonic() + " " + jmpTarget + " and rts");
                                                       instr1.setOperandJumpTarget(jmpTarget);
                                                       ref3.chunk.getLines().remove(ref3.line);
@@ -484,11 +492,13 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                                     }
 
                                     // Sub-case 2: Relax return trampoline to __breturn
-                                    Integer breturnOffset = labelOffsets.get(currentScope + "::__breturn");
-                                    if(breturnOffset != null) {
+                                    String breturnKey = currentScope + "::__breturn";
+                                    Integer breturnOffset = labelOffsets.get(breturnKey);
+                                    Integer breturnLineIdx = labelLineIndices.get(breturnKey);
+                                    if(breturnOffset != null && Objects.equals(currentSegment, labelSegments.get(breturnKey))) {
                                        int branchPc = currentOffset + 2;
                                        int distance = breturnOffset - branchPc;
-                                       if(distance >= -120 && distance <= 120) {
+                                       if(isSafeRelaxDistance(allLines, i, breturnLineIdx, distance)) {
                                           getLog().append("Relaxing return trampoline to " + inv1.getMnemonic() + " __breturn");
                                           instr1.setCpuOpcode(inv1);
                                           instr1.setOperandJumpTarget("__breturn");
@@ -506,9 +516,10 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                                        int bestDist = 999999;
                                        for(RtsRef r : currentScopeRtsList) {
                                           if(r.ref.line == ref2.line) continue;
+                                          if(!Objects.equals(currentSegment, r.segment)) continue;
                                           int branchPc = currentOffset + 2;
                                           int dist = r.offset - branchPc;
-                                          if(dist >= -120 && dist <= 120) {
+                                          if(isSafeRelaxDistance(allLines, i, r.lineIdx, dist)) {
                                              if(r.isStandalone && Math.abs(dist) < Math.abs(bestDist)) {
                                                 bestDist = dist;
                                                 bestRts = r;
@@ -518,9 +529,10 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                                        if(bestRts == null) {
                                           for(RtsRef r : currentScopeRtsList) {
                                              if(r.ref.line == ref2.line) continue;
+                                             if(!Objects.equals(currentSegment, r.segment)) continue;
                                              int branchPc = currentOffset + 2;
                                              int dist = r.offset - branchPc;
-                                             if(dist > 0 && dist <= 120) {
+                                             if(dist > 0 && isSafeRelaxDistance(allLines, i, r.lineIdx, dist)) {
                                                 if(Math.abs(dist) < Math.abs(bestDist)) {
                                                    bestDist = dist;
                                                    bestRts = r;

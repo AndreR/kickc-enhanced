@@ -70,6 +70,42 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
       return CpuAddressingMode.IMM.equals(inst.getCpuOpcode().getAddressingMode());
    }
 
+   /**
+    * CF-04: Verify that skipping the 2-byte immediate load via .byte $2c (BIT $xxxx)
+    * cannot perform a dummy bus read on hardware I/O space ($D000-$DFFF or $0000-$0001).
+    * BIT $xxxx forms address (immByte << 8) | opcodeByte.
+    */
+   private static boolean isSafeByteSkipImmediate(AsmInstruction inst) {
+      if(!isImmediateLoad(inst) || inst.getLineBytes() != 2) return false;
+      Long val = parseConstValue(inst.getOperand1());
+      if(val == null) return false; // Reject symbolic/label operands like #<IO or #>IO
+      int hiByte = (int) (val & 0xff);
+      if(hiByte >= 0xd0 && hiByte <= 0xdf) {
+         return false; // $D000-$DFFF (VIC-II, SID, CIA, I/O1/I/O2 cartridge latches)
+      }
+      int[] opBytes = inst.getCpuOpcode().getOpcode();
+      int loByte = (opBytes != null && opBytes.length > 0) ? (opBytes[0] & 0xff) : 0;
+      int dummyAddr = (hiByte << 8) | loByte;
+      if(dummyAddr <= 0x0001) {
+         return false; // CPU port $0000-$0001
+      }
+      return true;
+   }
+
+   private static boolean hasDisqualifyingLines(List<AsmChunk> chunks) {
+      for(AsmChunk ch : chunks) {
+         for(AsmLine l : ch.getLines()) {
+            if(l instanceof AsmSegment || l instanceof AsmInlineKickAsm || l instanceof AsmConstant ||
+               l instanceof AsmLabel || l instanceof AsmDataNumeric || l instanceof AsmDataString ||
+               l instanceof AsmDataZeroFill || l instanceof AsmDataKickAsm || l instanceof AsmDataAlignment ||
+               l instanceof AsmLoopAlign || l instanceof AsmSetPc) {
+               return true;
+            }
+         }
+      }
+      return false;
+   }
+
    private static boolean isConditionalBranch(AsmInstruction inst) {
       if(inst == null || inst.getCpuOpcode() == null) return false;
       String mnem = inst.getCpuOpcode().getMnemonic();
@@ -97,14 +133,8 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
       while(passModified) {
          passModified = false;
 
-         List<LineRef> allLines = new ArrayList<>();
-         for(AsmChunk chunk : getAsmProgram().getChunkList()) {
-            String scope = chunk.getScopeLabel();
-            List<AsmLine> lines = chunk.getLines();
-            for(int i = 0; i < lines.size(); i++) {
-               allLines.add(new LineRef(chunk, i, lines.get(i), scope));
-            }
-         }
+         List<LineRef> allLines = flattenLines(getAsmProgram());
+         Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
 
          // Scan for Pattern B (Branch Byte-Skipping)
          for(int i = 0; i < allLines.size(); i++) {
@@ -156,16 +186,12 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
 
             LineRef ref2 = allLines.get(idx2);
             AsmInstruction inst2 = (AsmInstruction) ref2.line;
-            if(!isImmediateLoad(inst2) || inst2.isNoOptimize()) continue;
+            if(!isSafeByteSkipImmediate(inst2) || inst2.isNoOptimize()) continue;
             String reg2 = inst2.getCpuOpcode().getMnemonic();
             if(!reg1.equals(reg2)) continue; // Must load into same register
 
-            int bytesToSkip = inst2.getLineBytes();
-            if(bytesToSkip != 2) continue; // .byte $2c skips exactly 2 bytes
-
             // Right after inst2, the target label must be present
             boolean foundTargetLabel = false;
-            int idxAfterTarget = -1;
             for(int j = idx2 + 1; j < allLines.size(); j++) {
                AsmLine l = allLines.get(j).line;
                if(l instanceof AsmComment || l instanceof AsmConstant || l instanceof AsmLabelDecl) continue;
@@ -176,24 +202,16 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
                      continue;
                   }
                }
-               if(l instanceof AsmInstruction) {
-                  idxAfterTarget = j;
-                  break;
-               }
-               if(l instanceof AsmScopeBegin || l instanceof AsmScopeEnd) {
+               if(l instanceof AsmInstruction || l instanceof AsmScopeBegin || l instanceof AsmScopeEnd) {
                   break;
                }
             }
 
             if(!foundTargetLabel) continue;
 
-            // Verify that instruction after target does not depend on condition flags
-            if(idxAfterTarget != -1) {
-               AsmInstruction instAfter = (AsmInstruction) allLines.get(idxAfterTarget).line;
-               if(isConditionalBranch(instAfter)) {
-                  // Next instruction is a conditional branch that might depend on N/V/Z flags set by BIT
-                  continue;
-               }
+            // CF-04: Verify full N/V/Z flag liveness after target (BIT $xxxx clobbers N, V, Z!)
+            if((getLiveFlagsAfter(allLines, idx2, refJmp.scope, getProgram()) & FLAG_NZV) != 0) {
+               continue;
             }
 
             // All checks passed! Replace JMP with .byte $2c
@@ -212,14 +230,20 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
          if(passModified) continue;
 
          // Scan for Pattern A (Procedure-Level Entry-Point Merging)
+         List<AsmChunk> allChunks = getAsmProgram().getChunkList();
          List<ProcedureData> procedures = new ArrayList<>();
+         Map<ProcedureData, int[]> procChunkRange = new IdentityHashMap<>();
          ProcedureData currentProc = null;
-         for(AsmChunk chunk : getAsmProgram().getChunkList()) {
+         for(int ci = 0; ci < allChunks.size(); ci++) {
+            AsmChunk chunk = allChunks.get(ci);
             String scope = chunk.getScopeLabel();
             if(scope != null && !scope.equals(ScopeRef.ROOT.getFullName())) {
                if(currentProc == null || !currentProc.name.equals(scope)) {
                   currentProc = new ProcedureData(scope);
                   procedures.add(currentProc);
+                  procChunkRange.put(currentProc, new int[]{ci, ci});
+               } else {
+                  procChunkRange.get(currentProc)[1] = ci;
                }
                currentProc.chunks.add(chunk);
                for(AsmLine l : chunk.getLines()) {
@@ -236,36 +260,23 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
             ProcedureData p1 = procedures.get(p);
             ProcedureData p2 = procedures.get(p + 1);
 
+            // CF-04: Strict chunk adjacency — no intervening global/data/segment chunks between p1 and p2
+            int[] r1 = procChunkRange.get(p1);
+            int[] r2 = procChunkRange.get(p2);
+            if(r1 == null || r2 == null || r1[1] + 1 != r2[0]) continue;
+
             List<AsmInstruction> insts1 = p1.instructions;
             List<AsmInstruction> insts2 = p2.instructions;
 
             if(insts1.size() < 2 || insts2.size() != insts1.size()) continue;
 
-            // p1 must not have data segments, segment changes or non-instruction content (strings, tables)
-            boolean hasSegmentOrData = false;
-            for(AsmChunk ch : p1.chunks) {
-               for(AsmLine l : ch.getLines()) {
-                  if(l instanceof AsmSegment) {
-                     hasSegmentOrData = true;
-                     break;
-                  }
-                  if(l instanceof AsmInlineKickAsm inlineAsm && (inlineAsm.getAsm().contains(".text") || inlineAsm.getAsm().contains(".byte") || inlineAsm.getAsm().contains(".segment"))) {
-                     hasSegmentOrData = true;
-                     break;
-                  }
-                  if(l instanceof AsmConstant) {
-                     hasSegmentOrData = true;
-                     break;
-                  }
-               }
-               if(hasSegmentOrData) break;
-            }
-            if(hasSegmentOrData) continue;
+            // Neither p1 nor p2 may contain segments, data, labels, constants, or inline KickAsm
+            if(hasDisqualifyingLines(p1.chunks) || hasDisqualifyingLines(p2.chunks)) continue;
 
             AsmInstruction first1 = insts1.get(0);
             AsmInstruction first2 = insts2.get(0);
 
-            if(!isImmediateLoad(first1) || !isImmediateLoad(first2)) continue;
+            if(!isImmediateLoad(first1) || !isSafeByteSkipImmediate(first2)) continue;
             if(!first1.getCpuOpcode().getMnemonic().equals(first2.getCpuOpcode().getMnemonic())) continue;
             if(first1.getLineBytes() != 2 || first2.getLineBytes() != 2) continue;
 
@@ -280,7 +291,21 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
             if(last1.getCpuOpcode() == null || last2.getCpuOpcode() == null) continue;
             if(!"rts".equals(last1.getCpuOpcode().getMnemonic()) || !"rts".equals(last2.getCpuOpcode().getMnemonic())) continue;
 
-            // Check if remaining instructions (index 1 to end) are identical
+            // Verify N/V/Z flags set by first1/first2 are not needed by insts2[1..]
+            int first2AllIdx = -1;
+            for(int li = 0; li < allLines.size(); li++) {
+               if(allLines.get(li).line == first2) {
+                  first2AllIdx = li;
+                  break;
+               }
+            }
+            if(first2AllIdx == -1 || (getLiveFlagsAfter(allLines, first2AllIdx, p2.name, getProgram()) & FLAG_NZV) != 0) {
+               continue;
+            }
+
+            // Check if remaining instructions (index 1 to end) are canonically identical across scopes
+            CanonicalResolver res1 = scopeResolvers.getOrDefault(p1.name, scopeResolvers.get(""));
+            CanonicalResolver res2 = scopeResolvers.getOrDefault(p2.name, scopeResolvers.get(""));
             boolean identical = true;
             for(int k = 1; k < insts1.size(); k++) {
                AsmInstruction i1 = insts1.get(k);
@@ -297,10 +322,19 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
                   identical = false;
                   break;
                }
-               // Instructions must not reference local symbols of p1 or p2
-               if(i1.getOperand1() != null && (i1.getOperand1().contains(p1.name + ".") || i1.getOperand1().contains(p2.name + "."))) {
-                  identical = false;
-                  break;
+               // CF-04: Canonical ZP/symbol equality check (e.g. p1.return = $02 vs p2.return = $04 must NOT match!)
+               if(i1.getOperand1() != null) {
+                  String op1 = i1.getOperand1().trim();
+                  if(op1.contains(p1.name + ".") || op1.contains(p2.name + ".")) {
+                     identical = false;
+                     break;
+                  }
+                  String c1 = res1 != null ? res1.resolve(op1) : op1;
+                  String c2 = res2 != null ? res2.resolve(op1) : op1;
+                  if(!Objects.equals(c1, c2)) {
+                     identical = false;
+                     break;
+                  }
                }
             }
             if(!identical) continue;
