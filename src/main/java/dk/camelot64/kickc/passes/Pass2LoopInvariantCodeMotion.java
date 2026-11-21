@@ -208,12 +208,29 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
          }
       }
 
+      // If multiple outside entry predecessors exist and headBlock has a phi block,
+      // merging their phi entries requires inserting a new phi in the preheader; skip safely.
+      if(entryPreds.size() > 1 && headBlock.hasPhiBlock()) {
+         return null;
+      }
+
       ScopeRef scopeRef = headBlock.getScope();
       Scope scope = getProgramScope().getScope(scopeRef);
+      Scope procScope = scope;
+      while(procScope != null && !(procScope instanceof dk.camelot64.kickc.model.symbols.Procedure)) {
+         procScope = procScope.getScope();
+      }
+      if(!(procScope instanceof dk.camelot64.kickc.model.symbols.Procedure proc)) {
+         return null;
+      }
+      ProcedureCompilation procComp = getProgram().getProcedureCompilation(proc.getRef());
+      if(procComp == null) {
+         return null;
+      }
       Label preheaderLabel = scope.addLabelIntermediate();
       ControlFlowBlock preheaderBlock = new ControlFlowBlock(preheaderLabel.getRef(), scopeRef);
       preheaderBlock.setDefaultSuccessor(loop.getHead());
-      getGraph().addBlock(preheaderBlock);
+      procComp.getGraph().addBlock(preheaderBlock);
 
       for(Graph.Block ep : entryPreds) {
          if(loop.getHead().equals(ep.getDefaultSuccessor())) {
