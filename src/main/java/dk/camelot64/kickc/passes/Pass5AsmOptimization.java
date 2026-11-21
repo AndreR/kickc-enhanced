@@ -335,42 +335,110 @@ public abstract class Pass5AsmOptimization {
    }
 
    /**
-    * Finds the index of the given label (supports anonymous !+ / !- labels as well as named labels).
+    * Finds the index of the given label (supports anonymous !+ / !- multi-labels as well as named labels),
+    * strictly respecting procedure scope boundaries.
     */
    public static int findLabelIndex(List<LineRef> allLines, String labelName, int fromIdx) {
+      String currentScope = (fromIdx >= 0 && fromIdx < allLines.size()) ? allLines.get(fromIdx).scope : "";
+      return findLabelIndex(allLines, labelName, fromIdx, currentScope);
+   }
+
+   /**
+    * Finds the index of the given label within currentScope (supports anonymous !+ / !- / !++ / !--
+    * multi-labels as well as scoped and global named labels).
+    */
+   public static int findLabelIndex(List<LineRef> allLines, String labelName, int fromIdx, String currentScope) {
       if(labelName == null) return -1;
       String clean = labelName.trim();
+      if(clean.isEmpty()) return -1;
+      String targetScope = (currentScope != null) ? currentScope : "";
+
       if(clean.startsWith("!")) {
-         boolean forward = clean.endsWith("+");
-         String base = forward ? clean.substring(0, clean.length() - 1) : (clean.endsWith("-") ? clean.substring(0, clean.length() - 1) : clean);
+         boolean forward;
+         int hops = 0;
+         int idx = clean.length() - 1;
+         if(clean.endsWith("+")) {
+            forward = true;
+            while(idx >= 0 && clean.charAt(idx) == '+') {
+               hops++;
+               idx--;
+            }
+         } else if(clean.endsWith("-")) {
+            forward = false;
+            while(idx >= 0 && clean.charAt(idx) == '-') {
+               hops++;
+               idx--;
+            }
+         } else {
+            return -1;
+         }
+         if(hops <= 0) return -1;
+         String base = clean.substring(0, idx + 1);
+
          if(forward) {
             for(int i = fromIdx + 1; i < allLines.size(); i++) {
                LineRef ref = allLines.get(i);
+               if(ref.line instanceof AsmScopeBegin || ref.line instanceof AsmScopeEnd || !Objects.equals(targetScope, ref.scope)) {
+                  break;
+               }
                if(ref.line instanceof AsmLabel) {
                   String l = ((AsmLabel) ref.line).getLabel();
-                  if(l != null && (l.equals(base) || (l + "+").equals(clean) || (base + "+").equals(l))) {
-                     return i;
+                  if(base.equals(l)) {
+                     hops--;
+                     if(hops == 0) return i;
                   }
                }
             }
          } else {
             for(int i = fromIdx - 1; i >= 0; i--) {
                LineRef ref = allLines.get(i);
+               if(ref.line instanceof AsmScopeBegin || ref.line instanceof AsmScopeEnd || !Objects.equals(targetScope, ref.scope)) {
+                  break;
+               }
                if(ref.line instanceof AsmLabel) {
                   String l = ((AsmLabel) ref.line).getLabel();
-                  if(l != null && (l.equals(base) || (l + "-").equals(clean))) {
-                     return i;
+                  if(base.equals(l)) {
+                     hops--;
+                     if(hops == 0) return i;
                   }
                }
             }
          }
          return -1;
       }
+
+      // Qualified label (scope.label)
+      int dotIdx = clean.indexOf('.');
+      if(dotIdx != -1) {
+         String scopePart = clean.substring(0, dotIdx);
+         String labelPart = clean.substring(dotIdx + 1);
+         for(int i = 0; i < allLines.size(); i++) {
+            LineRef ref = allLines.get(i);
+            if(ref.line instanceof AsmLabel && Objects.equals(scopePart, ref.scope)) {
+               String l = ((AsmLabel) ref.line).getLabel();
+               if(labelPart.equals(l)) return i;
+            }
+         }
+         return -1;
+      }
+
+      // Named label strictly within the active procedure scope
       for(int i = 0; i < allLines.size(); i++) {
          LineRef ref = allLines.get(i);
-         if(ref.line instanceof AsmLabel) {
+         if(ref.line instanceof AsmLabel && Objects.equals(targetScope, ref.scope)) {
             String l = ((AsmLabel) ref.line).getLabel();
             if(clean.equals(l)) return i;
+         }
+      }
+
+      // Fallback only for top-level global labels (never match local labels in other procedures)
+      if(!targetScope.isEmpty()) {
+         for(int i = 0; i < allLines.size(); i++) {
+            LineRef ref = allLines.get(i);
+            if(ref.line instanceof AsmLabel && "".equals(ref.scope)) {
+               String l = ((AsmLabel) ref.line).getLabel();
+               if(clean.equals(l)) return i;
+            }
          }
       }
       return -1;
@@ -578,16 +646,41 @@ public abstract class Pass5AsmOptimization {
       return null;
    }
 
+   public static boolean isIndirectAddressingMode(CpuAddressingMode mode) {
+      if(mode == null) return false;
+      return mode == CpuAddressingMode.IZY || mode == CpuAddressingMode.IZX ||
+             mode == CpuAddressingMode.IZZ || mode == CpuAddressingMode.IND ||
+             mode == CpuAddressingMode.INZ || mode == CpuAddressingMode.IAX ||
+             mode == CpuAddressingMode.LIN || mode == CpuAddressingMode.LIZ;
+   }
+
+   /**
+    * Central guard (SSA-01): Returns true if the given ASM instruction accesses a volatile variable,
+    * dereferences a pointer-to-volatile (including mutable volatile T *p via indirect addressing),
+    * or accesses a hardware I/O address ($0000-$0001, $D000-$DFFF), after resolving .label aliases.
+    */
+   public static boolean isVolatileOrHardwareOperand(AsmInstruction inst, String currentScope, CanonicalResolver resolver, Program program) {
+      if(inst == null) return false;
+      CpuAddressingMode mode = inst.getCpuOpcode() != null ? inst.getCpuOpcode().getAddressingMode() : null;
+      return isVolatileOrHardwareOperand(inst.getOperand1(), mode, currentScope, resolver, program);
+   }
+
    /**
     * Central guard (SSA-01): Returns true if the given ASM operand accesses a volatile variable
     * or a hardware I/O address ($0000-$0001, $D000-$DFFF), after resolving .label aliases.
     */
    public static boolean isVolatileOrHardwareOperand(String op, String currentScope, CanonicalResolver resolver, Program program) {
+      return isVolatileOrHardwareOperand(op, null, currentScope, resolver, program);
+   }
+
+   public static boolean isVolatileOrHardwareOperand(String op, CpuAddressingMode mode, String currentScope, CanonicalResolver resolver, Program program) {
       if(op == null) return false;
       String trimmed = op.trim();
       if(trimmed.isEmpty()) return false;
       if(trimmed.startsWith(".z ")) trimmed = trimmed.substring(3).trim();
-      if(trimmed.startsWith("#")) return false;
+      if(trimmed.startsWith("#") || mode == CpuAddressingMode.IMM || mode == CpuAddressingMode.IMW) return false;
+
+      boolean isIndirect = isIndirectAddressingMode(mode) || trimmed.contains("(") || trimmed.contains(")");
 
       // 1. Check raw operand for hardware address
       if(isHardwareAddress(trimmed)) {
@@ -603,12 +696,12 @@ public abstract class Pass5AsmOptimization {
       // 3. Check KickC symbol table for volatile variables (both raw and canonical names)
       if(program != null) {
          Variable rawVar = findVariableInScope(trimmed, currentScope, program);
-         if(rawVar != null && (rawVar.isVolatile() || (rawVar.isKindConstant() && rawVar.isToVolatile()))) {
+         if(rawVar != null && (rawVar.isVolatile() || (isIndirect && rawVar.isToVolatile()) || (rawVar.isKindConstant() && rawVar.isToVolatile()))) {
             return true;
          }
          if(!canonical.equals(trimmed)) {
             Variable canonVar = findVariableInScope(canonical, currentScope, program);
-            if(canonVar != null && (canonVar.isVolatile() || (canonVar.isKindConstant() && canonVar.isToVolatile()))) {
+            if(canonVar != null && (canonVar.isVolatile() || (isIndirect && canonVar.isToVolatile()) || (canonVar.isKindConstant() && canonVar.isToVolatile()))) {
                return true;
             }
          }
@@ -703,7 +796,7 @@ public abstract class Pass5AsmOptimization {
                }
                if(mnem.equals("sta") || mnem.equals("tax") || mnem.equals("tay") || mnem.equals("pha") ||
                   mnem.equals("cmp") || mnem.equals("adc") || mnem.equals("sbc") || mnem.equals("and") ||
-                  mnem.equals("ora") || mnem.equals("eor") || mnem.equals("sax") ||
+                  mnem.equals("ora") || mnem.equals("eor") || mnem.equals("bit") || mnem.equals("dcp") || mnem.equals("sax") ||
                   mnem.equals("alr") || mnem.equals("anc") || mnem.equals("arr") || mnem.equals("axs") ||
                   mnem.equals("isc") || mnem.equals("rla") || mnem.equals("rra") ||
                   mnem.equals("slo") || mnem.equals("sre") ||
@@ -734,7 +827,8 @@ public abstract class Pass5AsmOptimization {
             }
 
             if(mnem.equals("jsr")) {
-               return true;
+               // Conservative: subroutines may read A/X/Y parameters or preserve caller registers across calls
+               return false;
             }
             if(mnem.equals("rts")) {
                if(currentScope != null && program != null) {
@@ -1047,7 +1141,7 @@ public abstract class Pass5AsmOptimization {
                 mnem.equals("and") || mnem.equals("ora") || mnem.equals("eor") ||
                 mnem.equals("adc") || mnem.equals("sbc") ||
                 mnem.equals("lax") || mnem.equals("alr") || mnem.equals("anc") || mnem.equals("arr") ||
-                mnem.equals("dcp") || mnem.equals("isc") || mnem.equals("rla") || mnem.equals("rra") ||
+                mnem.equals("isc") || mnem.equals("rla") || mnem.equals("rra") ||
                 mnem.equals("slo") || mnem.equals("sre") ||
                 ((mnem.equals("asl") || mnem.equals("lsr") || mnem.equals("rol") || mnem.equals("ror")) && mode.equals(CpuAddressingMode.NON));
       } else if("X".equals(reg)) {
@@ -1202,10 +1296,6 @@ public abstract class Pass5AsmOptimization {
     * Checks if flags modified by the instruction at currentIdx are needed by subsequent instructions
     * before being overwritten (delegates to bit-accurate {N, Z, C, V} liveness).
     */
-   public static boolean areFlagsNeededAfter(List<LineRef> allLines, int currentIdx) {
-      return areFlagsNeededAfter(allLines, currentIdx, allLines.get(currentIdx).scope, null);
-   }
-
    public static boolean areFlagsNeededAfter(List<LineRef> allLines, int currentIdx, String currentScope, Program program) {
       AsmLine line = allLines.get(currentIdx).line;
       if(line instanceof AsmInstruction) {
