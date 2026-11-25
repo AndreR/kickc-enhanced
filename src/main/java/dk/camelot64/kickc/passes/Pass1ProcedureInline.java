@@ -43,7 +43,8 @@ public class Pass1ProcedureInline extends Pass1Base {
                if(statement instanceof StatementCall call) {
                   ProcedureRef procedureRef = call.getProcedure();
                   Procedure procedure = getProgramScope().getProcedure(procedureRef);
-                  if(procedure.isDeclaredInline()) {
+                  Procedure caller = getProgramScope().getProcedure(procedureCompilation.getProcedureRef());
+                  if(procedure.isDeclaredInline() || isAutoInlineCandidate(procedure, caller, call)) {
                      procedure.setCallingConvention(Procedure.CallingConvention.PHI_CALL);
                      if(procedure.getInterruptType() != null) {
                         throw new CompileError("Error! Interrupts cannot be inlined. " + procedure.getRef().toString());
@@ -147,6 +148,68 @@ public class Pass1ProcedureInline extends Pass1Base {
       block.setConditionalSuccessor(null);
       // Log the inlining
       getLog().append("Inlined call " + call.toString(getProgram(), false));
+   }
+
+   /**
+    * OPT-06: Heuristic for controlled auto-inlining of small, non-recursive leaf procedures.
+    */
+   private boolean isAutoInlineCandidate(Procedure callee, Procedure caller, StatementCall call) {
+      if(callee == null || caller == null || callee.equals(caller)) return false;
+      if(SymbolRef.MAIN_PROC_NAME.equals(callee.getLocalName())) return false;
+      if(callee.getInterruptType() != null) return false;
+      if(Procedure.CallingConvention.STACK_CALL.equals(callee.getCallingConvention())) return false;
+      if(Procedure.CallingConvention.STACK_CALL.equals(caller.getCallingConvention())) return false;
+      if(callee.isVariableLengthParameterList()) return false;
+      if(callee.getParameters() != null) {
+         for(Variable param : callee.getParameters()) {
+            if(param.getType() instanceof dk.camelot64.kickc.model.types.SymbolTypePointer) return false;
+         }
+      }
+      if(!java.util.Objects.equals(caller.getSegmentCode(), callee.getSegmentCode())) return false;
+      if(!java.util.Objects.equals(caller.getBank(), callee.getBank())) return false;
+
+      for(Variable localVar : callee.getAllVariables(false)) {
+         if(localVar.isKindLoadStore()) return false;
+      }
+
+      List<Graph.Block> calleeBlocks = getGraph().getScopeBlocks(callee.getRef());
+      if(calleeBlocks == null || calleeBlocks.isEmpty() || calleeBlocks.size() > 3) return false;
+
+      int stmtCount = 0;
+      for(Graph.Block b : calleeBlocks) {
+         for(Statement s : b.getStatements()) {
+            if(s instanceof StatementCall || s instanceof StatementCallPointer
+                  || s instanceof StatementAsm || s instanceof StatementKickAsm) {
+               return false;
+            }
+            stmtCount++;
+         }
+      }
+      if(stmtCount == 0 || stmtCount > 18) return false;
+
+      int callCount = 0;
+      for(var pc : getProgram().getProcedureCompilations()) {
+         if(pc.getGraph() == null) continue;
+         for(Graph.Block b : pc.getGraph().getAllBlocks()) {
+            for(Statement s : b.getStatements()) {
+               if(s instanceof StatementCall sc && callee.getRef().equals(sc.getProcedure())) {
+                  callCount++;
+               }
+            }
+         }
+      }
+      if(callCount == 1) return true;
+
+      boolean hasConstArg = false;
+      if(call.getParameters() != null) {
+         for(RValue p : call.getParameters()) {
+            if(p instanceof ConstantValue) {
+               hasConstArg = true;
+               break;
+            }
+         }
+      }
+      return callCount <= 4 && calleeBlocks.size() <= 2 && stmtCount <= 14 && hasConstArg;
    }
 
    private LabelRef inlineSuccessor(LabelRef procBlockSuccessorRef, Procedure procedure, Scope callScope, int serial, Label restBlockLabel) {

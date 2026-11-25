@@ -128,7 +128,11 @@ public class TestPhase4GeneralOpt {
       String src = ""
             + "#include <stdint.h>\n"
             + "volatile uint8_t g_acc;\n"
-            + "void step(uint8_t v) { g_acc += v; }\n"
+            + "void step(uint8_t v) {\n"
+            + "   if(v & 1) g_acc += v;\n"
+            + "   if(v & 2) g_acc += v;\n"
+            + "   if(v & 4) g_acc += v;\n"
+            + "}\n"
             + "uint32_t eval(uint32_t x) {\n"
             + "   uint32_t r = x + 1;\n"
             + "   step(1);\n"
@@ -277,5 +281,39 @@ public class TestPhase4GeneralOpt {
       int mainIdx = asm.indexOf("main:");
       String mainBody = asm.substring(mainIdx, asm.indexOf("}", mainIdx));
       assertTrue(mainBody.contains("sbc.z __2+1") || mainBody.contains("sbc #0"), "OPT-05 must keep 16-bit subtraction for unbounded uint8_t operands:\n" + mainBody);
+   }
+
+   @Test
+   void testOpt06_AutoInlineHotLeafWithConstArg() throws Exception {
+      String src = ""
+            + "#include <stdint.h>\n"
+            + "volatile uint8_t g_acc;\n"
+            + "void add_scaled(uint8_t x, uint8_t scale) {\n"
+            + "   g_acc += x + scale;\n"
+            + "}\n"
+            + "void main(void) {\n"
+            + "   add_scaled(g_acc, 1);\n"
+            + "   add_scaled(g_acc, 2);\n"
+            + "}\n";
+      Program prog = compileC(src);
+      String asm = prog.getAsm().toString();
+      assertFalse(asm.contains("jsr add_scaled"), "OPT-06 should auto-inline small hot-leaf helper with constant args:\n" + asm);
+   }
+
+   @Test
+   void testOpt06_DoesNotInlineLargeOrRecursiveProcedures() throws Exception {
+      String src = ""
+            + "#include <stdint.h>\n"
+            + "volatile uint8_t g_v;\n"
+            + "uint8_t rec(uint8_t n) {\n"
+            + "   if(n == 0) return 1;\n"
+            + "   return n + rec(n - 1);\n"
+            + "}\n"
+            + "void main(void) {\n"
+            + "   g_v = rec(4);\n"
+            + "}\n";
+      Program prog = compileC(src);
+      String asm = prog.getAsm().toString();
+      assertTrue(asm.contains("jsr rec"), "OPT-06 must NOT inline recursive procedures:\n" + asm);
    }
 }
