@@ -207,4 +207,34 @@ public class TestPhase4GeneralOpt {
       Pass5StandardPeepholeOptimization pass = new Pass5StandardPeepholeOptimization(program);
       assertFalse(pass.optimize(), "OPT-03 must preserve clc after unbounded adc");
    }
+
+   @Test
+   void testOpt04_LoopRegisterPinningInNonVoidLeafFunction() throws Exception {
+      String src = ""
+            + "#include <stdint.h>\n"
+            + "uint8_t table[256];\n"
+            + "uint8_t g_idx;\n"
+            + "uint8_t scan_down(uint8_t x, uint8_t h) {\n"
+            + "   g_idx = (h << 4) + x;\n"
+            + "   uint8_t row = h;\n"
+            + "   while(table[g_idx] != 0) {\n"
+            + "      g_idx -= 16;\n"
+            + "      row--;\n"
+            + "      if(row == 0) return 0;\n"
+            + "   }\n"
+            + "   return row;\n"
+            + "}\n"
+            + "volatile uint8_t g_out;\n"
+            + "void main(void) {\n"
+            + "   g_out = scan_down(2, 6);\n"
+            + "   g_out += scan_down(3, 5);\n"
+            + "}\n";
+      Program prog = compileC(src);
+      String asm = prog.getAsm().toString();
+      int fnIdx = asm.indexOf("scan_down:");
+      assertTrue(fnIdx >= 0, "scan_down missing:\n" + asm);
+      String fnBody = asm.substring(fnIdx, asm.indexOf("}", fnIdx));
+      assertTrue(fnBody.contains("table,x"), "OPT-04 should pin g_idx in X and index table,x:\n" + fnBody);
+      assertFalse(fnBody.contains("ldy.z g_idx"), "OPT-04 should eliminate ldy.z g_idx inside loop:\n" + fnBody);
+   }
 }

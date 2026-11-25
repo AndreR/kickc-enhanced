@@ -918,9 +918,22 @@ public abstract class Pass5AsmOptimization {
             if(mnem.equals("rts")) {
                if(currentScope != null && program != null) {
                   Symbol sym = program.getScope().findSymbol(currentScope);
-                  if(sym instanceof Procedure) {
-                     Procedure proc = (Procedure) sym;
-                     if(SymbolType.VOID.equals(proc.getReturnType())) {
+                  if(sym instanceof Procedure proc) {
+                     if(SymbolType.VOID.equals(proc.getReturnType()) || proc.isCarryReturn()) {
+                        return true;
+                     }
+                     if(proc.isAReturn()) {
+                        return !"A".equals(reg);
+                     }
+                     if(proc.isAxConvention()) {
+                        return !"A".equals(reg) && !"X".equals(reg);
+                     }
+                     var retVar = proc.getLocalVar("return");
+                     if(retVar != null && retVar.getAllocation() != null) {
+                        var rType = retVar.getAllocation().getType();
+                        if(dk.camelot64.kickc.model.Registers.RegisterType.REG_A.equals(rType)) return !"A".equals(reg);
+                        if(dk.camelot64.kickc.model.Registers.RegisterType.REG_X.equals(rType)) return !"X".equals(reg);
+                        if(dk.camelot64.kickc.model.Registers.RegisterType.REG_Y.equals(rType)) return !"Y".equals(reg);
                         return true;
                      }
                   }
