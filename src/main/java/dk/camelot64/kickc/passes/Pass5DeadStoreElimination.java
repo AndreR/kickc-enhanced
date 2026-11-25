@@ -758,6 +758,13 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                   }
                }
             }
+            if(!passModified) {
+               if(eliminateIntraBlockOverwrittenStores(sLines, entry.getKey(), resolver)) {
+                  passModified = true;
+                  overallModified = true;
+                  break;
+               }
+            }
             if(passModified) {
                break;
             }
@@ -765,6 +772,110 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
       }
 
       return overallModified;
+   }
+
+   /**
+    * OPT-01: Intra-block Dead Store Elimination.
+    * Eliminates a plain ZP/ABS store (sta/stx/sty) when a subsequent plain store in the same basic block
+    * completely overwrites the exact same canonical target without any intervening read, branch, call,
+    * indirect/indexed access, or volatile/hardware-address guard.
+    */
+   private boolean eliminateIntraBlockOverwrittenStores(List<LineRef> sLines, String scopeName,
+                                                        CanonicalResolver resolver) {
+      for(int i = 0; i < sLines.size(); i++) {
+         LineRef ref = sLines.get(i);
+         if(!(ref.line instanceof AsmInstruction inst)) continue;
+         if(inst.isNoOptimize() || inst.getCpuOpcode() == null || inst.getOperand1() == null) continue;
+         String mnem = inst.getCpuOpcode().getMnemonic();
+         CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+         if(!(mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty"))) continue;
+         if(!(mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS))) continue;
+         if(isVolatileOrHardwareOperand(inst, scopeName, resolver, getProgram())) continue;
+
+         String op = inst.getOperand1().trim();
+         String canonTarget = resolver.resolve(op);
+         if(canonTarget.isEmpty()) continue;
+         String baseTarget = getBaseVar(op);
+
+         boolean overwritten = false;
+         for(int j = i + 1; j < sLines.size(); j++) {
+            AsmLine lineJ = sLines.get(j).line;
+            if(lineJ instanceof AsmComment || lineJ instanceof AsmConstant || lineJ instanceof AsmLabelDecl) continue;
+            if(!(lineJ instanceof AsmInstruction instJ)) break;
+            if(instJ.getCpuOpcode() == null) break;
+
+            String mnemJ = instJ.getCpuOpcode().getMnemonic();
+            CpuAddressingMode modeJ = instJ.getCpuOpcode().getAddressingMode();
+            if(instJ.getCpuOpcode().isJump() || mnemJ.startsWith("b")
+                  || mnemJ.equals("jsr") || mnemJ.equals("rts") || mnemJ.equals("rti") || mnemJ.equals("brk")) {
+               break;
+            }
+
+            boolean isPlainStoreJ = (mnemJ.equals("sta") || mnemJ.equals("stx") || mnemJ.equals("sty"))
+                  && (modeJ.equals(CpuAddressingMode.ZP) || modeJ.equals(CpuAddressingMode.ABS));
+            String opJ = instJ.getOperand1();
+            if(isPlainStoreJ && opJ != null) {
+               String canonJ = resolver.resolve(opJ.trim());
+               if(canonTarget.equals(canonJ)) {
+                  overwritten = true;
+                  break;
+               }
+               continue;
+            }
+
+            if(modeJ.equals(CpuAddressingMode.IZX) || modeJ.equals(CpuAddressingMode.IZY)
+                  || modeJ.equals(CpuAddressingMode.IND) || modeJ.equals(CpuAddressingMode.ZPX)
+                  || modeJ.equals(CpuAddressingMode.ZPY) || modeJ.equals(CpuAddressingMode.ABX)
+                  || modeJ.equals(CpuAddressingMode.ABY)) {
+               break;
+            }
+            if(opJ != null) {
+               String cleanOpJ = opJ.trim();
+               String canonJ = resolver.resolve(cleanOpJ);
+               String baseJ = getBaseVar(cleanOpJ);
+               if(canonTarget.equals(canonJ) || (!baseTarget.isEmpty() && baseTarget.equals(baseJ))) {
+                  break;
+               }
+            }
+         }
+
+         if(overwritten) {
+            String reg = mnem.equals("sta") ? "A" : (mnem.equals("stx") ? "X" : "Y");
+            int prevIdx = prevInstIdx(sLines, i - 1);
+            int nextIdx = nextInstIdx(sLines, i + 1);
+            boolean eliminatePrevLoad = false;
+            if(prevIdx != -1 && nextIdx != -1) {
+               AsmInstruction prevInst = (AsmInstruction) sLines.get(prevIdx).line;
+               AsmInstruction nextInst = (AsmInstruction) sLines.get(nextIdx).line;
+               if(prevInst.getCpuOpcode() != null && nextInst.getCpuOpcode() != null) {
+                  String prevMnem = prevInst.getCpuOpcode().getMnemonic();
+                  CpuAddressingMode prevMode = prevInst.getCpuOpcode().getAddressingMode();
+                  boolean isLoad = (reg.equals("A") && prevMnem.equals("lda"))
+                        || (reg.equals("X") && prevMnem.equals("ldx"))
+                        || (reg.equals("Y") && prevMnem.equals("ldy"));
+                  boolean isSafeMode = prevMode.equals(CpuAddressingMode.IMM)
+                        || prevMode.equals(CpuAddressingMode.ZP)
+                        || prevMode.equals(CpuAddressingMode.ABS);
+                  if(isLoad && isSafeMode
+                        && !isVolatileOrHardwareOperand(prevInst, scopeName, resolver, getProgram())
+                        && overwritesRegister(nextInst, reg)) {
+                     eliminatePrevLoad = true;
+                  }
+               }
+            }
+
+            getLog().append("OPT-01: Eliminating intra-block overwritten store " + inst.getAsm());
+            ref.chunk.getLines().remove(inst);
+            if(eliminatePrevLoad) {
+               LineRef prevRef = sLines.get(prevIdx);
+               AsmInstruction prevInst = (AsmInstruction) prevRef.line;
+               getLog().append("OPT-01: Eliminating dead preceding load " + prevInst.getAsm());
+               prevRef.chunk.getLines().remove(prevInst);
+            }
+            return true;
+         }
+      }
+      return false;
    }
 
    private static int prevInstIdx(List<LineRef> lines, int start) {
