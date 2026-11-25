@@ -853,9 +853,124 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                }
             }
          }
+         if(!passModified && eliminateRedundantClc(allLines)) {
+            passModified = true;
+            overallModified = true;
+         }
       }
 
       return overallModified;
+   }
+
+   /**
+    * OPT-03: Static Carry Inference (CLC elimination when C=0 is guaranteed).
+    * Tracks intra-block carry state and conservative unsigned upper bound on A.
+    */
+   private boolean eliminateRedundantClc(List<LineRef> allLines) {
+      boolean modified = false;
+      boolean carryClear = false;
+      int maxA = 255;
+
+      for(int i = 0; i < allLines.size(); i++) {
+         LineRef ref = allLines.get(i);
+         AsmLine line = ref.line;
+         if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) {
+            continue;
+         }
+         if(!(line instanceof AsmInstruction inst) || inst.getCpuOpcode() == null) {
+            carryClear = false;
+            maxA = 255;
+            continue;
+         }
+
+         CpuOpcode op = inst.getCpuOpcode();
+         String mnem = op.getMnemonic();
+         CpuAddressingMode mode = op.getAddressingMode();
+         if(op.isJump() || mnem.startsWith("b") || mnem.equals("jsr") || mnem.equals("rts")
+               || mnem.equals("rti") || mnem.equals("brk") || mnem.equals("sec")) {
+            carryClear = false;
+            maxA = 255;
+            continue;
+         }
+
+         if(mnem.equals("clc")) {
+            if(carryClear && !inst.isNoOptimize()) {
+               getLog().append("OPT-03: Eliminating redundant clc (C=0 guaranteed)");
+               ref.chunk.getLines().remove(inst);
+               modified = true;
+               continue;
+            }
+            carryClear = true;
+            continue;
+         }
+
+         if(mnem.equals("lda")) {
+            Integer imm = mode.equals(CpuAddressingMode.IMM) ? parseByteImmediate(inst.getOperand1()) : null;
+            maxA = (imm != null) ? imm : 255;
+            continue;
+         }
+         if(mnem.equals("and")) {
+            Integer imm = mode.equals(CpuAddressingMode.IMM) ? parseByteImmediate(inst.getOperand1()) : null;
+            maxA = (imm != null) ? Math.min(maxA, imm) : 255;
+            continue;
+         }
+         if(mnem.equals("lsr") && mode.equals(CpuAddressingMode.NON)) {
+            carryClear = false;
+            maxA = maxA >> 1;
+            continue;
+         }
+         if(mnem.equals("asl") && mode.equals(CpuAddressingMode.NON)) {
+            if(maxA <= 127) {
+               carryClear = true;
+               maxA = (maxA << 1) & 0xff;
+            } else {
+               carryClear = false;
+               maxA = 255;
+            }
+            continue;
+         }
+         if(mnem.equals("adc")) {
+            Integer imm = mode.equals(CpuAddressingMode.IMM) ? parseByteImmediate(inst.getOperand1()) : null;
+            if(carryClear && imm != null && maxA + imm <= 255) {
+               maxA = maxA + imm;
+            } else {
+               carryClear = false;
+               maxA = 255;
+            }
+            continue;
+         }
+         if(mnem.equals("sbc") || mnem.equals("cmp") || mnem.equals("cpx") || mnem.equals("cpy")) {
+            carryClear = false;
+            if(mnem.equals("sbc")) maxA = 255;
+            continue;
+         }
+         if(mnem.equals("ora") || mnem.equals("eor") || mnem.equals("txa") || mnem.equals("tya") || mnem.equals("pla")) {
+            maxA = 255;
+            continue;
+         }
+         if(op.getClobber().isFlagC()) {
+            carryClear = false;
+         }
+         if(op.getClobber().isRegisterA()) {
+            maxA = 255;
+         }
+      }
+      return modified;
+   }
+
+   private static Integer parseByteImmediate(String op) {
+      if(op == null) return null;
+      String s = op.trim();
+      if(s.startsWith("#")) s = s.substring(1).trim();
+      try {
+         int v;
+         if(s.startsWith("$")) v = Integer.parseInt(s.substring(1), 16);
+         else if(s.startsWith("%")) v = Integer.parseInt(s.substring(1), 2);
+         else v = Integer.parseInt(s);
+         if(v >= 0 && v <= 255) return v;
+      } catch(NumberFormatException ignored) {
+      }
+      return null;
    }
 
    private static boolean isSameLocation(String op1, String op2, Map<String, String> scopeAliases) {

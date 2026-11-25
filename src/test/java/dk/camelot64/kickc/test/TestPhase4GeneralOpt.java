@@ -11,6 +11,7 @@ import dk.camelot64.kickc.model.TargetPlatform;
 import dk.camelot64.kickc.model.values.ScopeRef;
 import dk.camelot64.kickc.parser.CTargetPlatformParser;
 import dk.camelot64.kickc.passes.Pass5DeadStoreElimination;
+import dk.camelot64.kickc.passes.Pass5StandardPeepholeOptimization;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -159,5 +160,51 @@ public class TestPhase4GeneralOpt {
       Program prog = compileC(src);
       String asm = prog.getAsm().toString();
       assertTrue(asm.contains("keep_and_call:"), "keep_and_call procedure missing");
+   }
+
+   @Test
+   void testOpt03_RedundantClcElimination() {
+      Program program = new Program();
+      Cpu65xx cpu = TargetCpu.MOS6502X.getCpu65xx();
+      AsmProgram asm = new AsmProgram(TargetCpu.MOS6502X);
+      program.setAsm(asm);
+
+      AsmChunk chunk = asm.startChunk(ScopeRef.ROOT, null, "fn");
+      chunk.addLine(new AsmScopeBegin("fn"));
+      chunk.addLine(new AsmInstruction(cpu.getOpcode("and", CpuAddressingMode.IMM, false), "3", null, null));
+      chunk.addLine(new AsmInstruction(cpu.getOpcode("asl", CpuAddressingMode.NON, false), null, null, null));
+      chunk.addLine(new AsmInstruction(cpu.getOpcode("asl", CpuAddressingMode.NON, false), null, null, null));
+      chunk.addLine(new AsmInstruction(cpu.getOpcode("clc", CpuAddressingMode.NON, false), null, null, null));
+      chunk.addLine(new AsmInstruction(cpu.getOpcode("adc", CpuAddressingMode.IMM, false), "1", null, null));
+      chunk.addLine(new AsmInstruction(cpu.getOpcode("clc", CpuAddressingMode.NON, false), null, null, null));
+      chunk.addLine(new AsmInstruction(cpu.getOpcode("adc", CpuAddressingMode.IMM, false), "2", null, null));
+      chunk.addLine(new AsmInstruction(cpu.getOpcode("rts", CpuAddressingMode.NON, false), null, null, null));
+      chunk.addLine(new AsmScopeEnd());
+
+      Pass5StandardPeepholeOptimization pass = new Pass5StandardPeepholeOptimization(program);
+      assertTrue(pass.optimize(), "OPT-03 should eliminate redundant clc instructions when C=0 is guaranteed");
+      String out = asm.toString();
+      assertFalse(out.contains("clc"), "Both redundant clc instructions should be eliminated:\n" + out);
+   }
+
+   @Test
+   void testOpt03_UnsafeClcPreserved() {
+      Program program = new Program();
+      Cpu65xx cpu = TargetCpu.MOS6502X.getCpu65xx();
+      AsmProgram asm = new AsmProgram(TargetCpu.MOS6502X);
+      program.setAsm(asm);
+
+      AsmChunk chunk = asm.startChunk(ScopeRef.ROOT, null, "fn");
+      chunk.addLine(new AsmScopeBegin("fn"));
+      chunk.addLine(new AsmLabelDecl("v", "$10"));
+      chunk.addLine(new AsmInstruction(cpu.getOpcode("clc", CpuAddressingMode.NON, false), null, null, null));
+      chunk.addLine(new AsmInstruction(cpu.getOpcode("adc", CpuAddressingMode.ZP, false), "v", null, null));
+      chunk.addLine(new AsmInstruction(cpu.getOpcode("clc", CpuAddressingMode.NON, false), null, null, null));
+      chunk.addLine(new AsmInstruction(cpu.getOpcode("adc", CpuAddressingMode.IMM, false), "1", null, null));
+      chunk.addLine(new AsmInstruction(cpu.getOpcode("rts", CpuAddressingMode.NON, false), null, null, null));
+      chunk.addLine(new AsmScopeEnd());
+
+      Pass5StandardPeepholeOptimization pass = new Pass5StandardPeepholeOptimization(program);
+      assertFalse(pass.optimize(), "OPT-03 must preserve clc after unbounded adc");
    }
 }
