@@ -86,7 +86,13 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
       return callerType.getSizeBytes() == calleeType.getSizeBytes();
    }
 
-   private boolean areReturnConventionsCompatible(Procedure caller, Procedure callee) {
+   private boolean areReturnConventionsCompatible(Procedure caller, Procedure callee, Map<String, List<AsmLine>> scopeLinesMap) {
+      if(caller.getReturnType() == null || callee.getReturnType() == null) {
+         return false;
+      }
+      if(!SymbolType.VOID.equals(caller.getReturnType()) && SymbolType.VOID.equals(callee.getReturnType())) {
+         return isNonVoidCallerToVoidCalleeSafe(caller, callee, scopeLinesMap);
+      }
       if(!areReturnTypesCompatible(caller.getReturnType(), callee.getReturnType())) {
          return false;
       }
@@ -143,7 +149,125 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
       return true;
    }
 
-   private boolean isTailCallCompatible(Procedure caller, Procedure callee) {
+   private boolean isNonVoidCallerToVoidCalleeSafe(Procedure caller, Procedure callee,
+                                                     Map<String, List<AsmLine>> scopeLinesMap) {
+      if(caller.getReturnType() instanceof SymbolTypeStruct) {
+         return false;
+      }
+      List<AsmLine> calleeLines = findScopeLines(callee, scopeLinesMap);
+      if(calleeLines == null || calleeLines.isEmpty()) {
+         return false;
+      }
+
+      boolean checkA = caller.isAReturn() || caller.isAxConvention();
+      boolean checkX = caller.isAxConvention();
+      boolean checkY = false;
+      boolean checkC = caller.isCarryReturn();
+
+      Variable callerRet = caller.getLocalVar("return");
+      if(callerRet != null && callerRet.getAllocation() != null) {
+         Registers.RegisterType rType = callerRet.getAllocation().getType();
+         if(Registers.RegisterType.REG_A.equals(rType)) checkA = true;
+         else if(Registers.RegisterType.REG_X.equals(rType)) checkX = true;
+         else if(Registers.RegisterType.REG_Y.equals(rType)) checkY = true;
+      }
+
+      Set<String> protectedAddrs = new HashSet<>();
+      List<AsmLine> callerLines = findScopeLines(caller, scopeLinesMap);
+      if(callerLines != null) {
+         String retVal = findLabelValue(callerLines, "return");
+         if(retVal != null) {
+            protectedAddrs.add(retVal);
+            Integer baseAddr = parseSimpleAddr(retVal);
+            if(baseAddr != null) {
+               int size = Math.max(1, caller.getReturnType().getSizeBytes());
+               for(int b = 0; b < size; b++) {
+                  protectedAddrs.add("$" + Integer.toHexString(baseAddr + b));
+                  protectedAddrs.add(Integer.toString(baseAddr + b));
+               }
+            }
+         }
+      }
+
+      Map<String, String> calleeLabels = new HashMap<>();
+      for(AsmLine line : calleeLines) {
+         if(line instanceof AsmLabelDecl decl) {
+            calleeLabels.put(decl.getName().trim(), decl.getValue().trim());
+         }
+      }
+
+      for(AsmLine line : calleeLines) {
+         if(line instanceof AsmInlineKickAsm) {
+            return false;
+         }
+         if(!(line instanceof AsmInstruction inst) || inst.getCpuOpcode() == null) {
+            continue;
+         }
+         String mnem = inst.getCpuOpcode().getMnemonic();
+         CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+         if(mnem.equals("jsr")) {
+            return false;
+         }
+         var clobber = inst.getCpuOpcode().getClobber();
+         if(checkA && clobber.isRegisterA()) return false;
+         if(checkX && clobber.isRegisterX()) return false;
+         if(checkY && clobber.isRegisterY()) return false;
+         if(checkC && clobber.isFlagC()) return false;
+
+         boolean isMemWrite = mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty") || mnem.equals("sax")
+               || mnem.equals("inc") || mnem.equals("dec") || mnem.equals("dcp") || mnem.equals("isc")
+               || mnem.equals("slo") || mnem.equals("sre") || mnem.equals("rla") || mnem.equals("rra")
+               || ((mnem.equals("asl") || mnem.equals("lsr") || mnem.equals("rol") || mnem.equals("ror"))
+                   && !mode.equals(CpuAddressingMode.NON));
+         if(isMemWrite && !protectedAddrs.isEmpty()) {
+            if(mode.equals(CpuAddressingMode.IZX) || mode.equals(CpuAddressingMode.IZY) || mode.equals(CpuAddressingMode.IND)) {
+               return false;
+            }
+            String op = inst.getOperand1();
+            if(op != null) {
+               String clean = op.trim();
+               if(clean.startsWith(".z ")) clean = clean.substring(3).trim();
+               int comma = clean.indexOf(',');
+               if(comma != -1) clean = clean.substring(0, comma).trim();
+               String resolved = calleeLabels.getOrDefault(clean, clean);
+               if(protectedAddrs.contains(clean) || protectedAddrs.contains(resolved)) {
+                  return false;
+               }
+            }
+         }
+      }
+      return true;
+   }
+
+   private static List<AsmLine> findScopeLines(Procedure proc, Map<String, List<AsmLine>> scopeLinesMap) {
+      if(proc == null) return null;
+      List<AsmLine> lines = scopeLinesMap.get(proc.getFullName());
+      if(lines != null) return lines;
+      lines = scopeLinesMap.get(proc.getLocalName());
+      if(lines != null) return lines;
+      return scopeLinesMap.get(proc.getLabel().getLocalName());
+   }
+
+   private static String findLabelValue(List<AsmLine> lines, String labelName) {
+      for(AsmLine line : lines) {
+         if(line instanceof AsmLabelDecl decl && decl.getName().trim().equals(labelName)) {
+            return decl.getValue().trim();
+         }
+      }
+      return null;
+   }
+
+   private static Integer parseSimpleAddr(String val) {
+      if(val == null || val.isEmpty()) return null;
+      try {
+         if(val.startsWith("$")) return Integer.parseInt(val.substring(1), 16);
+         if(Character.isDigit(val.charAt(0))) return Integer.parseInt(val);
+      } catch(NumberFormatException ignored) {
+      }
+      return null;
+   }
+
+   private boolean isTailCallCompatible(Procedure caller, Procedure callee, Map<String, List<AsmLine>> scopeLinesMap) {
       if(caller == null || callee == null) {
          return false;
       }
@@ -159,7 +283,7 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
       if(!areSegmentsCompatible(caller, callee)) {
          return false;
       }
-      if(!areReturnConventionsCompatible(caller, callee)) {
+      if(!areReturnConventionsCompatible(caller, callee, scopeLinesMap)) {
          return false;
       }
       return true;
@@ -185,6 +309,7 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
 
          // Build sequential line list across all chunks tracking active scope
          List<LineRef> allLines = new ArrayList<>();
+         Map<String, List<AsmLine>> scopeLinesMap = new HashMap<>();
          String currentScope = null;
          for(AsmChunk chunk : getAsmProgram().getChunks()) {
             String chunkScope = chunk.getScopeLabel();
@@ -196,6 +321,9 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
                   currentScope = ((AsmScopeBegin) line).getLabel();
                }
                allLines.add(new LineRef(chunk, i, line, currentScope));
+               if(currentScope != null && !(line instanceof AsmScopeBegin) && !(line instanceof AsmScopeEnd)) {
+                  scopeLinesMap.computeIfAbsent(currentScope, k -> new ArrayList<>()).add(line);
+               }
                if(line instanceof AsmScopeEnd) {
                   currentScope = null;
                }
@@ -218,7 +346,7 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
             // Verify tail call compatibility (same segment/bank, identical return calling conventions)
             Procedure caller = findProcedure(ref1.scope, null, procMap);
             Procedure callee = findProcedure(inst1.getOperand1(), caller, procMap);
-            if(!isTailCallCompatible(caller, callee)) {
+            if(!isTailCallCompatible(caller, callee, scopeLinesMap)) {
                continue;
             }
 

@@ -121,4 +121,43 @@ public class TestPhase4GeneralOpt {
       Pass5DeadStoreElimination pass = new Pass5DeadStoreElimination(program);
       assertFalse(pass.optimize(), "OPT-01 must NOT eliminate hardware-address stores or stores across indirect reads");
    }
+
+   @Test
+   void testOpt02_NonVoidCallerToVoidCalleeTailCall() throws Exception {
+      String src = ""
+            + "#include <stdint.h>\n"
+            + "volatile uint8_t g_acc;\n"
+            + "void step(uint8_t v) { g_acc += v; }\n"
+            + "uint32_t eval(uint32_t x) {\n"
+            + "   uint32_t r = x + 1;\n"
+            + "   step(1);\n"
+            + "   step(2);\n"
+            + "   return r;\n"
+            + "}\n"
+            + "volatile uint32_t g_res;\n"
+            + "void main(void) { g_res = eval(10); g_res += eval(20); }\n";
+      Program prog = compileC(src);
+      String asm = prog.getAsm().toString();
+      int evalIdx = asm.indexOf("eval:");
+      assertTrue(evalIdx >= 0, "eval procedure missing:\n" + asm);
+      String evalBody = asm.substring(evalIdx, asm.indexOf("}", evalIdx));
+      assertTrue(evalBody.contains("jmp step"), "OPT-02 should tail-call optimize final jsr step; rts to jmp step:\n" + evalBody);
+   }
+
+   @Test
+   void testOpt02_NonVoidCallerClobberedReturnNotTailCalled() throws Exception {
+      String src = ""
+            + "#include <stdint.h>\n"
+            + "volatile uint8_t g_out;\n"
+            + "void clobber(uint8_t v) { g_out = v + 1; }\n"
+            + "uint8_t keep_and_call(uint8_t x) {\n"
+            + "   uint8_t r = x + 5;\n"
+            + "   clobber(x);\n"
+            + "   return r;\n"
+            + "}\n"
+            + "void main(void) { g_out = keep_and_call(3); g_out += keep_and_call(4); }\n";
+      Program prog = compileC(src);
+      String asm = prog.getAsm().toString();
+      assertTrue(asm.contains("keep_and_call:"), "keep_and_call procedure missing");
+   }
 }
