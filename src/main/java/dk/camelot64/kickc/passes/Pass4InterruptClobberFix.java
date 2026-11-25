@@ -62,6 +62,13 @@ public class Pass4InterruptClobberFix extends Pass2Base {
    }
 
    private CpuClobber getProcedureClobber(Procedure procedure) {
+      return getProcedureClobber(procedure, new java.util.HashSet<>());
+   }
+
+   private CpuClobber getProcedureClobber(Procedure procedure, java.util.Set<ProcedureRef> visited) {
+      if(procedure == null || !visited.add(procedure.getRef())) {
+         return CpuClobber.CLOBBER_NONE;
+      }
       AsmProgram asm = getProgram().getAsm();
       CpuClobber procClobber = CpuClobber.CLOBBER_NONE;
       for(AsmChunk asmChunk : asm.getChunks()) {
@@ -77,14 +84,16 @@ public class Pass4InterruptClobberFix extends Pass2Base {
 
       CallGraph callGraph = getProgram().getCallGraph();
       CallGraph.CallBlock callBlock = callGraph.getCallBlock(procedure.getRef());
-      List<CallGraph.CallBlock.Call> calls = callBlock.getCalls();
-      for(CallGraph.CallBlock.Call call : calls) {
-         ScopeRef calledProcLabel = call.getProcedure();
-         if(calledProcLabel!=null) {
-            ProcedureRef calledProcRef = new ProcedureRef(calledProcLabel.getFullName());
-            Procedure calledProc = getProgram().getScope().getProcedure(calledProcRef);
-            CpuClobber calledClobber = getProcedureClobber(calledProc);
-            procClobber = new CpuClobber(procClobber, calledClobber);
+      if(callBlock != null) {
+         List<CallGraph.CallBlock.Call> calls = callBlock.getCalls();
+         for(CallGraph.CallBlock.Call call : calls) {
+            ScopeRef calledProcLabel = call.getProcedure();
+            if(calledProcLabel!=null) {
+               ProcedureRef calledProcRef = new ProcedureRef(calledProcLabel.getFullName());
+               Procedure calledProc = getProgram().getScope().getProcedure(calledProcRef);
+               CpuClobber calledClobber = getProcedureClobber(calledProc, visited);
+               procClobber = new CpuClobber(procClobber, calledClobber);
+            }
          }
       }
 

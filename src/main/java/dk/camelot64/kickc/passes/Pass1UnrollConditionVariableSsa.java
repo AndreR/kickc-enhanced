@@ -35,7 +35,7 @@ public class Pass1UnrollConditionVariableSsa extends Pass2SsaOptimization {
                findAllReferencedVars(referencedVars, conditionalJump.getrValue2());
                for (VariableRef referencedVar : referencedVars) {
                   final Variable variable = getProgramScope().getVariable(referencedVar);
-                  if (variable.isKindLoadStore()) {
+                  if (variable.isKindLoadStore() && !variable.isVolatile() && variable.getRegister() == null) {
                      // Convert the variable to versioned if it is load/store
                      getLog().append(
                          "Converting unrolled condition variable to single-static-assignment "

@@ -45,17 +45,17 @@ public class Pass2ModuloToAndRewriting extends Pass2SsaOptimization {
                if(Operators.MODULO.equals(assignment.getOperator()) && assignment.getrValue2() instanceof ConstantValue) {
                   final ConstantLiteral constantLiteral = getConstantLiteral((ConstantValue) assignment.getrValue2());
                   if(constantLiteral instanceof ConstantInteger) {
-                     Long constantInt = ((ConstantInteger) constantLiteral).getInteger();
-                     double power2 = Math.log(constantInt) / Math.log(2);
-                     if(power2 >= 0.0 && Math.round(power2) == power2) {
-                        // Modulo whole power of 2
+                     long constantInt = ((ConstantInteger) constantLiteral).getInteger();
+                     SymbolType varType = SymbolTypeInference.inferType(getProgramScope(), assignment.getrValue1());
+                     boolean isSigned = varType instanceof SymbolTypeIntegerFixed && ((SymbolTypeIntegerFixed) varType).isSigned();
+                     if(!isSigned && constantInt > 0 && (constantInt & (constantInt - 1L)) == 0L) {
+                        // Modulo whole power of 2 (unsigned only)
                         assignment.setOperator(Operators.BOOL_AND);
-                        assignment.setrValue2(new ConstantInteger(constantInt - 1L, SymbolType.BYTE));
+                        assignment.setrValue2(new ConstantInteger(constantInt - 1L, varType));
                         getLog().append("Rewriting power 2 modulo to use AND " + assignment.toString(getProgram(), false));
                         optimized = true;
-                     } else {
+                     } else if(!isSigned) {
                         // Feature 13: Modulo non-power of 2: x % D = x - (x / D) * D
-                        SymbolType varType = SymbolTypeInference.inferType(getProgramScope(), assignment.getrValue1());
                         if(varType.getSizeBytes() == 1 && constantInt > 1 && constantInt <= 255) {
                            Pass2MultiplyToShiftRewriting.Reciprocal recip = Pass2MultiplyToShiftRewriting.findReciprocal(constantInt);
                            if(recip != null) {

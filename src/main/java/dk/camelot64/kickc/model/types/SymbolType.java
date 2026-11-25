@@ -33,7 +33,7 @@ public interface SymbolType {
    /** Signed 24-bit tribyte (3 bytes, 24 bits). */
    SymbolTypeIntegerFixed STRIBYTE = new SymbolTypeIntegerFixed("signed tribyte", "__int24", -8_388_608L, 8_388_607L, true, 24, false, false);
    /** Unsigned double word (4 bytes, 32 bits). */
-   SymbolTypeIntegerFixed DWORD = new SymbolTypeIntegerFixed("dword", "unsigned long", 0, 4_294_967_296L, false, 32, false, false);
+   SymbolTypeIntegerFixed DWORD = new SymbolTypeIntegerFixed("dword", "unsigned long", 0, 4_294_967_295L, false, 32, false, false);
    /** Signed double word (4 bytes, 32 bits). */
    SymbolTypeIntegerFixed SDWORD = new SymbolTypeIntegerFixed("signed dword", "long", -2_147_483_648, 2_147_483_647, true, 32, false, false);
    /** Integer with unknown size and unknown signedness (used for constant expressions). */

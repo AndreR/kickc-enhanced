@@ -18,27 +18,11 @@ import java.util.*;
  */
 public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
 
-   private static class LineRef {
-      final AsmChunk chunk;
-      final AsmLine line;
-
-      LineRef(AsmChunk chunk, AsmLine line) {
-         this.chunk = chunk;
-         this.line = line;
-      }
-   }
+   private static final java.util.regex.Pattern SSA_TEMP_PATTERN = java.util.regex.Pattern.compile("__\\d+");
+   private static final java.util.regex.Pattern DIGITS_PATTERN = java.util.regex.Pattern.compile("\\d+");
 
    public Pass5DeadStoreElimination(Program program) {
       super(program);
-   }
-
-   private static String getBaseVar(String op) {
-      if(op == null) return "";
-      int idx = op.indexOf('+');
-      if(idx != -1) return op.substring(0, idx).trim();
-      int minusIdx = op.indexOf('-');
-      if(minusIdx != -1) return op.substring(0, minusIdx).trim();
-      return op.trim();
    }
 
    private static boolean isExactVarMatch(String operand, String var) {
@@ -65,7 +49,7 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
       if(dotIdx != -1) {
          base = base.substring(dotIdx + 1);
       }
-      return base.matches("__\\d+");
+      return SSA_TEMP_PATTERN.matcher(base).matches();
    }
 
    private static boolean doesInstructionModifyA(AsmInstruction inst) {
@@ -78,106 +62,6 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
              mnem.equals("arr") || mnem.equals("axs") || mnem.equals("dcp") || mnem.equals("isc") ||
              mnem.equals("rla") || mnem.equals("rra") || mnem.equals("slo") || mnem.equals("sre") ||
              ((mnem.equals("asl") || mnem.equals("lsr") || mnem.equals("rol") || mnem.equals("ror")) && mode.equals(CpuAddressingMode.NON));
-   }
-
-   public static class CanonicalResolver {
-      private final Map<String, String> aliasMap = new HashMap<>();
-
-      public CanonicalResolver() {}
-
-      public CanonicalResolver(Map<String, String> initialAliases) {
-         if(initialAliases != null) {
-            aliasMap.putAll(initialAliases);
-         }
-      }
-
-      public void addAlias(String name, String value) {
-         if(name == null || value == null) return;
-         String n = name.trim();
-         String v = value.trim();
-         if(v.startsWith(".z ")) v = v.substring(3).trim();
-         aliasMap.put(n, v);
-         int dotIdx = n.lastIndexOf('.');
-         if(dotIdx != -1) {
-            aliasMap.put(n.substring(dotIdx + 1), v);
-         }
-      }
-
-      public String resolve(String operand) {
-         if(operand == null) return "";
-         String op = operand.trim();
-         if(op.startsWith(".z ")) op = op.substring(3).trim();
-
-         // Extract base and initial offset
-         String base = op;
-         int offset = 0;
-         int plusIdx = base.indexOf('+');
-         int minusIdx = base.indexOf('-');
-         if(plusIdx != -1) {
-            try {
-               offset = Integer.parseInt(base.substring(plusIdx + 1).trim());
-               base = base.substring(0, plusIdx).trim();
-            } catch(Exception ignored) {}
-         } else if(minusIdx != -1) {
-            try {
-               offset = -Integer.parseInt(base.substring(minusIdx + 1).trim());
-               base = base.substring(0, minusIdx).trim();
-            } catch(Exception ignored) {}
-         }
-
-         // Follow alias chains
-         Set<String> visited = new HashSet<>();
-         visited.add(base);
-         for(int i = 0; i < 20; i++) {
-            String next = aliasMap.get(base);
-            if(next == null) {
-               int dotIdx = base.lastIndexOf('.');
-               if(dotIdx != -1) {
-                  next = aliasMap.get(base.substring(dotIdx + 1));
-               }
-            }
-            if(next == null) break;
-            if(next.startsWith(".z ")) next = next.substring(3).trim();
-
-            int nPlus = next.indexOf('+');
-            int nMinus = next.indexOf('-');
-            if(nPlus != -1) {
-               try {
-                  offset += Integer.parseInt(next.substring(nPlus + 1).trim());
-                  base = next.substring(0, nPlus).trim();
-               } catch(Exception e) {
-                  base = next;
-               }
-            } else if(nMinus != -1) {
-               try {
-                  offset -= Integer.parseInt(next.substring(nMinus + 1).trim());
-                  base = next.substring(0, nMinus).trim();
-               } catch(Exception e) {
-                  base = next;
-               }
-            } else {
-               base = next;
-            }
-
-            if(!visited.add(base)) break; // cycle protection
-         }
-
-         // If base is a numeric hardware address, fold the offset into the address
-         Integer addr = parseAddress(base);
-         if(addr != null) {
-            int finalAddr = addr + offset;
-            if(finalAddr >= 0 && finalAddr <= 0xff) {
-               return String.format("$%02x", finalAddr);
-            } else {
-               return String.format("$%04x", finalAddr & 0xffff);
-            }
-         }
-
-         if(offset != 0) {
-            return base + (offset > 0 ? "+" + offset : "" + offset);
-         }
-         return base;
-      }
    }
 
    private static List<String> extractReferencedTokens(String operand) {
@@ -285,7 +169,7 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
             return Integer.parseInt(t.substring(1), 16);
          } else if(t.startsWith("0x") || t.startsWith("0X")) {
             return Integer.parseInt(t.substring(2), 16);
-         } else if(t.matches("\\d+")) {
+         } else if(DIGITS_PATTERN.matcher(t).matches()) {
             return Integer.parseInt(t);
          }
       } catch(Exception e) {}
@@ -383,8 +267,8 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
 
             // 1. Parse all .label declarations in this scope
             CanonicalResolver resolver = new CanonicalResolver(globalAliases);
-            Map<String, String> labelToVal = new HashMap<>();
-            Map<String, Set<String>> valToLabels = new HashMap<>();
+            Map<String, String> labelToVal = new LinkedHashMap<>();
+            Map<String, Set<String>> valToLabels = new LinkedHashMap<>();
             for(LineRef ref : sLines) {
                if(ref.line instanceof AsmLabelDecl) {
                   AsmLabelDecl decl = (AsmLabelDecl) ref.line;
@@ -417,8 +301,7 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
             // 2. Identify candidate procedure-local SSA temporaries:
             // Must be __\d+, must map to a raw hardware address ($xx or decimal),
             // must NOT collide with any global/parameter address, and must uniquely own that hardware address in this scope!
-            Set<String> ssaCandidates = new HashSet<>();
-            Map<String, String> candToAddress = new HashMap<>();
+            Set<String> ssaCandidates = new LinkedHashSet<>();
 
             for(Map.Entry<String, String> entryVal : labelToVal.entrySet()) {
                String name = entryVal.getKey();
@@ -428,7 +311,6 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                   boolean isRawAddress = addr != null;
                   if(isRawAddress && !protectedAddrs.contains(addr) && valToLabels.containsKey(val) && valToLabels.get(val).size() == 1) {
                      ssaCandidates.add(name);
-                     candToAddress.put(name, val.toLowerCase());
                   }
                }
             }
@@ -437,7 +319,7 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
             // When an SSA variable (or byte offset) v is written (sta v) and read exactly once (lda v; sta TARGET)
             // within the same basic block, forward TARGET into the original store and remove the copy.
             if(!ssaCandidates.isEmpty()) {
-               Set<String> allSsaVarsInScope = new HashSet<>(ssaCandidates);
+               Set<String> allSsaVarsInScope = new LinkedHashSet<>(ssaCandidates);
                for(String cand : ssaCandidates) {
                   allSsaVarsInScope.add(cand + "+1");
                   allSsaVarsInScope.add(cand + "+2");
@@ -502,7 +384,7 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                            AsmInstruction finalStore = (AsmInstruction) sLines.get(nextStoreIdx).line;
                            String target = finalStore.getOperand1();
 
-                           if(target != null && !Pass5RedundantStoreAndReloadElimination.isHardwareAddress(target) &&
+                           if(target != null && !isVolatileOrHardwareOperand(finalStore, entry.getKey(), resolver, getProgram()) &&
                               !target.equals(v) && !origStore.isNoOptimize() && !readInst.isNoOptimize() && !finalStore.isNoOptimize()) {
 
                               boolean safe = true;
@@ -535,83 +417,6 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                                  passModified = true;
                                  overallModified = true;
                                  break;
-                              }
-                           }
-                        }
-                     }
-                  } else if(!hasComplexRef && writeIndices.size() == 2 && readIndices.size() == 2) {
-                     int w0 = writeIndices.get(0);
-                     int w1 = writeIndices.get(1);
-                     int r0 = readIndices.get(0);
-                     int r1 = readIndices.get(1);
-                     if(w0 < w1 && w1 < r0 && r0 < r1) {
-                        AsmInstruction w0Inst = (AsmInstruction) sLines.get(w0).line;
-                        AsmInstruction w1Inst = (AsmInstruction) sLines.get(w1).line;
-                        AsmInstruction r0Inst = (AsmInstruction) sLines.get(r0).line;
-                        AsmInstruction r1Inst = (AsmInstruction) sLines.get(r1).line;
-                        String w0Op = w0Inst.getOperand1();
-                        String w1Op = w1Inst.getOperand1();
-                        String r0Op = r0Inst.getOperand1();
-                        String r1Op = r1Inst.getOperand1();
-                        if(w0Op != null && w1Op != null && r0Op != null && r1Op != null &&
-                           w0Op.equals(v) && w1Op.equals(v + "+1") && r0Op.equals(v) && r1Op.equals(v + "+1")) {
-                           int s0 = -1;
-                           for(int n = r0 + 1; n < r1; n++) {
-                              AsmLine nl = sLines.get(n).line;
-                              if(nl instanceof AsmComment || nl instanceof AsmConstant || nl instanceof AsmLabelDecl) continue;
-                              if(nl instanceof AsmInstruction) {
-                                 AsmInstruction ni = (AsmInstruction) nl;
-                                 if(ni.getCpuOpcode() != null && "sta".equals(ni.getCpuOpcode().getMnemonic())) s0 = n;
-                              }
-                              break;
-                           }
-                           int s1 = -1;
-                           for(int n = r1 + 1; n < sLines.size(); n++) {
-                              AsmLine nl = sLines.get(n).line;
-                              if(nl instanceof AsmComment || nl instanceof AsmConstant || nl instanceof AsmLabelDecl) continue;
-                              if(nl instanceof AsmInstruction) {
-                                 AsmInstruction ni = (AsmInstruction) nl;
-                                 if(ni.getCpuOpcode() != null && "sta".equals(ni.getCpuOpcode().getMnemonic())) s1 = n;
-                              }
-                              break;
-                           }
-                           if(s0 != -1 && s1 != -1) {
-                              AsmInstruction s0Inst = (AsmInstruction) sLines.get(s0).line;
-                              AsmInstruction s1Inst = (AsmInstruction) sLines.get(s1).line;
-                              String target0 = s0Inst.getOperand1();
-                              String target1 = s1Inst.getOperand1();
-                              if(target0 != null && target1 != null && target1.equals(target0 + "+1") &&
-                                 !Pass5RedundantStoreAndReloadElimination.isHardwareAddress(target0)) {
-                                 boolean safe = true;
-                                 for(int m = w0 + 1; m < r0; m++) {
-                                    AsmLine ml = sLines.get(m).line;
-                                    if(ml instanceof AsmLabel || ml instanceof AsmScopeBegin || ml instanceof AsmScopeEnd || ml instanceof AsmInlineKickAsm) {
-                                       safe = false; break;
-                                    }
-                                    if(ml instanceof AsmInstruction) {
-                                       AsmInstruction mi = (AsmInstruction) ml;
-                                       if(mi.getCpuOpcode() == null || mi.getCpuOpcode().isJump() || mi.getCpuOpcode().getMnemonic().equals("jsr")) {
-                                          safe = false; break;
-                                       }
-                                       if(doesInstructionReferenceVar(mi, target0) || doesInstructionReferenceVar(mi, target1)) {
-                                          safe = false; break;
-                                       }
-                                    }
-                                 }
-                                 if(safe) {
-                                    getLog().append("Forwarding 16-bit transient temporary " + v + " -> " + target0);
-                                    w0Inst.setOperand1(target0);
-                                    w0Inst.setCpuOpcode(s0Inst.getCpuOpcode());
-                                    w1Inst.setOperand1(target1);
-                                    w1Inst.setCpuOpcode(s1Inst.getCpuOpcode());
-                                    sLines.get(r0).chunk.getLines().remove(r0Inst);
-                                    sLines.get(s0).chunk.getLines().remove(s0Inst);
-                                    sLines.get(r1).chunk.getLines().remove(r1Inst);
-                                    sLines.get(s1).chunk.getLines().remove(s1Inst);
-                                    passModified = true;
-                                    overallModified = true;
-                                    break;
-                                 }
                               }
                            }
                         }
@@ -692,7 +497,7 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                if(nextStoreIdx != -1) {
                   AsmInstruction inst2 = (AsmInstruction) sLines.get(nextStoreIdx).line;
                   String destOp = inst2.getOperand1();
-                  if(destOp != null && isSsaTemp(destOp) && !Pass5RedundantStoreAndReloadElimination.isHardwareAddress(destOp)) {
+                  if(destOp != null && isSsaTemp(destOp) && !isVolatileOrHardwareOperand(inst2, entry.getKey(), resolver, getProgram())) {
                      String baseDest = getBaseVar(destOp);
                      int dotIdx = baseDest.lastIndexOf('.');
                      String simpleDest = (dotIdx != -1) ? baseDest.substring(dotIdx + 1) : baseDest;
@@ -834,7 +639,7 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                                                        (reg.equals("X") && prevMnem.equals("ldx") && (prevMode.equals(CpuAddressingMode.IMM) || prevMode.equals(CpuAddressingMode.ZP) || prevMode.equals(CpuAddressingMode.ABS))) ||
                                                        (reg.equals("Y") && prevMnem.equals("ldy") && (prevMode.equals(CpuAddressingMode.IMM) || prevMode.equals(CpuAddressingMode.ZP) || prevMode.equals(CpuAddressingMode.ABS)));
 
-                              if(isMatchingLoad && !Pass5RedundantStoreAndReloadElimination.isHardwareAddress(prevInst.getOperand1()) && overwritesRegister(nextInst, reg)) {
+                              if(isMatchingLoad && !isVolatileOrHardwareOperand(prevInst, entry.getKey(), resolver, getProgram()) && overwritesRegister(nextInst, reg)) {
                                  canEliminatePrevLoad = true;
                               }
                            }
@@ -856,6 +661,109 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                      }
                   }
                }
+
+               // GEN-04: Byte-granular DSE for unread sub-bytes (e.g. __NN+1) of read multi-byte SSA temporaries
+               if(!passModified && !readVars.isEmpty() && inlineKickAsmList.isEmpty()) {
+                  String currentScopeName = entry.getKey();
+                  Set<String> exactReadCanon = new HashSet<>();
+                  Set<String> unsafeBaseVars = new HashSet<>();
+                  // Protect any non-SSA .label alias in this scope (e.g. .label return = __1) and its canonical bytes
+                  Set<Integer> aliasProtectedAddrs = new HashSet<>(protectedAddrs);
+                  for(LineRef ref : sLines) {
+                     if(ref.line instanceof AsmLabelDecl decl) {
+                        String dName = decl.getName().trim();
+                        String dVal = decl.getValue().trim();
+                        if(!isSsaTemp(dName)) {
+                           String resolved = resolver.resolve(dName);
+                           Integer rAddr = parseAddress(resolved);
+                           if(rAddr != null) {
+                              aliasProtectedAddrs.add(rAddr);
+                              aliasProtectedAddrs.add(rAddr + 1);
+                              aliasProtectedAddrs.add(rAddr + 2);
+                              aliasProtectedAddrs.add(rAddr + 3);
+                           }
+                           String valBase = getBaseVar(dVal);
+                           if(!valBase.isEmpty()) {
+                              unsafeBaseVars.add(valBase);
+                           }
+                        }
+                     }
+                  }
+                  // Protect any cross-scope reads referencing currentScope.<var>
+                  String scopePrefix = currentScopeName + ".";
+                  for(LineRef allRef : allLines) {
+                     if(allRef.line instanceof AsmInstruction ai && ai.getOperand1() != null) {
+                        String aop = ai.getOperand1().trim();
+                        if(aop.startsWith(scopePrefix)) {
+                           String sub = aop.substring(scopePrefix.length());
+                           unsafeBaseVars.add(getBaseVar(sub));
+                        }
+                     } else if(allRef.line instanceof AsmLabelDecl ad) {
+                        String aval = ad.getValue().trim();
+                        if(aval.startsWith(scopePrefix)) {
+                           String sub = aval.substring(scopePrefix.length());
+                           unsafeBaseVars.add(getBaseVar(sub));
+                        }
+                     }
+                  }
+
+                  for(LineRef ref : sLines) {
+                     if(!(ref.line instanceof AsmInstruction inst)) continue;
+                     if(inst.getCpuOpcode() == null || inst.getOperand1() == null) continue;
+                     String mnem = inst.getCpuOpcode().getMnemonic();
+                     CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+                     String op = inst.getOperand1().trim();
+                     if(op.startsWith(".z ")) op = op.substring(3).trim();
+                     boolean isPlainStore = (mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty"))
+                           && (mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS));
+                     if(mode.equals(CpuAddressingMode.IZY) || mode.equals(CpuAddressingMode.IZX)
+                           || mode.equals(CpuAddressingMode.ZPX) || mode.equals(CpuAddressingMode.ZPY)
+                           || mode.equals(CpuAddressingMode.ABX) || mode.equals(CpuAddressingMode.ABY)
+                           || op.startsWith("<") || op.startsWith(">")
+                           || op.startsWith("#<") || op.startsWith("#>")) {
+                        String cleanOp = op;
+                        if(cleanOp.startsWith("#")) cleanOp = cleanOp.substring(1).trim();
+                        if(cleanOp.startsWith("<") || cleanOp.startsWith(">")) cleanOp = cleanOp.substring(1).trim();
+                        unsafeBaseVars.add(getBaseVar(cleanOp));
+                     }
+                     if(!isPlainStore) {
+                        exactReadCanon.add(resolver.resolve(op));
+                     }
+                  }
+                  for(int i = 0; i < sLines.size(); i++) {
+                     LineRef ref = sLines.get(i);
+                     if(!(ref.line instanceof AsmInstruction inst)) continue;
+                     if(inst.isNoOptimize() || inst.getCpuOpcode() == null || inst.getOperand1() == null) continue;
+                     String mnem = inst.getCpuOpcode().getMnemonic();
+                     CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+                     if(!(mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty"))) continue;
+                     if(!(mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS))) continue;
+                     String op = inst.getOperand1().trim();
+                     String baseVar = getBaseVar(op);
+                     int dotIdx = baseVar.lastIndexOf('.');
+                     String simpleName = dotIdx != -1 ? baseVar.substring(dotIdx + 1) : baseVar;
+                     if(!(readVars.contains(baseVar) || readVars.contains(simpleName))) continue;
+                     if(unsafeBaseVars.contains(baseVar) || unsafeBaseVars.contains(simpleName)) continue;
+                     if(isVolatileOrHardwareOperand(inst, currentScopeName, resolver, getProgram())) continue;
+                     String canonByte = resolver.resolve(op);
+                     Integer canonAddr = parseAddress(canonByte);
+                     if(canonAddr != null && aliasProtectedAddrs.contains(canonAddr)) continue;
+                     if(!canonByte.isEmpty() && !exactReadCanon.contains(canonByte)) {
+                        getLog().append("GEN-04: Eliminating dead byte store " + inst.getAsm() + " (canon " + canonByte + " never read)");
+                        ref.chunk.getLines().remove(inst);
+                        passModified = true;
+                        overallModified = true;
+                        break;
+                     }
+                  }
+               }
+            }
+            if(!passModified) {
+               if(eliminateIntraBlockOverwrittenStores(sLines, entry.getKey(), resolver)) {
+                  passModified = true;
+                  overallModified = true;
+                  break;
+               }
             }
             if(passModified) {
                break;
@@ -864,6 +772,110 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
       }
 
       return overallModified;
+   }
+
+   /**
+    * OPT-01: Intra-block Dead Store Elimination.
+    * Eliminates a plain ZP/ABS store (sta/stx/sty) when a subsequent plain store in the same basic block
+    * completely overwrites the exact same canonical target without any intervening read, branch, call,
+    * indirect/indexed access, or volatile/hardware-address guard.
+    */
+   private boolean eliminateIntraBlockOverwrittenStores(List<LineRef> sLines, String scopeName,
+                                                        CanonicalResolver resolver) {
+      for(int i = 0; i < sLines.size(); i++) {
+         LineRef ref = sLines.get(i);
+         if(!(ref.line instanceof AsmInstruction inst)) continue;
+         if(inst.isNoOptimize() || inst.getCpuOpcode() == null || inst.getOperand1() == null) continue;
+         String mnem = inst.getCpuOpcode().getMnemonic();
+         CpuAddressingMode mode = inst.getCpuOpcode().getAddressingMode();
+         if(!(mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty"))) continue;
+         if(!(mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS))) continue;
+         if(isVolatileOrHardwareOperand(inst, scopeName, resolver, getProgram())) continue;
+
+         String op = inst.getOperand1().trim();
+         String canonTarget = resolver.resolve(op);
+         if(canonTarget.isEmpty()) continue;
+         String baseTarget = getBaseVar(op);
+
+         boolean overwritten = false;
+         for(int j = i + 1; j < sLines.size(); j++) {
+            AsmLine lineJ = sLines.get(j).line;
+            if(lineJ instanceof AsmComment || lineJ instanceof AsmConstant || lineJ instanceof AsmLabelDecl) continue;
+            if(!(lineJ instanceof AsmInstruction instJ)) break;
+            if(instJ.getCpuOpcode() == null) break;
+
+            String mnemJ = instJ.getCpuOpcode().getMnemonic();
+            CpuAddressingMode modeJ = instJ.getCpuOpcode().getAddressingMode();
+            if(instJ.getCpuOpcode().isJump() || mnemJ.startsWith("b")
+                  || mnemJ.equals("jsr") || mnemJ.equals("rts") || mnemJ.equals("rti") || mnemJ.equals("brk")) {
+               break;
+            }
+
+            boolean isPlainStoreJ = (mnemJ.equals("sta") || mnemJ.equals("stx") || mnemJ.equals("sty"))
+                  && (modeJ.equals(CpuAddressingMode.ZP) || modeJ.equals(CpuAddressingMode.ABS));
+            String opJ = instJ.getOperand1();
+            if(isPlainStoreJ && opJ != null) {
+               String canonJ = resolver.resolve(opJ.trim());
+               if(canonTarget.equals(canonJ)) {
+                  overwritten = true;
+                  break;
+               }
+               continue;
+            }
+
+            if(modeJ.equals(CpuAddressingMode.IZX) || modeJ.equals(CpuAddressingMode.IZY)
+                  || modeJ.equals(CpuAddressingMode.IND) || modeJ.equals(CpuAddressingMode.ZPX)
+                  || modeJ.equals(CpuAddressingMode.ZPY) || modeJ.equals(CpuAddressingMode.ABX)
+                  || modeJ.equals(CpuAddressingMode.ABY)) {
+               break;
+            }
+            if(opJ != null) {
+               String cleanOpJ = opJ.trim();
+               String canonJ = resolver.resolve(cleanOpJ);
+               String baseJ = getBaseVar(cleanOpJ);
+               if(canonTarget.equals(canonJ) || (!baseTarget.isEmpty() && baseTarget.equals(baseJ))) {
+                  break;
+               }
+            }
+         }
+
+         if(overwritten) {
+            String reg = mnem.equals("sta") ? "A" : (mnem.equals("stx") ? "X" : "Y");
+            int prevIdx = prevInstIdx(sLines, i - 1);
+            int nextIdx = nextInstIdx(sLines, i + 1);
+            boolean eliminatePrevLoad = false;
+            if(prevIdx != -1 && nextIdx != -1) {
+               AsmInstruction prevInst = (AsmInstruction) sLines.get(prevIdx).line;
+               AsmInstruction nextInst = (AsmInstruction) sLines.get(nextIdx).line;
+               if(prevInst.getCpuOpcode() != null && nextInst.getCpuOpcode() != null) {
+                  String prevMnem = prevInst.getCpuOpcode().getMnemonic();
+                  CpuAddressingMode prevMode = prevInst.getCpuOpcode().getAddressingMode();
+                  boolean isLoad = (reg.equals("A") && prevMnem.equals("lda"))
+                        || (reg.equals("X") && prevMnem.equals("ldx"))
+                        || (reg.equals("Y") && prevMnem.equals("ldy"));
+                  boolean isSafeMode = prevMode.equals(CpuAddressingMode.IMM)
+                        || prevMode.equals(CpuAddressingMode.ZP)
+                        || prevMode.equals(CpuAddressingMode.ABS);
+                  if(isLoad && isSafeMode
+                        && !isVolatileOrHardwareOperand(prevInst, scopeName, resolver, getProgram())
+                        && overwritesRegister(nextInst, reg)) {
+                     eliminatePrevLoad = true;
+                  }
+               }
+            }
+
+            getLog().append("OPT-01: Eliminating intra-block overwritten store " + inst.getAsm());
+            ref.chunk.getLines().remove(inst);
+            if(eliminatePrevLoad) {
+               LineRef prevRef = sLines.get(prevIdx);
+               AsmInstruction prevInst = (AsmInstruction) prevRef.line;
+               getLog().append("OPT-01: Eliminating dead preceding load " + prevInst.getAsm());
+               prevRef.chunk.getLines().remove(prevInst);
+            }
+            return true;
+         }
+      }
+      return false;
    }
 
    private static int prevInstIdx(List<LineRef> lines, int start) {

@@ -3,6 +3,8 @@ package dk.camelot64.kickc.asm;
 import dk.camelot64.cpufamily6502.CpuAddressingMode;
 import dk.camelot64.cpufamily6502.CpuClobber;
 import dk.camelot64.cpufamily6502.CpuOpcode;
+import dk.camelot64.kickc.model.Program;
+import dk.camelot64.kickc.passes.Pass5AsmOptimization;
 
 import java.util.*;
 
@@ -12,9 +14,13 @@ import java.util.*;
 public class AsmProgramStaticRegisterValues {
 
    private AsmProgram program;
+   private Program kickcProgram;
+   private Map<String, Pass5AsmOptimization.CanonicalResolver> scopeResolvers;
+   private String currentScope = "";
 
    private Map<AsmInstruction, AsmRegisterValues> values;
    private Map<String, List<AsmRegisterValues>> forwardBranches = new HashMap<>();
+   private Set<AsmLabel> backwardTargetLabels = Collections.newSetFromMap(new IdentityHashMap<>());
    private boolean lastInstructionWasUnconditionalControlFlow = false;
 
    private static boolean areImmOrEqual(String s1, String s2) {
@@ -38,7 +44,12 @@ public class AsmProgramStaticRegisterValues {
    }
 
    public AsmProgramStaticRegisterValues(AsmProgram program) {
+      this(program, null);
+   }
+
+   public AsmProgramStaticRegisterValues(AsmProgram program, Program kickcProgram) {
       this.program = program;
+      this.kickcProgram = kickcProgram;
       this.values = new LinkedHashMap<>();
       initValues();
    }
@@ -247,7 +258,24 @@ public class AsmProgramStaticRegisterValues {
    private void initValues() {
       AsmRegisterValues current = new AsmRegisterValues();
       forwardBranches.clear();
+      backwardTargetLabels.clear();
       lastInstructionWasUnconditionalControlFlow = false;
+      currentScope = "";
+      List<Pass5AsmOptimization.LineRef> allLines = Pass5AsmOptimization.flattenLines(program);
+      scopeResolvers = Pass5AsmOptimization.buildScopeResolvers(allLines);
+      // CF-08: Pre-scan backward jumps to multi-labels (!-, !loop-, !--, etc.) and invalidate state at their targets
+      for(int i = 0; i < allLines.size(); i++) {
+         Pass5AsmOptimization.LineRef ref = allLines.get(i);
+         if(ref.line instanceof AsmInstruction inst && inst.getCpuOpcode() != null && inst.getCpuOpcode().isJump()) {
+            String target = inst.getOperandJumpTarget();
+            if(target != null && target.startsWith("!") && target.endsWith("-")) {
+               int targetIdx = Pass5AsmOptimization.findLabelIndex(allLines, target, i, ref.scope);
+               if(targetIdx != -1 && allLines.get(targetIdx).line instanceof AsmLabel targetLbl) {
+                  backwardTargetLabels.add(targetLbl);
+               }
+            }
+         }
+      }
       for(AsmChunk chunk : program.getChunks()) {
          for(AsmLine line : chunk.getLines()) {
             current = updateStaticRegisterValues(current, line);
@@ -255,14 +283,30 @@ public class AsmProgramStaticRegisterValues {
       }
    }
 
+   private boolean isVolatileOrHardware(String operand) {
+      Pass5AsmOptimization.CanonicalResolver resolver = scopeResolvers != null
+         ? scopeResolvers.getOrDefault(currentScope, scopeResolvers.get(""))
+         : null;
+      return Pass5AsmOptimization.isVolatileOrHardwareOperand(operand, currentScope, resolver, kickcProgram);
+   }
+
    private AsmRegisterValues updateStaticRegisterValues(AsmRegisterValues current, AsmLine line) {
-      if(line instanceof AsmScopeBegin || line instanceof AsmScopeEnd) {
+      if(line instanceof AsmScopeBegin) {
+         currentScope = ((AsmScopeBegin) line).getLabel();
+         forwardBranches.clear();
+         lastInstructionWasUnconditionalControlFlow = false;
+         current = new AsmRegisterValues();
+      } else if(line instanceof AsmScopeEnd) {
+         currentScope = "";
          forwardBranches.clear();
          lastInstructionWasUnconditionalControlFlow = false;
          current = new AsmRegisterValues();
       } else if(line instanceof AsmLabel) {
          String lbl = ((AsmLabel) line).getLabel();
-         if(forwardBranches.containsKey(lbl)) {
+         if(backwardTargetLabels.contains(line)) {
+            forwardBranches.remove(lbl);
+            current = new AsmRegisterValues();
+         } else if(forwardBranches.containsKey(lbl)) {
             List<AsmRegisterValues> branchStates = forwardBranches.remove(lbl);
             AsmRegisterValues merged = null;
             if(!lastInstructionWasUnconditionalControlFlow) {
@@ -288,7 +332,8 @@ public class AsmProgramStaticRegisterValues {
          lastInstructionWasUnconditionalControlFlow = false;
       } else if(line instanceof AsmInstruction) {
          AsmInstruction instruction = (AsmInstruction) line;
-         values.put(instruction, current);
+         AsmRegisterValues preValues = current;
+         values.put(instruction, preValues);
          current = new AsmRegisterValues(current);
          CpuOpcode cpuOpcode = instruction.getCpuOpcode();
          CpuClobber cpuClobber = cpuOpcode.getClobber();
@@ -298,6 +343,24 @@ public class AsmProgramStaticRegisterValues {
          handleClobber(current, cpuClobber);
          String mnemnonic = cpuOpcode.getMnemonic();
          CpuAddressingMode addressingMode = cpuOpcode.getAddressingMode();
+         // ZP-02: Track constant X/Y across INX/DEX/INY/DEY
+         if(mnemnonic.equals("iny") || mnemnonic.equals("dey")) {
+            Integer prevY = getImmValue(preValues.getY());
+            if(prevY != null) {
+               int nextY = (mnemnonic.equals("iny") ? (prevY + 1) : (prevY - 1)) & 0xff;
+               current.setY("$" + Integer.toHexString(nextY));
+               current.setFlagZ(nextY == 0);
+               current.setFlagN(nextY > 127);
+            }
+         } else if(mnemnonic.equals("inx") || mnemnonic.equals("dex")) {
+            Integer prevX = getImmValue(preValues.getX());
+            if(prevX != null) {
+               int nextX = (mnemnonic.equals("inx") ? (prevX + 1) : (prevX - 1)) & 0xff;
+               current.setX("$" + Integer.toHexString(nextX));
+               current.setFlagZ(nextX == 0);
+               current.setFlagN(nextX > 127);
+            }
+         }
          if((mnemnonic.equals("inc") || mnemnonic.equals("dec") || mnemnonic.equals("ror") || mnemnonic.equals("rol") || mnemnonic.equals("lsr") || mnemnonic.equals("asl")) && (addressingMode.equals(CpuAddressingMode.ZP) || addressingMode.equals(CpuAddressingMode.ABS))) {
             String modParam = instruction.getOperand1();
             if(current.getaMem() != null && current.getaMem().equals(modParam)) {
@@ -323,11 +386,13 @@ public class AsmProgramStaticRegisterValues {
             }
          }
          if(mnemnonic.equals("lda") && (addressingMode.equals(CpuAddressingMode.ZP) || addressingMode.equals(CpuAddressingMode.ABS))) {
-            current.setaMem(instruction.getOperand1());
+            current.setaMem(isVolatileOrHardware(instruction.getOperand1()) ? null : instruction.getOperand1());
             current.setA(null);
          }
          if(mnemnonic.equals("sta") && (addressingMode.equals(CpuAddressingMode.ZP) || addressingMode.equals(CpuAddressingMode.ABS))) {
-            current.setaMem(instruction.getOperand1());
+            if(!isVolatileOrHardware(instruction.getOperand1())) {
+               current.setaMem(instruction.getOperand1());
+            }
             if(instruction.getOperand1().equals(current.getyMem())) current.setyMem(null);
             if(instruction.getOperand1().equals(current.getxMem())) current.setxMem(null);
             if(instruction.getOperand1().equals(current.getzMem())) current.setzMem(null);
@@ -342,11 +407,13 @@ public class AsmProgramStaticRegisterValues {
             }
          }
          if(mnemnonic.equals("ldx") && (addressingMode.equals(CpuAddressingMode.ZP) || addressingMode.equals(CpuAddressingMode.ABS))) {
-            current.setxMem(instruction.getOperand1());
+            current.setxMem(isVolatileOrHardware(instruction.getOperand1()) ? null : instruction.getOperand1());
             current.setX(null);
          }
          if(mnemnonic.equals("stx") && (addressingMode.equals(CpuAddressingMode.ZP) || addressingMode.equals(CpuAddressingMode.ABS))) {
-            current.setxMem(instruction.getOperand1());
+            if(!isVolatileOrHardware(instruction.getOperand1())) {
+               current.setxMem(instruction.getOperand1());
+            }
             if(instruction.getOperand1().equals(current.getaMem())) current.setaMem(null);
             if(instruction.getOperand1().equals(current.getyMem())) current.setyMem(null);
             if(instruction.getOperand1().equals(current.getzMem())) current.setzMem(null);
@@ -361,10 +428,13 @@ public class AsmProgramStaticRegisterValues {
             }
          }
          if(mnemnonic.equals("ldy") && (addressingMode.equals(CpuAddressingMode.ZP) || addressingMode.equals(CpuAddressingMode.ABS))) {
-            current.setyMem(instruction.getOperand1());
+            current.setyMem(isVolatileOrHardware(instruction.getOperand1()) ? null : instruction.getOperand1());
+            current.setY(null);
          }
          if(mnemnonic.equals("sty") && (addressingMode.equals(CpuAddressingMode.ZP) || addressingMode.equals(CpuAddressingMode.ABS))) {
-            current.setyMem(instruction.getOperand1());
+            if(!isVolatileOrHardware(instruction.getOperand1())) {
+               current.setyMem(instruction.getOperand1());
+            }
             if(instruction.getOperand1().equals(current.getaMem())) current.setaMem(null);
             if(instruction.getOperand1().equals(current.getxMem())) current.setxMem(null);
             if(instruction.getOperand1().equals(current.getzMem())) current.setzMem(null);
@@ -379,10 +449,13 @@ public class AsmProgramStaticRegisterValues {
             }
          }
          if(mnemnonic.equals("ldz") && (addressingMode.equals(CpuAddressingMode.ZP) || addressingMode.equals(CpuAddressingMode.ABS))) {
-            current.setzMem(instruction.getOperand1());
+            current.setzMem(isVolatileOrHardware(instruction.getOperand1()) ? null : instruction.getOperand1());
+            current.setZ(null);
          }
          if(mnemnonic.equals("stz") && (addressingMode.equals(CpuAddressingMode.ZP) || addressingMode.equals(CpuAddressingMode.ABS))) {
-            current.setzMem(instruction.getOperand1());
+            if(!isVolatileOrHardware(instruction.getOperand1())) {
+               current.setzMem(instruction.getOperand1());
+            }
             if(instruction.getOperand1().equals(current.getaMem())) current.setaMem(null);
             if(instruction.getOperand1().equals(current.getxMem())) current.setxMem(null);
             if(instruction.getOperand1().equals(current.getyMem())) current.setyMem(null);
@@ -417,6 +490,17 @@ public class AsmProgramStaticRegisterValues {
          if(mnemnonic.equals("clc")) {
             current.setFlagC(Boolean.FALSE);
          }
+         if(mnemnonic.equals("bcs")) {
+            current.setFlagC(Boolean.FALSE);
+         }
+         if(mnemnonic.equals("bcc")) {
+            current.setFlagC(Boolean.TRUE);
+         }
+         if((mnemnonic.equals("cmp") || mnemnonic.equals("cpx") || mnemnonic.equals("cpy") || mnemnonic.equals("axs"))
+               && addressingMode.equals(CpuAddressingMode.IMM)
+               && ("0".equals(instruction.getOperand1()) || "$0".equals(instruction.getOperand1()) || "$00".equals(instruction.getOperand1()))) {
+            current.setFlagC(Boolean.TRUE);
+         }
          if(mnemnonic.equals("tsx")) {
             current.setXIsSp(true);
          }
@@ -425,7 +509,7 @@ public class AsmProgramStaticRegisterValues {
          }
          if(cpuOpcode.isJump() && instruction.getOperandJumpTarget() != null) {
             String target = instruction.getOperandJumpTarget();
-            if(target.startsWith("!") && target.endsWith("+")) {
+            if(target.startsWith("!") && target.endsWith("+") && !target.endsWith("++")) {
                String labelTarget = target.substring(0, target.length() - 1);
                AsmRegisterValues snapshot = new AsmRegisterValues(current);
                snapshot.setFlagC(null);

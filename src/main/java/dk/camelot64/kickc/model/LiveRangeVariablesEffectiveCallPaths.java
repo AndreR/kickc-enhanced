@@ -45,8 +45,9 @@ public class LiveRangeVariablesEffectiveCallPaths implements LiveRangeVariablesE
       this.referenceInfo = referenceInfo;
       this.blockSuccessorClosure = blockSuccessorClosure;
       this.statementLiveVariables = new LinkedHashMap<>();
+      LiveRangeVariables.LiveRangeVariablesByStatement byStatement = liveRangeVariables.getLiveRangeVariablesByStatement();
       for (Statement statement : program.getGraph().getAllStatements()) {
-         statementLiveVariables.put(statement.getIndex(), liveRangeVariables.getAlive(statement.getIndex()));
+         statementLiveVariables.put(statement.getIndex(), byStatement.getAlive(statement.getIndex()));
       }
    }
 

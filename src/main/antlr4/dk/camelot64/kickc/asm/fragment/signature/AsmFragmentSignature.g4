@@ -47,7 +47,7 @@ expr
     ;
 
 NUM     : [0-9][0-9]?;
-VAR     : [vpq][bwtpsv][usor][czmaxy][0-9axyz] ;
+VAR     : [vpq][bwtdpsv][usor][czmaxy][0-9axyz] ;
 LABEL   : [l][a][0-9] ;
 NAME    : [a-z][a-z0-9]+ ;
 WHITESPACE : [_\n]+ -> skip ;

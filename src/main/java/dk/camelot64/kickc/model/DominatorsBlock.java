@@ -19,7 +19,7 @@ public class DominatorsBlock {
    Set<LabelRef> dominators;
 
    public DominatorsBlock() {
-      this.dominators = new HashSet<>();
+      this.dominators = new LinkedHashSet<>();
    }
 
    /**

@@ -58,6 +58,11 @@ public class ConstantBinary implements ConstantValue {
          if(SymbolType.NUMBER.equals(literal.getType(scope)) || (currentType != null && currentType.getSizeBytes() > literal.getType(scope).getSizeBytes())) {
             ((ConstantInteger) literal).setType(currentType);
          }
+         SymbolType finalType = literal.getType(scope);
+         if(finalType instanceof dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed) {
+            dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed fixedType = (dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed) finalType;
+            return new ConstantInteger(fixedType.normalize(((ConstantInteger) literal).getValue()), fixedType);
+         }
       }
       return literal;
    }
@@ -67,7 +72,7 @@ public class ConstantBinary implements ConstantValue {
       SymbolType leftType = SymbolTypeInference.inferType(scope, left);
       SymbolType rightType = SymbolTypeInference.inferType(scope, right);
       SymbolType binaryType = operator.inferType(leftType, rightType);
-      if(operator instanceof dk.camelot64.kickc.model.operators.OperatorShiftLeft) {
+      if(operator instanceof dk.camelot64.kickc.model.operators.OperatorShiftLeft && leftType instanceof dk.camelot64.kickc.model.types.SymbolTypeIntegerAuto) {
          try {
             ConstantLiteral lit = operator.calculateLiteral(left.calculateLiteral(scope), right.calculateLiteral(scope));
             if(lit instanceof ConstantInteger) {

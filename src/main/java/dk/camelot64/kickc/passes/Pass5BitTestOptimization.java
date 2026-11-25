@@ -27,20 +27,6 @@ import java.util.*;
  */
 public class Pass5BitTestOptimization extends Pass5AsmOptimization {
 
-   public static class LineRef {
-      final int index;
-      final AsmChunk chunk;
-      final AsmLine line;
-      final String scope;
-
-      LineRef(int index, AsmChunk chunk, AsmLine line, String scope) {
-         this.index = index;
-         this.chunk = chunk;
-         this.line = line;
-         this.scope = scope;
-      }
-   }
-
    public Pass5BitTestOptimization(Program program) {
       super(program);
    }
@@ -77,42 +63,7 @@ public class Pass5BitTestOptimization extends Pass5AsmOptimization {
    }
 
    private boolean isADeadAfter(List<LineRef> allLines, int startIdx, String currentScope) {
-      for(int m = startIdx; m < allLines.size(); m++) {
-         LineRef cand = allLines.get(m);
-         if(cand.line instanceof AsmComment || cand.line instanceof AsmConstant || cand.line instanceof AsmLabelDecl || cand.line instanceof AsmLabel) {
-            continue;
-         }
-         if(cand.line instanceof AsmInstruction) {
-            AsmInstruction inst = (AsmInstruction) cand.line;
-            CpuOpcode op = inst.getCpuOpcode();
-            if(op == null) return false;
-            String mnem = op.getMnemonic();
-            if(mnem.equals("lda") || mnem.equals("pla") || mnem.equals("txa") || mnem.equals("tya") || mnem.equals("lax")) {
-               return true;
-            }
-            if(mnem.equals("rts")) {
-               if(currentScope != null) {
-                  Symbol sym = getProgram().getScope().findSymbol(currentScope);
-                  if(sym instanceof Procedure && SymbolType.VOID.equals(((Procedure) sym).getReturnType())) {
-                     return true;
-                  }
-               }
-               return false;
-            }
-            if(mnem.equals("sta") || mnem.equals("tax") || mnem.equals("tay") || mnem.equals("pha") ||
-               mnem.equals("cmp") || mnem.equals("adc") || mnem.equals("sbc") || mnem.equals("and") ||
-               mnem.equals("ora") || mnem.equals("eor") || mnem.equals("bit") || mnem.equals("sax") ||
-               mnem.equals("alr") || mnem.equals("anc") || mnem.equals("arr") || mnem.equals("axs") ||
-               mnem.equals("dcp") || mnem.equals("isc") || mnem.equals("rla") || mnem.equals("rra") ||
-               mnem.equals("slo") || mnem.equals("sre") ||
-               mnem.equals("jsr") || mnem.equals("rti") || mnem.equals("jmp") || mnem.startsWith("b")) {
-               return false;
-            }
-            continue;
-         }
-         break;
-      }
-      return false;
+      return isRegDeadAlongPath("A", allLines, startIdx, new HashSet<>(), currentScope, getProgram());
    }
 
    @Override
@@ -136,10 +87,9 @@ public class Pass5BitTestOptimization extends Pass5AsmOptimization {
                   currentScope = null;
                } else if(line instanceof AsmLabel) {
                   String lbl = ((AsmLabel) line).getLabel();
-                  if(!lbl.startsWith("!")) {
+                  if(lbl != null && !lbl.startsWith("!")) {
                      String key = (currentScope != null ? currentScope + "::" : "") + lbl;
                      labelIndices.put(key, lineIdx);
-                     labelIndices.put(lbl, lineIdx);
                   }
                }
                allLines.add(new LineRef(lineIdx++, chunk, line, currentScope));
@@ -258,11 +208,12 @@ public class Pass5BitTestOptimization extends Pass5AsmOptimization {
             // Check if A is dead on fallthrough path
             if(!isADeadAfter(allLines, idxBranch + 1, refBranch.scope)) continue;
 
-            // Check if A is dead on jump target path
+            // Check if A is dead on jump target path (strictly within refBranch.scope)
             String targetKey = (refBranch.scope != null ? refBranch.scope + "::" : "") + jumpTarget;
             Integer targetLineIdx = labelIndices.get(targetKey);
-            if(targetLineIdx == null) {
-               targetLineIdx = labelIndices.get(jumpTarget);
+            if(targetLineIdx == null && jumpTarget.startsWith("!")) {
+               int resolvedIdx = findLabelIndex(allLines, jumpTarget, idxBranch, refBranch.scope);
+               if(resolvedIdx != -1) targetLineIdx = resolvedIdx;
             }
             if(targetLineIdx != null) {
                if(!isADeadAfter(allLines, targetLineIdx + 1, refBranch.scope)) continue;

@@ -9,7 +9,7 @@ public class UnionDesignator implements RValue {
 
    private final String memberName;
 
-   private final RValue rValue;
+   private RValue rValue;
 
    public UnionDesignator(String memberName, RValue rValue) {
       this.memberName = memberName;
@@ -20,6 +20,10 @@ public class UnionDesignator implements RValue {
 
    public RValue getMemberValue() {
       return rValue;
+   }
+
+   public void setMemberValue(RValue rValue) {
+      this.rValue = rValue;
    }
 
    @Override

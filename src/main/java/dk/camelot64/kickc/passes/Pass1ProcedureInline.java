@@ -43,7 +43,8 @@ public class Pass1ProcedureInline extends Pass1Base {
                if(statement instanceof StatementCall call) {
                   ProcedureRef procedureRef = call.getProcedure();
                   Procedure procedure = getProgramScope().getProcedure(procedureRef);
-                  if(procedure.isDeclaredInline()) {
+                  Procedure caller = getProgramScope().getProcedure(procedureCompilation.getProcedureRef());
+                  if(procedure.isDeclaredInline() || isAutoInlineCandidate(procedure, caller, call)) {
                      procedure.setCallingConvention(Procedure.CallingConvention.PHI_CALL);
                      if(procedure.getInterruptType() != null) {
                         throw new CompileError("Error! Interrupts cannot be inlined. " + procedure.getRef().toString());
@@ -149,6 +150,68 @@ public class Pass1ProcedureInline extends Pass1Base {
       getLog().append("Inlined call " + call.toString(getProgram(), false));
    }
 
+   /**
+    * OPT-06: Heuristic for controlled auto-inlining of small, non-recursive leaf procedures.
+    */
+   private boolean isAutoInlineCandidate(Procedure callee, Procedure caller, StatementCall call) {
+      if(callee == null || caller == null || callee.equals(caller)) return false;
+      if(SymbolRef.MAIN_PROC_NAME.equals(callee.getLocalName())) return false;
+      if(callee.getInterruptType() != null) return false;
+      if(Procedure.CallingConvention.STACK_CALL.equals(callee.getCallingConvention())) return false;
+      if(Procedure.CallingConvention.STACK_CALL.equals(caller.getCallingConvention())) return false;
+      if(callee.isVariableLengthParameterList()) return false;
+      if(callee.getParameters() != null) {
+         for(Variable param : callee.getParameters()) {
+            if(param.getType() instanceof dk.camelot64.kickc.model.types.SymbolTypePointer) return false;
+         }
+      }
+      if(!java.util.Objects.equals(caller.getSegmentCode(), callee.getSegmentCode())) return false;
+      if(!java.util.Objects.equals(caller.getBank(), callee.getBank())) return false;
+
+      for(Variable localVar : callee.getAllVariables(false)) {
+         if(localVar.isKindLoadStore()) return false;
+      }
+
+      List<Graph.Block> calleeBlocks = getGraph().getScopeBlocks(callee.getRef());
+      if(calleeBlocks == null || calleeBlocks.isEmpty() || calleeBlocks.size() > 3) return false;
+
+      int stmtCount = 0;
+      for(Graph.Block b : calleeBlocks) {
+         for(Statement s : b.getStatements()) {
+            if(s instanceof StatementCall || s instanceof StatementCallPointer
+                  || s instanceof StatementAsm || s instanceof StatementKickAsm) {
+               return false;
+            }
+            stmtCount++;
+         }
+      }
+      if(stmtCount == 0 || stmtCount > 18) return false;
+
+      int callCount = 0;
+      for(var pc : getProgram().getProcedureCompilations()) {
+         if(pc.getGraph() == null) continue;
+         for(Graph.Block b : pc.getGraph().getAllBlocks()) {
+            for(Statement s : b.getStatements()) {
+               if(s instanceof StatementCall sc && callee.getRef().equals(sc.getProcedure())) {
+                  callCount++;
+               }
+            }
+         }
+      }
+      if(callCount == 1) return true;
+
+      boolean hasConstArg = false;
+      if(call.getParameters() != null) {
+         for(RValue p : call.getParameters()) {
+            if(p instanceof ConstantValue) {
+               hasConstArg = true;
+               break;
+            }
+         }
+      }
+      return callCount <= 4 && calleeBlocks.size() <= 2 && stmtCount <= 14 && hasConstArg;
+   }
+
    private LabelRef inlineSuccessor(LabelRef procBlockSuccessorRef, Procedure procedure, Scope callScope, int serial, Label restBlockLabel) {
       LabelRef inlinedSuccessor;
       if(procBlockSuccessorRef.getFullName().equals(SymbolRef.PROCEXIT_BLOCK_NAME)) {
@@ -201,6 +264,39 @@ public class Pass1ProcedureInline extends Pass1Base {
          StatementCall inlinedCall = new StatementCall(procCall.getlValue(), procCall.getProcedureName(), new ArrayList<>(procCall.getParameters()), procCall.getSource(), procCall.getComments());
          inlinedCall.setProcedure(procCall.getProcedure());
          inlinedStatement = inlinedCall;
+      } else if(procStatement instanceof StatementCallPointer procCallPtr) {
+         inlinedStatement = new StatementCallPointer(procCallPtr.getlValue(), procCallPtr.getProcedure(), new ArrayList<>(procCallPtr.getParameters()), procCallPtr.getSource(), procCallPtr.getComments());
+      } else if(procStatement instanceof StatementPhiBlock procPhi) {
+         StatementPhiBlock inlinedPhi = new StatementPhiBlock(procPhi.getComments());
+         inlinedPhi.setSource(procPhi.getSource());
+         for(StatementPhiBlock.PhiVariable procPhiVar : procPhi.getPhiVariables()) {
+            VariableRef phiVarRef = procPhiVar.getVariable();
+            Variable procPhiVarSym = getProgramScope().getVariable(phiVarRef);
+            if(procPhiVarSym != null && procPhiVarSym.getScope().equals(procedure)) {
+               String inlineVarName = getInlineSymbolName(procedure, procPhiVarSym, serial);
+               Variable inlineVar = callScope.getLocalVariable(inlineVarName);
+               if(inlineVar != null) {
+                  phiVarRef = inlineVar.getVariableRef();
+               }
+            }
+            StatementPhiBlock.PhiVariable inlinedPhiVar = inlinedPhi.addPhiVariable(phiVarRef);
+            for(StatementPhiBlock.PhiRValue phiRVal : procPhiVar.getValues()) {
+               LabelRef predRef = phiRVal.getPredecessor();
+               Symbol predSym = getProgramScope().getSymbol(predRef);
+               LabelRef inlinedPredRef = predRef;
+               if(procedure.equals(predSym)) {
+                  inlinedPredRef = callScope.getLocalLabel(procedure.getLocalName() + serial).getRef();
+               } else if(predSym instanceof Label && predSym.getScope().equals(procedure)) {
+                  String inlineLabelName = getInlineSymbolName(procedure, predSym, serial);
+                  Label inlinedLabel = callScope.getLocalLabel(inlineLabelName);
+                  if(inlinedLabel != null) {
+                     inlinedPredRef = inlinedLabel.getRef();
+                  }
+               }
+               inlinedPhiVar.setrValue(inlinedPredRef, phiRVal.getrValue());
+            }
+         }
+         inlinedStatement = inlinedPhi;
       } else if(procStatement instanceof StatementAsm procAsm) {
          inlinedStatement = new StatementAsm(procAsm.getAsmLines(), new LinkedHashMap<>(procAsm.getReferenced()), procAsm.getDeclaredClobber(), procAsm.getSource(), Comment.NO_COMMENTS);
       } else if(procStatement instanceof StatementKickAsm procKasm) {
@@ -215,6 +311,7 @@ public class Pass1ProcedureInline extends Pass1Base {
          }
          StatementConditionalJump inlinedConditionalJump = new StatementConditionalJump(procConditional.getrValue1(), procConditional.getOperator(), procConditional.getrValue2(), inlinedDest.getRef(), procConditional.getSource(), Comment.NO_COMMENTS);
          inlinedConditionalJump.setDeclaredUnroll(procConditional.isDeclaredUnroll());
+         inlinedConditionalJump.setDeclaredCountdown(procConditional.isDeclaredCountdown());
          inlinedStatement = inlinedConditionalJump;
       } else if(procStatement instanceof StatementReturn) {
          // No statement needed
@@ -254,6 +351,24 @@ public class Pass1ProcedureInline extends Pass1Base {
                String inlineSymbolName = Pass1ProcedureInline.this.getInlineSymbolName(procedure, procVar, serial);
                Variable inlineVar = callScope.getLocalVariable(inlineSymbolName);
                programValue.set(inlineVar.getRef());
+            }
+         } else if(rValue instanceof ConstantRef procConstRef) {
+            Variable procConst = Pass1ProcedureInline.this.getProgramScope().getConstant(procConstRef);
+            if(procConst != null && procConst.getScope().equals(procedure)) {
+               String inlineSymbolName = Pass1ProcedureInline.this.getInlineSymbolName(procedure, procConst, serial);
+               Variable inlineConst = callScope.getLocalConstant(inlineSymbolName);
+               if(inlineConst != null) {
+                  programValue.set(inlineConst.getRef());
+               }
+            }
+         } else if(rValue instanceof ConstantSymbolPointer procSymPtr) {
+            Symbol target = Pass1ProcedureInline.this.getProgramScope().getSymbol(procSymPtr.getToSymbol());
+            if(target != null && target.getScope().equals(procedure)) {
+               String inlineSymbolName = Pass1ProcedureInline.this.getInlineSymbolName(procedure, target, serial);
+               Symbol inlineSym = callScope.getLocalSymbol(inlineSymbolName);
+               if(inlineSym != null) {
+                  programValue.set(new ConstantSymbolPointer(inlineSym.getRef()));
+               }
             }
          } else if(rValue instanceof PointerDereferenceSimple) {
             programValue.set(new PointerDereferenceSimple(((PointerDereferenceSimple) rValue).getPointer()));

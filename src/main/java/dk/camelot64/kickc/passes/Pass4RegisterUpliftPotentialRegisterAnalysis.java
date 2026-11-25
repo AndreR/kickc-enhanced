@@ -57,6 +57,8 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
       }
    }
 
+   private Set<LiveRangeEquivalenceClass> dirtyClasses = null;
+
    /***
     * For each statement - try out all potential register combinations and examine the clobber
     *
@@ -65,6 +67,7 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
    public boolean findPotentialRegisters() {
 
       boolean modified = false;
+      Set<LiveRangeEquivalenceClass> nextDirtyClasses = new HashSet<>();
       LiveRangeEquivalenceClassSet liveRangeEquivalenceClassSet = getProgram().getLiveRangeEquivalenceClassSet();
 
       RegisterPotentials registerPotentials = getProgram().getRegisterPotentials();
@@ -83,8 +86,16 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
                assignedClasses.add(liveRangeEquivalenceClassSet.getEquivalenceClass(var));
             }
             Set<LiveRangeEquivalenceClass> referencedClasses = new LinkedHashSet<>();
+            boolean touchesDirty = (dirtyClasses == null);
             for(VariableRef var : referencedVars) {
-               referencedClasses.add(liveRangeEquivalenceClassSet.getEquivalenceClass(var));
+               LiveRangeEquivalenceClass ec = liveRangeEquivalenceClassSet.getEquivalenceClass(var);
+               referencedClasses.add(ec);
+               if(!touchesDirty && dirtyClasses.contains(ec)) {
+                  touchesDirty = true;
+               }
+            }
+            if(!touchesDirty) {
+               continue;
             }
 
             // Generate all combinations of potential register allocations for the referenced equivalence classes
@@ -97,7 +108,7 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
             if(alwaysClobbered.isEmpty()) {
                // No registers are always clobbered - move on to the next statement
                continue;
-            } else {
+            } else if(getLog().isEnabled()) {
                StringBuilder msg = new StringBuilder();
                msg.append("Statement ").append(statement.toString(getProgram(), true));
                msg.append(" always clobbers ");
@@ -119,9 +130,10 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
                for(Registers.Register clobberedRegister : alwaysClobbered) {
                   if(alivePotentialRegisters.contains(clobberedRegister)) {
                      registerPotentials.removePotentialRegister(aliveClass, clobberedRegister);
-                     StringBuilder msg = new StringBuilder();
-                     msg.append("Removing always clobbered register " + clobberedRegister + " as potential for " + aliveClass);
-                     getLog().append(msg.toString());
+                     if(getLog().isEnabled()) {
+                        getLog().append("Removing always clobbered register " + clobberedRegister + " as potential for " + aliveClass);
+                     }
+                     nextDirtyClasses.add(aliveClass);
                      modified = true;
                   }
                }
@@ -129,6 +141,7 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
          }
       }
 
+      dirtyClasses = nextDirtyClasses;
       getProgram().setRegisterPotentials(registerPotentials);
 
       return modified;
@@ -168,7 +181,7 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
             combination.allocate(getProgram());
             // Generate ASM
             AsmProgram asm = new AsmProgram(getProgram().getTargetCpu());
-            asm.startChunk(block.getScope(), statement.getIndex(), statement.toString(getProgram(), false));
+            asm.startChunk(block.getScope(), statement.getIndex(), "");
             try {
                (new Pass4CodeGeneration(getProgram(), false, false)).generateStatementAsm(asm, block, statement, false);
             } catch(AsmFragmentTemplateSynthesizer.UnknownFragmentException e) {

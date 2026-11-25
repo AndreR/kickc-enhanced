@@ -112,7 +112,7 @@ public class Pass4MemoryCoalesceAssignment extends Pass2Base {
             }
          }
 
-         Map<LiveRangeEquivalenceClass, Map<LiveRangeEquivalenceClass, Integer>> rawScores = new HashMap<>();
+         Map<LiveRangeEquivalenceClass, Map<LiveRangeEquivalenceClass, Integer>> rawScores = new LinkedHashMap<>();
          for(Map.Entry<VariableRef, Map<VariableRef, Integer>> entry1 : varScores.scores.entrySet()) {
             VariableRef var1 = entry1.getKey();
             LiveRangeEquivalenceClass ec1 = varToEc.get(var1);
@@ -123,7 +123,7 @@ public class Pass4MemoryCoalesceAssignment extends Pass2Base {
                if(score == null || score <= 0) continue;
                LiveRangeEquivalenceClass ec2 = varToEc.get(var2);
                if(ec2 == null || ec1.equals(ec2)) continue;
-               rawScores.computeIfAbsent(ec1, k -> new HashMap<>())
+               rawScores.computeIfAbsent(ec1, k -> new LinkedHashMap<>())
                      .merge(ec2, score, Integer::sum);
             }
          }
@@ -170,7 +170,17 @@ public class Pass4MemoryCoalesceAssignment extends Pass2Base {
             }
          }
          ArrayList<Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate> candidates = new ArrayList<>(candidateSet);
-         candidates.sort((o1, o2) -> (o2.getScore() - o1.getScore()));
+         candidates.sort((o1, o2) -> {
+            int cmp = Integer.compare(o2.getScore(), o1.getScore());
+            if(cmp != 0) return cmp;
+            String n1 = o1.getEc1().getVariables().isEmpty() ? "" : o1.getEc1().getVariables().get(0).getFullName();
+            String n2 = o2.getEc1().getVariables().isEmpty() ? "" : o2.getEc1().getVariables().get(0).getFullName();
+            cmp = n1.compareTo(n2);
+            if(cmp != 0) return cmp;
+            String m1 = o1.getEc2().getVariables().isEmpty() ? "" : o1.getEc2().getVariables().get(0).getFullName();
+            String m2 = o2.getEc2().getVariables().isEmpty() ? "" : o2.getEc2().getVariables().get(0).getFullName();
+            return m1.compareTo(m2);
+         });
          return candidates;
       }
    }

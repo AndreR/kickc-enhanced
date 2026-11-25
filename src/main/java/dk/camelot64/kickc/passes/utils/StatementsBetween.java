@@ -5,9 +5,13 @@ import dk.camelot64.kickc.model.statements.Statement;
 import dk.camelot64.kickc.model.values.LabelRef;
 import dk.camelot64.kickc.model.values.ProcedureRef;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 public class StatementsBetween {
@@ -19,6 +23,20 @@ public class StatementsBetween {
     * @return All statements executed between the two passed statements
     */
    public static Collection<Statement> find(Statement from, Graph.Block fromBlock, Statement to, Graph graph) {
+      if(fromBlock != null) {
+         List<Statement> stmts = fromBlock.getStatements();
+         int fromIdx = stmts.indexOf(from);
+         if(fromIdx >= 0) {
+            if(fromIdx + 1 < stmts.size() && stmts.get(fromIdx + 1).equals(to)) {
+               return Collections.emptyList();
+            }
+            for(int i = fromIdx + 1; i < stmts.size(); i++) {
+               if(stmts.get(i).equals(to)) {
+                  return new ArrayList<>(stmts.subList(fromIdx + 1, i));
+               }
+            }
+         }
+      }
       Collection<Statement> between = new LinkedHashSet<>();
       Set<LabelRef> visited = new HashSet<>();
       populateStatementsBetween(fromBlock, from, to, false, between, graph, visited);
@@ -62,9 +80,11 @@ public class StatementsBetween {
          // Recurse to successor blocks
          final Collection<LabelRef> successors = block.getSuccessors();
          for(LabelRef successor : successors) {
-            if(successor.getFullName().equals(ProcedureRef.PROCEXIT_BLOCK_NAME))
+            if(ProcedureRef.PROCEXIT_BLOCK_NAME.equals(successor.getLocalName()))
                continue;
             final Graph.Block successorBlock = graph.getBlock(successor);
+            if(successorBlock == null || !Objects.equals(block.getScope(), successorBlock.getScope()))
+               continue;
             populateStatementsBetween(successorBlock, from, to, true, between, graph, visited);
          }
       }

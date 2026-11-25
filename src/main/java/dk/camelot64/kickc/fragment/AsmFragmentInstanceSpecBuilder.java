@@ -170,7 +170,7 @@ final public class AsmFragmentInstanceSpecBuilder {
                 } else if (rValue2 instanceof ConstantInteger && ((((ConstantInteger) rValue2).getValue()) % 8 == 0) && isShift) {
                     rVal2SignatureExpr = new AsmFragmentSignatureExpr.Number(new ConstantInteger(((ConstantInteger) rValue2).getInteger()));
                 } else if (rValue2 instanceof ConstantInteger && ((ConstantInteger) rValue2).getValue() == 0 && isMinusOrPlus) {
-                    rVal2SignatureExpr = new AsmFragmentSignatureExpr.Number(new ConstantInteger(2L));
+                    rVal2SignatureExpr = new AsmFragmentSignatureExpr.Number(new ConstantInteger(0L));
                 } else {
                     rVal2SignatureExpr = bindings.bind(rValue2);
                 }

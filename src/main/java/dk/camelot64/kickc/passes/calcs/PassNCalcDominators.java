@@ -68,7 +68,7 @@ public class PassNCalcDominators extends PassNCalcBase<DominatorsGraph> {
          Map<LabelRef, Graph.Block> blockMap,
          Map<LabelRef, List<Graph.Block>> predecessorMap) {
 
-      Map<LabelRef, DominatorsBlock> dominatorsMap = new HashMap<>();
+      Map<LabelRef, DominatorsBlock> dominatorsMap = new LinkedHashMap<>();
 
       // Initialize dominators: Dom[first]={first}, Dom[block]={all}
       List<LabelRef> firstBlocks = new ArrayList<>();

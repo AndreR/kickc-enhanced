@@ -16,13 +16,13 @@ class AsmFragmentTemplateSynthesisRuleRegex implements AsmFragmentTemplateSynthe
    final String sigMatch;
 
    /** Compiled regex for sigMatch */
-   Pattern sigMatchPattern = null;
+   final Pattern sigMatchPattern;
 
    /** Regular expression that limits which fragments the synthesize rule can handle. */
    final String sigAvoid;
 
    /** Compiled regex for sigAvoid */
-   Pattern sigAvoidPattern = null;
+   final Pattern sigAvoidPattern;
 
    /** ASM code prefixed to the sub-fragment when synthesizing. */
    final private String asmPrefix;
@@ -44,7 +44,9 @@ class AsmFragmentTemplateSynthesisRuleRegex implements AsmFragmentTemplateSynthe
 
    AsmFragmentTemplateSynthesisRuleRegex(String sigMatch, String sigAvoid, String asmPrefix, String sigReplace, String asmPostfix, Map<String, String> bindMappings, boolean mapSignature, String subDontClobber) {
       this.sigMatch = sigMatch;
+      this.sigMatchPattern = Pattern.compile(sigMatch);
       this.sigAvoid = sigAvoid;
+      this.sigAvoidPattern = (sigAvoid != null) ? Pattern.compile(sigAvoid) : null;
       this.asmPrefix = asmPrefix;
       this.sigReplace = sigReplace;
       this.asmPostfix = asmPostfix;
@@ -72,15 +74,11 @@ class AsmFragmentTemplateSynthesisRuleRegex implements AsmFragmentTemplateSynthe
     * @return true if the rule matches the signature
     */
    public boolean matches(String signature) {
-      if(sigMatchPattern == null)
-         sigMatchPattern = Pattern.compile(sigMatch);
       Matcher m = sigMatchPattern.matcher(signature);
       if(m.matches()) {
-         if(sigAvoid == null)
+         if(sigAvoidPattern == null)
             return true;
          else {
-            if(sigAvoidPattern == null)
-               sigAvoidPattern = Pattern.compile(sigAvoid);
             Matcher ma = sigAvoidPattern.matcher(signature);
             return !ma.matches();
          }
@@ -89,18 +87,26 @@ class AsmFragmentTemplateSynthesisRuleRegex implements AsmFragmentTemplateSynthe
    }
 
    public List<String> getSubSignatures(String signature) {
-      if(matches(signature)) {
-         String subSignature = regexpRewriteSignature(signature, sigMatch, sigReplace);
-         if(mapSignature && bindMappings != null) {
-            // When mapping the signature we do the map replacement in the signature
-            for(String bound : bindMappings.keySet()) {
-               subSignature = subSignature.replace(bound, bindMappings.get(bound));
-            }
-         }
-         return Collections.singletonList(subSignature);
-      } else {
+      return matchAndGetSubSignatures(signature);
+   }
+
+   @Override
+   public List<String> matchAndGetSubSignatures(String signature) {
+      Matcher m = sigMatchPattern.matcher(signature);
+      if(!m.matches()) {
          return null;
       }
+      if(sigAvoidPattern != null && sigAvoidPattern.matcher(signature).matches()) {
+         return null;
+      }
+      String subSignature = m.replaceAll(sigReplace);
+      if(mapSignature && bindMappings != null) {
+         // When mapping the signature we do the map replacement in the signature
+         for(Map.Entry<String, String> entry : bindMappings.entrySet()) {
+            subSignature = subSignature.replace(entry.getKey(), entry.getValue());
+         }
+      }
+      return Collections.singletonList(subSignature);
    }
 
    public AsmFragmentTemplate synthesize(String signature, List<AsmFragmentTemplate> subTemplates) {

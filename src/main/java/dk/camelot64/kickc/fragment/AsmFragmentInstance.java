@@ -161,8 +161,12 @@ public class AsmFragmentInstance {
     * @param asm The assembler sequence to generate into.
     */
    public void generate(AsmProgram asm) {
+      generate(asm, fragmentTemplate.getBodyAsm());
+   }
+
+   void generate(AsmProgram asm, KickCParser.AsmLinesContext bodyAsm) {
       AsmSequenceGenerator asmSequenceGenerator = new AsmSequenceGenerator(name, this, asm);
-      asmSequenceGenerator.generate(fragmentTemplate.getBodyAsm());
+      asmSequenceGenerator.generate(bodyAsm);
    }
 
    /**

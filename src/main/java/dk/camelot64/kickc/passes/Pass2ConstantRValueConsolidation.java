@@ -6,6 +6,7 @@ import dk.camelot64.kickc.model.operators.OperatorUnary;
 import dk.camelot64.kickc.model.operators.Operators;
 import dk.camelot64.kickc.model.statements.StatementAssignment;
 import dk.camelot64.kickc.model.types.SymbolType;
+import dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed;
 import dk.camelot64.kickc.model.types.SymbolTypeInference;
 import dk.camelot64.kickc.model.types.SymbolTypePointer;
 import dk.camelot64.kickc.model.values.ConstantInteger;
@@ -76,23 +77,23 @@ public class Pass2ConstantRValueConsolidation extends Pass2SsaOptimization {
                getProgramScope());
       } else if(Operators.BYTE1.equals(assignment.getOperator()) && assignment.getrValue1() == null) {
          final SymbolType rVal2Type = SymbolTypeInference.inferType(getProgramScope(), assignment.getrValue2());
-         if(SymbolType.isInteger(rVal2Type) && rVal2Type.getSizeBytes() < 2)
+         if(rVal2Type instanceof SymbolTypeIntegerFixed && !((SymbolTypeIntegerFixed) rVal2Type).isSigned() && rVal2Type.getSizeBytes() < 2)
             return new ConstantInteger(0l, SymbolType.BYTE);
       } else if(Operators.BYTE2.equals(assignment.getOperator()) && assignment.getrValue1() == null) {
          final SymbolType rVal2Type = SymbolTypeInference.inferType(getProgramScope(), assignment.getrValue2());
-         if(SymbolType.isInteger(rVal2Type) && rVal2Type.getSizeBytes() < 3)
+         if(rVal2Type instanceof SymbolTypeIntegerFixed && !((SymbolTypeIntegerFixed) rVal2Type).isSigned() && rVal2Type.getSizeBytes() < 3)
             return new ConstantInteger(0l, SymbolType.BYTE);
          else if(rVal2Type instanceof SymbolTypePointer)
             return new ConstantInteger(0l, SymbolType.BYTE);
       } else if(Operators.BYTE3.equals(assignment.getOperator()) && assignment.getrValue1() == null) {
          final SymbolType rVal2Type = SymbolTypeInference.inferType(getProgramScope(), assignment.getrValue2());
-         if(SymbolType.isInteger(rVal2Type) && rVal2Type.getSizeBytes() < 4)
+         if(rVal2Type instanceof SymbolTypeIntegerFixed && !((SymbolTypeIntegerFixed) rVal2Type).isSigned() && rVal2Type.getSizeBytes() < 4)
             return new ConstantInteger(0l, SymbolType.BYTE);
          else if(rVal2Type instanceof SymbolTypePointer)
             return new ConstantInteger(0l, SymbolType.BYTE);
       } else if(Operators.WORD1.equals(assignment.getOperator()) && assignment.getrValue1() == null) {
          final SymbolType rVal2Type = SymbolTypeInference.inferType(getProgramScope(), assignment.getrValue2());
-         if(SymbolType.isInteger(rVal2Type) && rVal2Type.getSizeBytes() < 3)
+         if(rVal2Type instanceof SymbolTypeIntegerFixed && !((SymbolTypeIntegerFixed) rVal2Type).isSigned() && rVal2Type.getSizeBytes() < 3)
             return new ConstantInteger(0l, SymbolType.WORD);
          else if(rVal2Type instanceof SymbolTypePointer)
             return new ConstantInteger(0l, SymbolType.WORD);

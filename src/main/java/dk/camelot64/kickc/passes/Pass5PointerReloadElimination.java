@@ -18,49 +18,20 @@ import java.util.*;
  */
 public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
 
-   private static class LineRef {
-      final AsmChunk chunk;
-      final AsmLine line;
-
-      LineRef(AsmChunk chunk, AsmLine line) {
-         this.chunk = chunk;
-         this.line = line;
-      }
-   }
-
    public Pass5PointerReloadElimination(Program program) {
       super(program);
    }
 
    private static boolean isZpFe(String op) {
-      if(op == null) return false;
-      String t = op.trim().toLowerCase();
-      return t.equals("$fe") || t.equals("254") || t.equals("0xfe");
+      return isZpAddressOperand(op, "$fe") || (op != null && op.trim().equals("254"));
    }
 
    private static boolean isZpFf(String op) {
-      if(op == null) return false;
-      String t = op.trim().toLowerCase();
-      return t.equals("$ff") || t.equals("255") || t.equals("0xff");
-   }
-
-   private static boolean isZeroOperand(String op) {
-      if(op == null) return false;
-      String t = op.trim();
-      return t.equals("0") || t.equals("#0") || t.equals("$0") || t.equals("#$0") || t.equals("#$00") || t.equals("0x0");
+      return isZpAddressOperand(op, "$ff") || (op != null && op.trim().equals("255"));
    }
 
    private static boolean isZpFd(String op) {
-      if(op == null) return false;
-      String t = op.trim().toLowerCase();
-      return t.equals("$fd") || t.equals("253") || t.equals("0xfd");
-   }
-
-   private static String getBaseVar(String op) {
-      if(op == null) return null;
-      int plusIdx = op.indexOf('+');
-      if(plusIdx > 0) return op.substring(0, plusIdx).trim();
-      return op.trim();
+      return isZpAddressOperand(op, "$fd") || (op != null && op.trim().equals("253"));
    }
 
    @Override
@@ -71,12 +42,38 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
       while(passModified) {
          passModified = false;
 
-         List<LineRef> allLines = new ArrayList<>();
-         for(AsmChunk chunk : getAsmProgram().getChunks()) {
-            for(AsmLine line : chunk.getLines()) {
-               allLines.add(new LineRef(chunk, line));
+         List<LineRef> allLines = flattenLines(getAsmProgram());
+         Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
+
+         // ZP-01: Pre-scan back-edges, nooptimize labels, and scopes containing inline KickAsm
+         Set<String> seenLabelsInScan = new HashSet<>();
+         Set<String> backEdgeOrUnsafeLabels = new HashSet<>();
+         boolean scopeSawInlineAsm = false;
+         for(LineRef r : allLines) {
+            if(r.line instanceof AsmScopeBegin || r.line instanceof AsmScopeEnd) {
+               seenLabelsInScan.clear();
+               scopeSawInlineAsm = false;
+            } else if(r.line instanceof AsmInlineKickAsm) {
+               scopeSawInlineAsm = true;
+            } else if(r.line instanceof AsmLabel lbl) {
+               String key = r.scope + "::" + lbl.getLabel();
+               seenLabelsInScan.add(key);
+               if(scopeSawInlineAsm || lbl.isNoOptimize() || (lbl.getLabel() != null && lbl.getLabel().startsWith("!"))) {
+                  backEdgeOrUnsafeLabels.add(key);
+               }
+            } else if(r.line instanceof AsmInstruction inst && inst.getCpuOpcode() != null && inst.getCpuOpcode().isJump()) {
+               String target = inst.getOperandJumpTarget();
+               if(target != null) {
+                  String key = r.scope + "::" + target;
+                  if(seenLabelsInScan.contains(key)) {
+                     backEdgeOrUnsafeLabels.add(key);
+                  }
+               }
             }
          }
+
+         Map<String, String[]> incomingFeFf = new HashMap<>();
+         boolean prevWasUncondTerminator = false;
 
          String currentFe = null;
          String currentFf = null;
@@ -87,15 +84,46 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
 
          for(int i = 0; i < allLines.size(); i++) {
             LineRef ref = allLines.get(i);
+            CanonicalResolver resolver = scopeResolvers.getOrDefault(ref.scope, scopeResolvers.get(""));
 
-            // Basic block boundaries: Labels, Scopes, Inlines reset state
-            if(ref.line instanceof AsmLabel || ref.line instanceof AsmScopeBegin ||
-               ref.line instanceof AsmScopeEnd || ref.line instanceof AsmInlineKickAsm) {
+            // Scope / Inline boundaries reset everything
+            if(ref.line instanceof AsmScopeBegin || ref.line instanceof AsmScopeEnd || ref.line instanceof AsmInlineKickAsm) {
                currentFe = null;
                currentFf = null;
                currentA = null;
                currentY = null;
                derefValid = false;
+               prevWasUncondTerminator = false;
+               incomingFeFf.clear();
+               continue;
+            }
+
+            // ZP-01: Forward CFG-Meet (intersection) of ($fe, $ff) at named labels
+            if(ref.line instanceof AsmLabel lbl) {
+               String key = ref.scope + "::" + lbl.getLabel();
+               if(!backEdgeOrUnsafeLabels.contains(key)) {
+                  String[] incoming = incomingFeFf.remove(key);
+                  if(prevWasUncondTerminator) {
+                     if(incoming != null) {
+                        currentFe = incoming[0];
+                        currentFf = incoming[1];
+                     } else {
+                        currentFe = null;
+                        currentFf = null;
+                     }
+                  } else if(incoming != null) {
+                     currentFe = samePointerByte(currentFe, incoming[0], resolver) ? currentFe : null;
+                     currentFf = samePointerByte(currentFf, incoming[1], resolver) ? currentFf : null;
+                  }
+                  // If !prevWasUncondTerminator && incoming == null: label is only entered by fallthrough -> keep currentFe/currentFf!
+               } else {
+                  currentFe = null;
+                  currentFf = null;
+               }
+               currentA = null;
+               currentY = null;
+               derefValid = false;
+               prevWasUncondTerminator = false;
                continue;
             }
 
@@ -107,6 +135,7 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                currentFe = null;
                currentFf = null;
                currentA = null;
+               prevWasUncondTerminator = false;
                continue;
             }
 
@@ -116,11 +145,29 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                currentFe = null;
                currentFf = null;
                currentA = null;
+               prevWasUncondTerminator = false;
                continue;
             }
 
             String mnem = op.getMnemonic();
             CpuAddressingMode mode = op.getAddressingMode();
+
+            // ZP-01: Record outgoing ($fe, $ff) state along forward branches/jumps
+            if(op.isJump() && !mnem.equals("jsr")) {
+               String target = inst.getOperandJumpTarget();
+               if(target != null && !target.startsWith("!")) {
+                  String key = ref.scope + "::" + target;
+                  if(!backEdgeOrUnsafeLabels.contains(key)) {
+                     String[] existing = incomingFeFf.get(key);
+                     if(existing == null) {
+                        incomingFeFf.put(key, new String[]{currentFe, currentFf});
+                     } else {
+                        existing[0] = samePointerByte(existing[0], currentFe, resolver) ? existing[0] : null;
+                        existing[1] = samePointerByte(existing[1], currentFf, resolver) ? existing[1] : null;
+                     }
+                  }
+               }
+            }
 
             // Control flow breaks (unconditional jump, subroutine call, returns) reset tracking
             if(mnem.equals("jmp") || mnem.equals("jsr") || mnem.equals("rts") || mnem.equals("rti")) {
@@ -129,8 +176,10 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                currentA = null;
                currentY = null;
                derefValid = false;
+               prevWasUncondTerminator = !mnem.equals("jsr");
                continue;
             }
+            prevWasUncondTerminator = false;
 
             // Track A register value for high-byte after 16-bit additions and invalidate deref on A modification
             if(mnem.equals("lda") || mnem.equals("adc") || mnem.equals("sbc")) {
@@ -148,19 +197,21 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                derefValid = false;
             }
 
-            // Track Y register changes
+            // Track Y register changes (ZP-02: eliminate redundant LDY #imm before any IZY instruction when flags allow)
             if(mnem.equals("ldy") && mode.equals(CpuAddressingMode.IMM) && !inst.isNoOptimize()) {
-               if(currentY != null && currentY.equals(inst.getOperand1())) {
+               if(currentY != null && AsmProgramStaticRegisterValues.matchImm(currentY, inst.getOperand1())) {
                   int nextIdx = findNextInstruction(allLines, i + 1);
                   if(nextIdx != -1) {
                      AsmInstruction nextInst = (AsmInstruction) allLines.get(nextIdx).line;
-                     if(nextInst.getCpuOpcode() != null && nextInst.getCpuOpcode().getMnemonic().equals("lda") &&
-                        nextInst.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.IZY)) {
+                     if(nextInst.getCpuOpcode() != null &&
+                        nextInst.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.IZY) &&
+                        (!areModifiedFlagsLiveAfter(allLines, i, ref.scope, getProgram())
+                         || areFlagsEstablishedForReg(allLines, i, "Y", ref.scope))) {
                         getLog().append("Eliminating redundant LDY " + inst.getOperand1() + " (Y already contains " + currentY + ")");
-                        ref.chunk.getLines().remove(inst);
+                        tombstoneLine(allLines, i);
                         passModified = true;
                         overallModified = true;
-                        break;
+                        continue;
                      }
                   }
                }
@@ -173,16 +224,23 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
 
             // Track / Eliminate redundant indirect LDA ($fe),y
             if(mnem.equals("lda") && mode.equals(CpuAddressingMode.IZY) && isZpFe(inst.getOperand1()) && !inst.isNoOptimize()) {
-               if(derefValid && currentY != null && currentY.equals(derefY)) {
-                  getLog().append("Eliminating redundant LDA ($fe),y (A already contains dereferenced value)");
-                  ref.chunk.getLines().remove(inst);
-                  passModified = true;
-                  overallModified = true;
-                  break;
-               }
-               if(currentFe != null && currentFf != null && currentY != null) {
-                  derefValid = true;
-                  derefY = currentY;
+               boolean volOrHwPtr = isPointerToVolatileOrHardware(currentFe, currentFf, ref.scope, resolver, getProgram());
+               if(!volOrHwPtr) {
+                  if(derefValid && currentY != null && currentY.equals(derefY) &&
+                     (!areModifiedFlagsLiveAfter(allLines, i, ref.scope, getProgram())
+                      || areFlagsEstablishedForReg(allLines, i, "A", ref.scope))) {
+                     getLog().append("Eliminating redundant LDA ($fe),y (A already contains dereferenced value)");
+                     tombstoneLine(allLines, i);
+                     passModified = true;
+                     overallModified = true;
+                     continue;
+                  }
+                  if(currentFe != null && currentFf != null && currentY != null) {
+                     derefValid = true;
+                     derefY = currentY;
+                  }
+               } else {
+                  derefValid = false;
                }
             }
 
@@ -239,25 +297,43 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                                     }
                                  }
 
-                                 // Check if this reload is truly REDUNDANT
-                                 if(currentFe != null && currentFf != null && currentFe.equals(lo) && currentFf.equals(hi)) {
-                                    boolean hasFdWrap = (preFd != -1 && postFd != -1);
-                                    boolean canEliminate = hasFdWrap || (postFd != -1) || isYOverwrittenAfter(allLines, idx4 + 1);
-
-                                    if(canEliminate) {
-                                       getLog().append("Eliminating redundant pointer reload: " + lo + " into $fe/$ff");
-                                       if(hasFdWrap) {
-                                          allLines.get(preFd).chunk.getLines().remove(allLines.get(preFd).line);
-                                          allLines.get(postFd).chunk.getLines().remove(allLines.get(postFd).line);
-                                       }
-                                       allLines.get(idx1).chunk.getLines().remove(inst);
-                                       allLines.get(idx2).chunk.getLines().remove(inst2);
-                                       allLines.get(idx3).chunk.getLines().remove(inst3);
-                                       allLines.get(idx4).chunk.getLines().remove(inst4);
-                                       passModified = true;
-                                       overallModified = true;
-                                       break;
+                                 // ZP-03: Canonical & half-pointer matching for Pattern A (via Y)
+                                 boolean feMatch = samePointerByte(currentFe, lo, resolver);
+                                 boolean ffMatch = samePointerByte(currentFf, hi, resolver);
+                                 boolean hasFdWrap = (preFd != -1 && postFd != -1);
+                                 boolean ySafeAfter = hasFdWrap || (postFd != -1) || isYOverwrittenAfter(allLines, idx4 + 1);
+                                 if(feMatch && ffMatch && ySafeAfter) {
+                                    getLog().append("Eliminating redundant pointer reload: " + lo + " into $fe/$ff");
+                                    if(hasFdWrap) {
+                                       tombstoneLine(allLines, preFd);
+                                       tombstoneLine(allLines, postFd);
                                     }
+                                    tombstoneLine(allLines, idx1);
+                                    tombstoneLine(allLines, idx2);
+                                    tombstoneLine(allLines, idx3);
+                                    tombstoneLine(allLines, idx4);
+                                    passModified = true;
+                                    overallModified = true;
+                                    i = (postFd != -1 ? postFd : idx4);
+                                    continue;
+                                 } else if(ffMatch && ySafeAfter && (getLiveFlagsAfter(allLines, idx4, ref.scope, getProgram()) & FLAG_NZ) == 0) {
+                                    getLog().append("Eliminating redundant high-byte Y pointer reload into $ff: " + hi);
+                                    tombstoneLine(allLines, idx3);
+                                    tombstoneLine(allLines, idx4);
+                                    currentFe = lo;
+                                    passModified = true;
+                                    overallModified = true;
+                                    i = (postFd != -1 ? postFd : idx4);
+                                    continue;
+                                 } else if(feMatch && !inst3.getCpuOpcode().getMnemonic().equals("tay")) {
+                                    getLog().append("Eliminating redundant low-byte Y pointer reload into $fe: " + lo);
+                                    tombstoneLine(allLines, idx1);
+                                    tombstoneLine(allLines, idx2);
+                                    currentFf = hi;
+                                    passModified = true;
+                                    overallModified = true;
+                                    i = (postFd != -1 ? postFd : idx4);
+                                    continue;
                                  } else {
                                     // FIRST load of this pointer: Record in cache
                                     currentFe = lo;
@@ -300,17 +376,39 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                                  String lo = inst.getOperand1();
                                  String hi = aInst3.getOperand1();
 
-                                 if(currentFe != null && currentFf != null && currentFe.equals(lo) && currentFf.equals(hi)) {
+                                 // ZP-03: Canonical & half-pointer matching for Pattern B (via A)
+                                 boolean feMatch = samePointerByte(currentFe, lo, resolver);
+                                 boolean ffMatch = samePointerByte(currentFf, hi, resolver);
+                                 if(feMatch && ffMatch) {
                                     if(isADeadAfter(allLines, aIdx4 + 1)) {
                                        getLog().append("Eliminating redundant LDA pointer reload: " + lo + " into $fe/$ff");
-                                       allLines.get(aIdx1).chunk.getLines().remove(inst);
-                                       allLines.get(aIdx2).chunk.getLines().remove(aInst2);
-                                       allLines.get(aIdx3).chunk.getLines().remove(aInst3);
-                                       allLines.get(aIdx4).chunk.getLines().remove(aInst4);
+                                       tombstoneLine(allLines, aIdx1);
+                                       tombstoneLine(allLines, aIdx2);
+                                       tombstoneLine(allLines, aIdx3);
+                                       tombstoneLine(allLines, aIdx4);
                                        passModified = true;
                                        overallModified = true;
-                                       break;
+                                       i = aIdx4;
+                                       continue;
                                     }
+                                 } else if(ffMatch && isADeadAfter(allLines, aIdx4 + 1) && (getLiveFlagsAfter(allLines, aIdx4, ref.scope, getProgram()) & FLAG_NZ) == 0) {
+                                    getLog().append("Eliminating redundant high-byte LDA pointer reload into $ff: " + hi);
+                                    tombstoneLine(allLines, aIdx3);
+                                    tombstoneLine(allLines, aIdx4);
+                                    currentFe = lo;
+                                    passModified = true;
+                                    overallModified = true;
+                                    i = aIdx4;
+                                    continue;
+                                 } else if(feMatch) {
+                                    getLog().append("Eliminating redundant low-byte LDA pointer reload into $fe: " + lo);
+                                    tombstoneLine(allLines, aIdx1);
+                                    tombstoneLine(allLines, aIdx2);
+                                    currentFf = hi;
+                                    passModified = true;
+                                    overallModified = true;
+                                    i = aIdx4;
+                                    continue;
                                  } else {
                                     currentFe = lo;
                                     currentFf = hi;
@@ -326,24 +424,41 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
             }
 
             // =========================================================
-            // Invalidation check on memory writes
+            // Invalidation check on memory writes (including writing illegal opcodes & canonical alias resolution)
             // =========================================================
-            if(mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty") ||
+            if(mnem.equals("sta") || mnem.equals("stx") || mnem.equals("sty") || mnem.equals("sax") ||
                mnem.equals("inc") || mnem.equals("dec") || mnem.equals("asl") ||
-               mnem.equals("lsr") || mnem.equals("rol") || mnem.equals("ror")) {
+               mnem.equals("lsr") || mnem.equals("rol") || mnem.equals("ror") ||
+               mnem.equals("dcp") || mnem.equals("isc") || mnem.equals("slo") ||
+               mnem.equals("rla") || mnem.equals("sre") || mnem.equals("rra")) {
 
-               // CRITICAL: Indirect ZP modes (IZY: ($zp),y, IZX: ($zp,x)) write THROUGH the pointer,
-               // NOT to the pointer itself! The pointer in $fe/$ff remains completely intact!
-               if(CpuAddressingMode.IZY.equals(mode) || CpuAddressingMode.IZX.equals(mode)) {
-                  derefValid = false;
-                  continue;
+               if(CpuAddressingMode.NON.equals(mode)) {
+                  continue; // Accumulator shift/rotate does not write memory
                }
                derefValid = false;
 
                String dest = inst.getOperand1();
+               // Indirect writes: writing through ($fe),y writes to the target of the current pointer.
+               // If the pointer variable itself is address-taken, or the write uses a different indirect/indexed pointer,
+               // conservatively invalidate non-immediate pointer bytes in RAM.
+               if(CpuAddressingMode.IZY.equals(mode) || CpuAddressingMode.IZX.equals(mode)) {
+                  boolean writesThroughOtherPtr = !(CpuAddressingMode.IZY.equals(mode) && dest != null && isZpFe(dest));
+                  boolean ptrAddressTaken = isPointerVarAddressTaken(currentFe, ref.scope) || isPointerVarAddressTaken(currentFf, ref.scope);
+                  if(writesThroughOtherPtr || ptrAddressTaken) {
+                     if(currentFe != null && !currentFe.trim().startsWith("#")) currentFe = null;
+                     if(currentFf != null && !currentFf.trim().startsWith("#")) currentFf = null;
+                  }
+                  continue;
+               }
+               if(CpuAddressingMode.ZPX.equals(mode) || CpuAddressingMode.ZPY.equals(mode)) {
+                  if(currentFe != null && !currentFe.trim().startsWith("#")) currentFe = null;
+                  if(currentFf != null && !currentFf.trim().startsWith("#")) currentFf = null;
+                  continue;
+               }
+
                if(dest != null) {
-                  String destTrim = dest.trim().toLowerCase();
-                  if(isZpFd(destTrim)) {
+                  String destTrim = dest.trim();
+                  if(CpuAddressingMode.ZP.equals(mode) && isZpFd(destTrim)) {
                      // Writing to $fd does not affect $fe/$ff
                      continue;
                   }
@@ -353,12 +468,28 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                      currentFf = null;
                      continue;
                   }
-                  // Check if dest matches base variable of currentFe or currentFf (e.g. inc ptr / sta ptr)
-                  String destBase = getBaseVar(destTrim);
-                  String feBase = getBaseVar(currentFe);
-                  String ffBase = getBaseVar(currentFf);
-                  if(destBase != null && (destBase.equalsIgnoreCase(feBase) || destBase.equalsIgnoreCase(ffBase))) {
+                  // Canonical alias-aware invalidation
+                  String canonDest = resolver != null ? resolver.resolve(destTrim) : destTrim;
+                  String canonDestBase = getBaseVar(canonDest);
+                  String rawDestBase = getBaseVar(destTrim);
+                  if(CpuAddressingMode.ABX.equals(mode) || CpuAddressingMode.ABY.equals(mode)) {
+                     // Indexed RAM write may overwrite a Main-Memory pointer in RAM if matching base or unknown/address-taken
+                     boolean feNonImm = currentFe != null && !currentFe.trim().startsWith("#");
+                     boolean ffNonImm = currentFf != null && !currentFf.trim().startsWith("#");
+                     if(feNonImm && (matchesPointerTarget(currentFe, destTrim, canonDest, rawDestBase, canonDestBase, resolver)
+                           || isMainMemPointer(currentFe, resolver))) {
+                        currentFe = null;
+                     }
+                     if(ffNonImm && (matchesPointerTarget(currentFf, destTrim, canonDest, rawDestBase, canonDestBase, resolver)
+                           || isMainMemPointer(currentFf, resolver))) {
+                        currentFf = null;
+                     }
+                     continue;
+                  }
+                  if(matchesPointerTarget(currentFe, destTrim, canonDest, rawDestBase, canonDestBase, resolver)) {
                      currentFe = null;
+                  }
+                  if(matchesPointerTarget(currentFf, destTrim, canonDest, rawDestBase, canonDestBase, resolver)) {
                      currentFf = null;
                   }
                }
@@ -369,34 +500,41 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
       return overallModified;
    }
 
-   private static int findPrevInstruction(List<LineRef> allLines, int start) {
-      for(int i = start; i >= 0; i--) {
-         LineRef ref = allLines.get(i);
-         if(ref.line instanceof AsmComment || ref.line instanceof AsmConstant || ref.line instanceof AsmLabelDecl) {
-            continue;
-         }
-         if(ref.line instanceof AsmInstruction) {
-            return i;
-         }
-         // Hit boundary (label, scope, inline asm)
-         return -1;
+   private boolean isPointerVarAddressTaken(String ptrByte, String scope) {
+      if(ptrByte == null || ptrByte.trim().startsWith("#") || getProgram() == null || getProgram().getScope() == null) {
+         return false;
       }
-      return -1;
+      dk.camelot64.kickc.model.symbols.Variable var = findVariableInScope(ptrByte, scope, getProgram());
+      return var != null && (var.isVolatile() || var.isKindLoadStore());
    }
 
-   private static int findNextInstruction(List<LineRef> allLines, int start) {
-      for(int i = start; i < allLines.size(); i++) {
-         LineRef ref = allLines.get(i);
-         if(ref.line instanceof AsmComment || ref.line instanceof AsmConstant || ref.line instanceof AsmLabelDecl) {
-            continue;
-         }
-         if(ref.line instanceof AsmInstruction) {
-            return i;
-         }
-         // Hit boundary
-         return -1;
+   private static boolean isMainMemPointer(String ptrByte, CanonicalResolver resolver) {
+      if(ptrByte == null || ptrByte.trim().startsWith("#")) return false;
+      String resolved = resolver != null ? resolver.resolve(ptrByte) : ptrByte.trim();
+      Integer addr = parseHexOrDecAddress(getBaseVar(resolved));
+      return addr == null || addr >= 0x100;
+   }
+
+   private static boolean matchesPointerTarget(String ptrByte, String rawDest, String canonDest, String rawDestBase, String canonDestBase, CanonicalResolver resolver) {
+      if(ptrByte == null || ptrByte.trim().startsWith("#")) return false;
+      String rawPtrBase = getBaseVar(ptrByte);
+      String canonPtr = resolver != null ? resolver.resolve(ptrByte) : ptrByte.trim();
+      String canonPtrBase = getBaseVar(canonPtr);
+      return ptrByte.equalsIgnoreCase(rawDest) || canonPtr.equalsIgnoreCase(canonDest)
+            || (!rawDestBase.isEmpty() && rawDestBase.equalsIgnoreCase(rawPtrBase))
+            || (!canonDestBase.isEmpty() && canonDestBase.equalsIgnoreCase(canonPtrBase));
+   }
+
+   private static boolean samePointerByte(String a, String b, CanonicalResolver resolver) {
+      if(a == null || b == null) return false;
+      if(a.equals(b)) return true;
+      if(AsmProgramStaticRegisterValues.matchImm(a, b)) return true;
+      if(resolver != null) {
+         String ra = resolver.resolve(a);
+         String rb = resolver.resolve(b);
+         if(!ra.isEmpty() && ra.equals(rb)) return true;
       }
-      return -1;
+      return false;
    }
 
    private static boolean isYOverwrittenAfter(List<LineRef> allLines, int startIdx) {
@@ -408,6 +546,10 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
             CpuOpcode op = inst.getCpuOpcode();
             if(op == null) return false;
             String mnem = op.getMnemonic();
+            CpuAddressingMode mode = op.getAddressingMode();
+            if(mode == CpuAddressingMode.ABY || mode == CpuAddressingMode.IZY || mode == CpuAddressingMode.ZPY) {
+               return false;
+            }
             if(mnem.equals("ldy") || mnem.equals("tay") || mnem.equals("ply")) {
                return true;
             }

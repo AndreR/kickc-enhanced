@@ -137,9 +137,9 @@ NUMBER : NUMFLOAT | NUMINT ;
 NUMFLOAT : ( BINFLOAT | DECFLOAT | HEXFLOAT ) ( 'f8' | 'F8' | 'f16' | 'F16' | 'f24' | 'F24' | 'f' | 'F' )? ;
 BINFLOAT : ('%' | '0b' | '0B' ) (BINDIGIT)* '.' BINDIGIT+;
 DECFLOAT : (DECDIGIT)* '.' DECDIGIT+;
-HEXFLOAT : ('$' | '0x' | '0X' ) (HEXDIGIT)* '.' HEXDIGIT+;
-NUMINT : HEXINTEGER ([usUS][bcwisdlBCWISDL] | [lL] | [uU] )?
-       | (DECINTEGER | BININTEGER ) ([usUS][bcwisdlBCWISDL] | [lL] | [uU] | 'f8' | 'F8' | 'f16' | 'F16' | 'f24' | 'F24' )? ;
+HEXFLOAT : ('$' | '0x' | '0X' ) (HEXDIGIT)* '.' HEXDIGIT+ ( [pP] [+-]? DECDIGIT+ )?;
+NUMINT : HEXINTEGER ([usUS][bcwisdltBCWISDLT] | 'u24' | 'U24' | 's24' | 'S24' | [lL] | [uU] )?
+       | (DECINTEGER | BININTEGER ) ([usUS][bcwisdltBCWISDLT] | 'u24' | 'U24' | 's24' | 'S24' | [lL] | [uU] | 'f8' | 'F8' | 'f16' | 'F16' | 'f24' | 'F24' )? ;
 BININTEGER : '0' [bB] BINDIGIT ( ('_' | '\'')? BINDIGIT )* | '%' BINDIGIT ( ('_' | '\'')? BINDIGIT )* ;
 DECINTEGER : DECDIGIT ( ('_' | '\'')? DECDIGIT )* ;
 HEXINTEGER : ( '$' | '0x' | '0X' ) HEXDIGIT ( ('_' | '\'')? HEXDIGIT )* ;

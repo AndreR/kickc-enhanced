@@ -55,7 +55,9 @@ public class Pass4RegisterUpliftRemains extends Pass2Base {
 
       if(unknownFragments.size() > 0) {
          getLog().append("MISSING FRAGMENTS");
-         for(String unknownFragment : unknownFragments) {
+         List<String> sortedUnknown = new ArrayList<>(unknownFragments);
+         Collections.sort(sortedUnknown);
+         for(String unknownFragment : sortedUnknown) {
             getLog().append("  " + unknownFragment);
          }
       }

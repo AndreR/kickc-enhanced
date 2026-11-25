@@ -42,8 +42,15 @@ public class ValueSourceConstant extends ValueSourceBase {
    public ValueSource getMemberUnwinding(String memberName, Program program, ProgramScope programScope, Statement currentStmt, ListIterator<Statement> stmtIt, Graph.Block currentBlock) {
       StructDefinition structDefinition = ((SymbolTypeStruct) getSymbolType()).getStructDefinition(programScope);
       ConstantValue val = this.value;
-      while(val instanceof ConstantCastValue)
-         val = ((ConstantCastValue) val).getValue();
+      while(val instanceof ConstantCastValue || val instanceof ConstantRef) {
+         if(val instanceof ConstantCastValue) {
+            val = ((ConstantCastValue) val).getValue();
+         } else {
+            Variable cVar = programScope.getConstant((ConstantRef) val);
+            if(cVar == null || cVar.getInitValue() == null) break;
+            val = cVar.getInitValue();
+         }
+      }
       if(val instanceof ConstantStructValue) {
          ConstantStructValue constantStructValue = (ConstantStructValue) val;
          final Variable member = structDefinition.getMember(memberName);

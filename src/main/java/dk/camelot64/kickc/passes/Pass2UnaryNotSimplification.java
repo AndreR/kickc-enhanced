@@ -1,12 +1,17 @@
 package dk.camelot64.kickc.passes;
 
+import dk.camelot64.kickc.model.Graph;
 import dk.camelot64.kickc.model.Program;
+import dk.camelot64.kickc.model.StatementInfos;
 import dk.camelot64.kickc.model.VariableReferenceInfos;
 import dk.camelot64.kickc.model.operators.Operators;
 import dk.camelot64.kickc.model.statements.Statement;
 import dk.camelot64.kickc.model.statements.StatementAssignment;
+import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.values.VariableRef;
+import dk.camelot64.kickc.passes.utils.StatementsBetween;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -50,7 +55,7 @@ public class Pass2UnaryNotSimplification extends Pass2SsaOptimization {
                   final Statement tempVarDefineStmt = getGraph().getStatementByIndex(tempVarDefineStmtIdx);
                   if(tempVarDefineStmt instanceof StatementAssignment tempAssignment) {
                      int tempVarUsages = variableReferenceInfos.getVarUseStatements(tempVar).size();
-                     if(tempVarUsages == 1 && tempAssignment.getOperator() != null) {
+                     if(tempVarUsages == 1 && tempAssignment.getOperator() != null && canSinkComparison(tempAssignment, assignment, variableReferenceInfos)) {
                         switch (tempAssignment.getOperator().getOperator()) {
                            case "<" -> {
                               createInverse(">=", assignment, tempAssignment);
@@ -88,6 +93,50 @@ public class Pass2UnaryNotSimplification extends Pass2SsaOptimization {
          }
       }
       return unused;
+   }
+
+   private boolean canSinkComparison(StatementAssignment tempAssignment, StatementAssignment assignment, VariableReferenceInfos variableReferenceInfos) {
+      StatementInfos statementInfos = getProgram().getStatementInfos();
+      Graph.Block defineBlock = statementInfos.getBlock(tempAssignment);
+      if(defineBlock == null) return true;
+      Collection<Statement> between = StatementsBetween.find(tempAssignment, defineBlock, assignment, getGraph());
+      if(between.isEmpty()) return true;
+
+      boolean readsMemOrVolatile =
+            Pass2ConditionalJumpSimplification.hasPointerOrVolatileRead(getProgramScope(), tempAssignment.getrValue1())
+                  || Pass2ConditionalJumpSimplification.hasPointerOrVolatileRead(getProgramScope(), tempAssignment.getrValue2());
+
+      Collection<VariableRef> referencedVars = new ArrayList<>();
+      if(tempAssignment.getrValue1() != null) referencedVars.addAll(VariableReferenceInfos.getReferencedVars(tempAssignment.getrValue1()));
+      if(tempAssignment.getrValue2() != null) referencedVars.addAll(VariableReferenceInfos.getReferencedVars(tempAssignment.getrValue2()));
+
+      boolean hasLoadStoreRef = false;
+      for(VariableRef ref : referencedVars) {
+         Variable v = getProgramScope().getVariable(ref);
+         if(v != null && v.isKindLoadStore()) {
+            hasLoadStoreRef = true;
+            break;
+         }
+      }
+
+      if(!readsMemOrVolatile && !hasLoadStoreRef) {
+         return true;
+      }
+
+      for(Statement stmt : between) {
+         if(Pass2ConditionalJumpSimplification.hasMemoryOrSideEffect(getProgramScope(), stmt)) {
+            return false;
+         }
+         if(hasLoadStoreRef) {
+            Collection<VariableRef> defined = variableReferenceInfos.getDefinedVars(stmt);
+            for(VariableRef ref : referencedVars) {
+               if(defined.contains(ref)) {
+                  return false;
+               }
+            }
+         }
+      }
+      return true;
    }
 
    /**

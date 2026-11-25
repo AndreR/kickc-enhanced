@@ -3,7 +3,14 @@ package dk.camelot64.kickc.passes;
 import dk.camelot64.cpufamily6502.CpuAddressingMode;
 import dk.camelot64.cpufamily6502.CpuClobber;
 import dk.camelot64.kickc.asm.*;
+import dk.camelot64.kickc.model.ConstantNotLiteral;
 import dk.camelot64.kickc.model.Program;
+import dk.camelot64.kickc.model.symbols.Procedure;
+import dk.camelot64.kickc.model.symbols.Symbol;
+import dk.camelot64.kickc.model.symbols.Variable;
+import dk.camelot64.kickc.model.values.ConstantChar;
+import dk.camelot64.kickc.model.values.ConstantInteger;
+import dk.camelot64.kickc.model.values.ConstantLiteral;
 import dk.camelot64.kickc.model.values.ScopeRef;
 
 import java.util.*;
@@ -25,20 +32,6 @@ import java.util.*;
  * Saves 2 bytes (1 byte instead of 3 bytes for JMP) and eliminates jump overhead.
  */
 public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
-
-   public static class LineRef {
-      final AsmChunk chunk;
-      final int indexInChunk;
-      final AsmLine line;
-      final String scope;
-
-      LineRef(AsmChunk chunk, int indexInChunk, AsmLine line, String scope) {
-         this.chunk = chunk;
-         this.indexInChunk = indexInChunk;
-         this.line = line;
-         this.scope = scope;
-      }
-   }
 
    private static class ProcedureData {
       final String name;
@@ -84,6 +77,106 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
       return CpuAddressingMode.IMM.equals(inst.getCpuOpcode().getAddressingMode());
    }
 
+   private Long resolveConstValue(String val, String scope, Map<String, String> asmConstants, CanonicalResolver resolver) {
+      Long direct = parseConstValue(val);
+      if(direct != null) return direct;
+      if(val == null) return null;
+      String t = val.trim();
+      if(t.startsWith("#")) t = t.substring(1).trim();
+      if(t.isEmpty() || t.startsWith("<") || t.startsWith(">")) return null;
+
+      // 1. Resolve via ASM .const declarations (local scope first, then global)
+      if(asmConstants != null) {
+         String cur = t;
+         for(int hop = 0; hop < 8; hop++) {
+            String mapped = null;
+            if(scope != null && !scope.isEmpty()) {
+               mapped = asmConstants.get(scope + "." + cur);
+            }
+            if(mapped == null) {
+               mapped = asmConstants.get(cur);
+            }
+            if(mapped == null) break;
+            Long parsed = parseConstValue(mapped);
+            if(parsed != null) return parsed;
+            cur = mapped.trim();
+            if(cur.startsWith("#")) cur = cur.substring(1).trim();
+            if(cur.startsWith("<") || cur.startsWith(">")) return null;
+         }
+      }
+
+      // 2. Resolve via CanonicalResolver (.label numeric aliases)
+      if(resolver != null) {
+         String resolved = resolver.resolve(t);
+         if(resolved != null && !resolved.equals(t)) {
+            Long parsed = parseConstValue(resolved);
+            if(parsed != null) return parsed;
+         }
+      }
+
+      // 3. Resolve via ProgramScope constant symbol (e.g. const uint8_t RED = 2)
+      if(getProgram() != null && getProgram().getScope() != null) {
+         Symbol sym = null;
+         if(scope != null && !scope.isEmpty()) {
+            Symbol procSym = getProgram().getScope().findSymbol(scope);
+            if(procSym instanceof Procedure proc) {
+               sym = proc.findSymbol(t);
+            }
+         }
+         if(sym == null) {
+            sym = getProgram().getScope().findSymbol(t);
+         }
+         if(sym instanceof Variable v && v.isKindConstant() && v.getInitValue() != null) {
+            try {
+               ConstantLiteral lit = v.getInitValue().calculateLiteral(getProgram().getScope());
+               if(lit instanceof ConstantInteger ci) {
+                  return ci.getInteger();
+               } else if(lit instanceof ConstantChar cc) {
+                  return cc.getInteger();
+               }
+            } catch(ConstantNotLiteral ignored) {
+            }
+         }
+      }
+      return null;
+   }
+
+   /**
+    * CF-04: Verify that skipping the 2-byte immediate load via .byte $2c (BIT $xxxx)
+    * cannot perform a dummy bus read on hardware I/O space ($D000-$DFFF or $0000-$0001).
+    * BIT $xxxx forms address (immByte << 8) | opcodeByte.
+    */
+   private boolean isSafeByteSkipImmediate(AsmInstruction inst, String scope, Map<String, String> asmConstants, CanonicalResolver resolver) {
+      if(!isImmediateLoad(inst) || inst.getLineBytes() != 2) return false;
+      Long val = resolveConstValue(inst.getOperand1(), scope, asmConstants, resolver);
+      if(val == null) return false; // Reject unresolved symbolic/label operands like #<IO or #>IO
+      int hiByte = (int) (val & 0xff);
+      if(hiByte >= 0xd0 && hiByte <= 0xdf) {
+         return false; // $D000-$DFFF (VIC-II, SID, CIA, I/O1/I/O2 cartridge latches)
+      }
+      int[] opBytes = inst.getCpuOpcode().getOpcode();
+      int loByte = (opBytes != null && opBytes.length > 0) ? (opBytes[0] & 0xff) : 0;
+      int dummyAddr = (hiByte << 8) | loByte;
+      if(dummyAddr <= 0x0001) {
+         return false; // CPU port $0000-$0001
+      }
+      return true;
+   }
+
+   private static boolean hasDisqualifyingLines(List<AsmChunk> chunks) {
+      for(AsmChunk ch : chunks) {
+         for(AsmLine l : ch.getLines()) {
+            if(l instanceof AsmSegment || l instanceof AsmInlineKickAsm || l instanceof AsmConstant ||
+               l instanceof AsmLabel || l instanceof AsmDataNumeric || l instanceof AsmDataString ||
+               l instanceof AsmDataZeroFill || l instanceof AsmDataKickAsm || l instanceof AsmDataAlignment ||
+               l instanceof AsmLoopAlign || l instanceof AsmSetPc) {
+               return true;
+            }
+         }
+      }
+      return false;
+   }
+
    private static boolean isConditionalBranch(AsmInstruction inst) {
       if(inst == null || inst.getCpuOpcode() == null) return false;
       String mnem = inst.getCpuOpcode().getMnemonic();
@@ -111,12 +204,18 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
       while(passModified) {
          passModified = false;
 
-         List<LineRef> allLines = new ArrayList<>();
-         for(AsmChunk chunk : getAsmProgram().getChunkList()) {
-            String scope = chunk.getScopeLabel();
-            List<AsmLine> lines = chunk.getLines();
-            for(int i = 0; i < lines.size(); i++) {
-               allLines.add(new LineRef(chunk, i, lines.get(i), scope));
+         List<LineRef> allLines = flattenLines(getAsmProgram());
+         Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
+         Map<String, String> asmConstants = new HashMap<>();
+         for(LineRef ref : allLines) {
+            if(ref.line instanceof AsmConstant c && c.getName() != null && c.getValue() != null) {
+               String cname = c.getName().trim();
+               String cval = c.getValue().trim();
+               if(ref.scope != null && !ref.scope.isEmpty()) {
+                  asmConstants.put(ref.scope + "." + cname, cval);
+               } else {
+                  asmConstants.put(cname, cval);
+               }
             }
          }
 
@@ -170,16 +269,13 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
 
             LineRef ref2 = allLines.get(idx2);
             AsmInstruction inst2 = (AsmInstruction) ref2.line;
-            if(!isImmediateLoad(inst2) || inst2.isNoOptimize()) continue;
+            CanonicalResolver scopeRes2 = scopeResolvers.getOrDefault(ref2.scope != null ? ref2.scope : "", scopeResolvers.get(""));
+            if(!isSafeByteSkipImmediate(inst2, ref2.scope, asmConstants, scopeRes2) || inst2.isNoOptimize()) continue;
             String reg2 = inst2.getCpuOpcode().getMnemonic();
             if(!reg1.equals(reg2)) continue; // Must load into same register
 
-            int bytesToSkip = inst2.getLineBytes();
-            if(bytesToSkip != 2) continue; // .byte $2c skips exactly 2 bytes
-
             // Right after inst2, the target label must be present
             boolean foundTargetLabel = false;
-            int idxAfterTarget = -1;
             for(int j = idx2 + 1; j < allLines.size(); j++) {
                AsmLine l = allLines.get(j).line;
                if(l instanceof AsmComment || l instanceof AsmConstant || l instanceof AsmLabelDecl) continue;
@@ -190,24 +286,16 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
                      continue;
                   }
                }
-               if(l instanceof AsmInstruction) {
-                  idxAfterTarget = j;
-                  break;
-               }
-               if(l instanceof AsmScopeBegin || l instanceof AsmScopeEnd) {
+               if(l instanceof AsmInstruction || l instanceof AsmScopeBegin || l instanceof AsmScopeEnd) {
                   break;
                }
             }
 
             if(!foundTargetLabel) continue;
 
-            // Verify that instruction after target does not depend on condition flags
-            if(idxAfterTarget != -1) {
-               AsmInstruction instAfter = (AsmInstruction) allLines.get(idxAfterTarget).line;
-               if(isConditionalBranch(instAfter)) {
-                  // Next instruction is a conditional branch that might depend on N/V/Z flags set by BIT
-                  continue;
-               }
+            // CF-04: Verify full N/V/Z flag liveness after target (BIT $xxxx clobbers N, V, Z!)
+            if((getLiveFlagsAfter(allLines, idx2, refJmp.scope, getProgram()) & FLAG_NZV) != 0) {
+               continue;
             }
 
             // All checks passed! Replace JMP with .byte $2c
@@ -217,23 +305,29 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
             int chunkIdx = refJmp.chunk.getLines().indexOf(instJmp);
             if(chunkIdx != -1) {
                refJmp.chunk.getLines().set(chunkIdx, byteSkipper);
+               allLines.set(idxJmp, new LineRef(idxJmp, refJmp.chunk, byteSkipper, refJmp.scope));
                passModified = true;
                overallModified = true;
-               break; // Re-scan
             }
          }
 
          if(passModified) continue;
 
          // Scan for Pattern A (Procedure-Level Entry-Point Merging)
+         List<AsmChunk> allChunks = getAsmProgram().getChunkList();
          List<ProcedureData> procedures = new ArrayList<>();
+         Map<ProcedureData, int[]> procChunkRange = new IdentityHashMap<>();
          ProcedureData currentProc = null;
-         for(AsmChunk chunk : getAsmProgram().getChunkList()) {
+         for(int ci = 0; ci < allChunks.size(); ci++) {
+            AsmChunk chunk = allChunks.get(ci);
             String scope = chunk.getScopeLabel();
             if(scope != null && !scope.equals(ScopeRef.ROOT.getFullName())) {
                if(currentProc == null || !currentProc.name.equals(scope)) {
                   currentProc = new ProcedureData(scope);
                   procedures.add(currentProc);
+                  procChunkRange.put(currentProc, new int[]{ci, ci});
+               } else {
+                  procChunkRange.get(currentProc)[1] = ci;
                }
                currentProc.chunks.add(chunk);
                for(AsmLine l : chunk.getLines()) {
@@ -250,42 +344,31 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
             ProcedureData p1 = procedures.get(p);
             ProcedureData p2 = procedures.get(p + 1);
 
+            // CF-04: Strict chunk adjacency — no intervening global/data/segment chunks between p1 and p2
+            int[] r1 = procChunkRange.get(p1);
+            int[] r2 = procChunkRange.get(p2);
+            if(r1 == null || r2 == null || r1[1] + 1 != r2[0]) continue;
+
             List<AsmInstruction> insts1 = p1.instructions;
             List<AsmInstruction> insts2 = p2.instructions;
 
             if(insts1.size() < 2 || insts2.size() != insts1.size()) continue;
 
-            // p1 must not have data segments, segment changes or non-instruction content (strings, tables)
-            boolean hasSegmentOrData = false;
-            for(AsmChunk ch : p1.chunks) {
-               for(AsmLine l : ch.getLines()) {
-                  if(l instanceof AsmSegment) {
-                     hasSegmentOrData = true;
-                     break;
-                  }
-                  if(l instanceof AsmInlineKickAsm inlineAsm && (inlineAsm.getAsm().contains(".text") || inlineAsm.getAsm().contains(".byte") || inlineAsm.getAsm().contains(".segment"))) {
-                     hasSegmentOrData = true;
-                     break;
-                  }
-                  if(l instanceof AsmConstant) {
-                     hasSegmentOrData = true;
-                     break;
-                  }
-               }
-               if(hasSegmentOrData) break;
-            }
-            if(hasSegmentOrData) continue;
+            // Neither p1 nor p2 may contain segments, data, labels, constants, or inline KickAsm
+            if(hasDisqualifyingLines(p1.chunks) || hasDisqualifyingLines(p2.chunks)) continue;
 
             AsmInstruction first1 = insts1.get(0);
             AsmInstruction first2 = insts2.get(0);
 
-            if(!isImmediateLoad(first1) || !isImmediateLoad(first2)) continue;
+            CanonicalResolver res1 = scopeResolvers.getOrDefault(p1.name, scopeResolvers.get(""));
+            CanonicalResolver res2 = scopeResolvers.getOrDefault(p2.name, scopeResolvers.get(""));
+            if(!isImmediateLoad(first1) || !isSafeByteSkipImmediate(first2, p2.name, asmConstants, res2)) continue;
             if(!first1.getCpuOpcode().getMnemonic().equals(first2.getCpuOpcode().getMnemonic())) continue;
             if(first1.getLineBytes() != 2 || first2.getLineBytes() != 2) continue;
 
-            // Operands must be pure scalar/numeric constants, NOT label references like #<msg or #>msg
-            Long const1 = parseConstValue(first1.getOperand1());
-            Long const2 = parseConstValue(first2.getOperand1());
+            // Operands must be pure scalar/numeric constants (or resolved .const symbols), NOT label references like #<msg or #>msg
+            Long const1 = resolveConstValue(first1.getOperand1(), p1.name, asmConstants, res1);
+            Long const2 = resolveConstValue(first2.getOperand1(), p2.name, asmConstants, res2);
             if(const1 == null || const2 == null) continue;
 
             // Last instruction must be RTS
@@ -294,7 +377,19 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
             if(last1.getCpuOpcode() == null || last2.getCpuOpcode() == null) continue;
             if(!"rts".equals(last1.getCpuOpcode().getMnemonic()) || !"rts".equals(last2.getCpuOpcode().getMnemonic())) continue;
 
-            // Check if remaining instructions (index 1 to end) are identical
+            // Verify N/V/Z flags set by first1/first2 are not needed by insts2[1..]
+            int first2AllIdx = -1;
+            for(int li = 0; li < allLines.size(); li++) {
+               if(allLines.get(li).line == first2) {
+                  first2AllIdx = li;
+                  break;
+               }
+            }
+            if(first2AllIdx == -1 || (getLiveFlagsAfter(allLines, first2AllIdx, p2.name, getProgram()) & FLAG_NZV) != 0) {
+               continue;
+            }
+
+            // Check if remaining instructions (index 1 to end) are canonically identical across scopes
             boolean identical = true;
             for(int k = 1; k < insts1.size(); k++) {
                AsmInstruction i1 = insts1.get(k);
@@ -311,10 +406,19 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
                   identical = false;
                   break;
                }
-               // Instructions must not reference local symbols of p1 or p2
-               if(i1.getOperand1() != null && (i1.getOperand1().contains(p1.name + ".") || i1.getOperand1().contains(p2.name + "."))) {
-                  identical = false;
-                  break;
+               // CF-04: Canonical ZP/symbol equality check (e.g. p1.return = $02 vs p2.return = $04 must NOT match!)
+               if(i1.getOperand1() != null) {
+                  String op1 = i1.getOperand1().trim();
+                  if(op1.contains(p1.name + ".") || op1.contains(p2.name + ".")) {
+                     identical = false;
+                     break;
+                  }
+                  String c1 = res1 != null ? res1.resolve(op1) : op1;
+                  String c2 = res2 != null ? res2.resolve(op1) : op1;
+                  if(!Objects.equals(c1, c2)) {
+                     identical = false;
+                     break;
+                  }
                }
             }
             if(!identical) continue;

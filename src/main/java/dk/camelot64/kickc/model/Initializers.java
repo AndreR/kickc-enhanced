@@ -90,14 +90,22 @@ public class Initializers {
             }
          }
       } else if(initValue instanceof UnionDesignator) {
-         initValue = constantifyUnion((UnionDesignator) initValue, (SymbolTypeStruct) typeSpec.getType(), program, source);
+         if(!(typeSpec.getType() instanceof SymbolTypeStruct structType)) {
+            throw new CompileError("Designated initializer cannot initialize non-struct/union type " + typeSpec.getType(), source);
+         }
+         StructDefinition sd = structType.getStructDefinition(program.getScope());
+         if(sd != null && sd.isUnion()) {
+            initValue = constantifyUnion((UnionDesignator) initValue, structType, program, source);
+         } else {
+            initValue = constantifyStructOrUnion(new ValueList(Collections.singletonList(initValue)), structType, program, source);
+         }
       } else if(typeSpec.getType() instanceof SymbolTypeStruct && ((SymbolTypeStruct) typeSpec.getType()).getStructDefinition(program.getScope()) != null && ((SymbolTypeStruct) typeSpec.getType()).getStructDefinition(program.getScope()).isUnion() && !(initValue instanceof ValueList) && !(initValue instanceof ConstantStructValue)) {
          if(initValue instanceof VariableRef) { Variable var = program.getScope().getVariable((VariableRef) initValue); if(var != null && (typeSpec.getType().equals(var.getType()) || SymbolType.VAR.equals(var.getType()))) { return initValue; } }
          StructDefinition structDefinition = ((SymbolTypeStruct) typeSpec.getType()).getStructDefinition(program.getScope());
          Collection<Variable> memberDefinitions = structDefinition.getAllVars(false);
          if(!memberDefinitions.isEmpty()) {
             Variable firstMember = memberDefinitions.iterator().next();
-            int unionSize = firstMember.getType().getSizeBytes();
+            int unionSize = ((SymbolTypeStruct) typeSpec.getType()).calculateSizeBytes(structDefinition, program.getScope());
             if(initValue instanceof ConstantInteger ci && ci.getFixedPointSuffix() != null) {
                String sfx = ci.getFixedPointSuffix();
                if("f8".equals(sfx) || unionSize == 3 || ("f16".equals(sfx) && unionSize != 4) || ("f24".equals(sfx) && unionSize != 4)) {
@@ -109,14 +117,6 @@ public class Initializers {
             }
             UnionDesignator autoDesignator = new UnionDesignator(firstMember.getLocalName(), initValue);
             initValue = constantifyUnion(autoDesignator, (SymbolTypeStruct) typeSpec.getType(), program, source);
-         }
-      } else if(typeSpec.getType() instanceof SymbolTypeStruct && SymbolTypeConversion.isInt24(typeSpec.getType()) && !(initValue instanceof ValueList) && !(initValue instanceof ConstantStructValue)) {
-         if(initValue instanceof ConstantInteger) {
-            ConstantInteger ci = (ConstantInteger) initValue;
-            long val = ci.getInteger();
-            ConstantInteger lo = new ConstantInteger(val & 0xffffL, SymbolType.WORD);
-            ConstantInteger hi = new ConstantInteger((val >> 16) & 0xffL, SymbolType.BYTE);
-            initValue = constantifyStructOrUnion(new ValueList(java.util.Arrays.asList(lo, hi)), (SymbolTypeStruct) typeSpec.getType(), program, source);
          }
       } else if(initValue instanceof ValueList) {
          ValueList initList = (ValueList) initValue;
@@ -194,57 +194,211 @@ public class Initializers {
    }
 
    /**
-    * Convert as much as possible of a struct to constants.
+    * Convert as much as possible of a struct or union initializer (positional, designated, or bitfield) to constants.
     *
     * @param valueList The value list
-    * @param structType The struct type
+    * @param structType The struct or union type
     * @param program The program
     * @param source The source line
     * @return The constantified value
     */
    private static RValue constantifyStructOrUnion(ValueList valueList, SymbolTypeStruct structType, Program program, StatementSource source) {
-      // Recursively cast all sub-elements
       StructDefinition structDefinition = structType.getStructDefinition(program.getScope());
-      Collection<Variable> memberDefinitions = structDefinition.getAllVars(false);
-      int structInitNeedSize = structDefinition.isUnion() ? 1 : memberDefinitions.size();
-      if(structInitNeedSize != valueList.getList().size()) {
-         if(structDefinition.isUnion()) {
+      Collection<Variable> allMembers = structDefinition.getAllVars(false);
+
+      boolean hasDesignators = false;
+      for(RValue rv : valueList.getList()) {
+         if(rv instanceof UnionDesignator) {
+            hasDesignators = true;
+            break;
+         }
+      }
+
+      if(structDefinition.isUnion()) {
+         if(hasDesignators) {
+            List<UnionDesignator> designators = new ArrayList<>();
+            for(RValue rv : valueList.getList()) {
+               if(!(rv instanceof UnionDesignator ud)) {
+                  throw new CompileError("Cannot mix designated and positional initializers in union " + structType.toCDecl(), source);
+               }
+               designators.add(ud);
+            }
+            if(designators.size() == 1) {
+               return constantifyUnion(designators.get(0), structType, program, source);
+            }
+            // Multi-designator union initializer (e.g., anonymous struct flattened into a union):
+            // Validate all members exist and check whether their byte ranges are disjoint.
+            Map<Variable, RValue> byMember = new LinkedHashMap<>();
+            for(UnionDesignator ud : designators) {
+               Variable m = structDefinition.getMember(ud.getMemberName());
+               if(m == null) {
+                  throw new CompileError("Union member '" + ud.getMemberName() + "' not found in " + structType.toCDecl(), source);
+               }
+               byMember.put(m, ud.getMemberValue());
+            }
+            List<Variable> orderedMembers = new ArrayList<>(byMember.keySet());
+            orderedMembers.sort(Comparator.comparingLong(m -> structDefinition.getMemberByteOffset(m, program.getScope())));
+            boolean disjoint = true;
+            long prevEnd = 0;
+            for(Variable m : orderedMembers) {
+               long off = structDefinition.getMemberByteOffset(m, program.getScope());
+               long sz = SymbolTypeStruct.getMemberSizeBytes(m.getType(), m.getArraySize(), program.getScope());
+               if(off < prevEnd) {
+                  disjoint = false;
+                  break;
+               }
+               prevEnd = off + sz;
+            }
+            if(!disjoint) {
+               // Overlapping union alternatives: C99 last designator wins
+               return constantifyUnion(designators.get(designators.size() - 1), structType, program, source);
+            }
+            // Disjoint fields (from flattened anonymous struct inside union):
+            // Fill any leading/interior gaps from sibling flattened members with zero values if needed.
+            List<Variable> layoutMembers = new ArrayList<>();
+            long cursor = 0;
+            for(Variable m : orderedMembers) {
+               long off = structDefinition.getMemberByteOffset(m, program.getScope());
+               if(off > cursor) {
+                  for(Variable cand : allMembers) {
+                     if(byMember.containsKey(cand) || cand.isBitField() || cand.getStructMemberOffset() == null) continue;
+                     long cOff = cand.getStructMemberOffset();
+                     long cSz = SymbolTypeStruct.getMemberSizeBytes(cand.getType(), cand.getArraySize(), program.getScope());
+                     if(cOff == cursor && cOff + cSz <= off) {
+                        layoutMembers.add(cand);
+                        cursor += cSz;
+                        if(cursor == off) break;
+                     }
+                  }
+               }
+               layoutMembers.add(m);
+               cursor = off + SymbolTypeStruct.getMemberSizeBytes(m.getType(), m.getArraySize(), program.getScope());
+            }
+            boolean allConst = true;
+            LinkedHashMap<SymbolVariableRef, ConstantValue> constMemberMap = new LinkedHashMap<>();
+            List<RValue> designatedRuntimeList = new ArrayList<>();
+            for(Variable m : layoutMembers) {
+               RValue rawVal = byMember.get(m);
+               RValue cVal = constantify(rawVal, new ValueTypeSpec(m.getType()), program, source);
+               designatedRuntimeList.add(new UnionDesignator(m.getLocalName(), cVal));
+               if(cVal instanceof ConstantValue cv) {
+                  constMemberMap.put(m.getRef(), cv);
+               } else {
+                  allConst = false;
+               }
+            }
+            if(allConst) {
+               return new ConstantStructValue(structType, constMemberMap);
+            } else {
+               return new CastValue(structType, new ValueList(designatedRuntimeList));
+            }
+         }
+         // Positional union initializer: 1 value required
+         if(valueList.getList().size() != 1) {
             throw new CompileError(
                   "Union initializer has wrong size. One value is required.\n" +
                         " Union initializer: " + valueList.toString(program),
                   source);
+         }
+         Variable firstMember = allMembers.iterator().next();
+         RValue constantifiedMemberValue = constantify(valueList.getList().get(0), new ValueTypeSpec(firstMember.getType()), program, source);
+         if(constantifiedMemberValue instanceof ConstantValue cv) {
+            LinkedHashMap<SymbolVariableRef, ConstantValue> constMemberMap = new LinkedHashMap<>();
+            constMemberMap.put(firstMember.getRef(), cv);
+            return new ConstantStructValue(structType, constMemberMap);
          } else {
+            return new CastValue(structType, new ValueList(Collections.singletonList(constantifiedMemberValue)));
+         }
+      }
+
+      // Struct initializer (KRIT-10 multi-designator + TS-07 bitfield support)
+      boolean hasBitfields = structDefinition.hasBitfields();
+      List<Variable> storageMembers = new ArrayList<>();
+      List<Variable> logicalMembers = new ArrayList<>();
+      for(Variable m : allMembers) {
+         if(!m.isBitField()) {
+            storageMembers.add(m);
+         }
+         if(!m.getLocalName().startsWith("__bf_")) {
+            logicalMembers.add(m);
+         }
+      }
+
+      Map<String, RValue> logicalValues = new LinkedHashMap<>();
+      if(hasDesignators) {
+         Set<String> validLogicalNames = new HashSet<>();
+         for(Variable lm : logicalMembers) {
+            validLogicalNames.add(lm.getLocalName());
+         }
+         for(RValue rv : valueList.getList()) {
+            if(!(rv instanceof UnionDesignator ud)) {
+               throw new CompileError("Cannot mix designated and positional initializers in struct " + structType.toCDecl(), source);
+            }
+            if(!validLogicalNames.contains(ud.getMemberName())) {
+               throw new CompileError("Unknown struct member '" + ud.getMemberName() + "' in " + structType.toCDecl(), source);
+            }
+            logicalValues.put(ud.getMemberName(), ud.getMemberValue());
+         }
+      } else {
+         if(!hasBitfields && logicalMembers.size() != valueList.getList().size()) {
             throw new CompileError(
                   "Struct initializer has wrong size (" + valueList.getList().size() + "), " +
-                        "which does not match the number of members in " + structType.toCDecl() + " (" + structInitNeedSize + " members).\n" +
+                        "which does not match the number of members in " + structType.toCDecl() + " (" + logicalMembers.size() + " members).\n" +
                         " Struct initializer: " + valueList.toString(program),
                   source);
-
+         }
+         if(hasBitfields && valueList.getList().size() > logicalMembers.size()) {
+            throw new CompileError(
+                  "Struct initializer has too many elements (" + valueList.getList().size() + "), " +
+                        "expected at most " + logicalMembers.size() + " for " + structType.toCDecl() + ".\n" +
+                        " Struct initializer: " + valueList.toString(program),
+                  source);
+         }
+         for(int i = 0; i < valueList.getList().size(); i++) {
+            logicalValues.put(logicalMembers.get(i).getLocalName(), valueList.getList().get(i));
          }
       }
 
       boolean allConst = true;
-      // Constantified values in a list
       List<RValue> constantifiedList = new ArrayList<>();
-      // Map filled if all member values become constant
       LinkedHashMap<SymbolVariableRef, ConstantValue> constMemberMap = new LinkedHashMap<>();
-      Iterator<Variable> memberDefIt = memberDefinitions.iterator();
-      Iterator<RValue> valueIt = valueList.getList().iterator();
-      for(int i = 0; i < structInitNeedSize; i++) {
-         Variable memberDef = memberDefIt.next();
-         RValue memberValue = valueIt.next();
-         RValue constantifiedMemberValue = constantify(memberValue, new ValueTypeSpec(memberDef.getType()), program, source);
+      for(Variable storageMember : storageMembers) {
+         RValue constantifiedMemberValue;
+         if(hasBitfields && storageMember.getLocalName().startsWith("__bf_")) {
+            long packed = 0L;
+            String containerName = storageMember.getLocalName();
+            for(Variable bf : logicalMembers) {
+               if(!bf.isBitField() || !containerName.equals(bf.getBitFieldContainerName())) continue;
+               RValue rawBfVal = logicalValues.get(bf.getLocalName());
+               if(rawBfVal == null) continue;
+               RValue cBfVal = constantify(rawBfVal, new ValueTypeSpec(bf.getType()), program, source);
+               if(!(cBfVal instanceof ConstantValue cv)) {
+                  throw new CompileError("Non-constant bitfield initializer for '" + bf.getLocalName() + "' in " + structType.toCDecl() + " is not supported in brace initializers", source);
+               }
+               ConstantLiteral lit = cv.calculateLiteral(program.getScope());
+               if(!(lit instanceof ConstantInteger ci)) {
+                  throw new CompileError("Bitfield initializer for '" + bf.getLocalName() + "' must be a constant integer", source);
+               }
+               int width = bf.getBitFieldWidth();
+               int offset = bf.getBitFieldOffset();
+               long mask = (1L << width) - 1L;
+               packed |= (ci.getInteger() & mask) << offset;
+            }
+            constantifiedMemberValue = new ConstantInteger(packed, storageMember.getType());
+         } else {
+            RValue rawVal = logicalValues.get(storageMember.getLocalName());
+            constantifiedMemberValue = constantify(rawVal, new ValueTypeSpec(storageMember.getType()), program, source);
+         }
          constantifiedList.add(constantifiedMemberValue);
-         if(constantifiedMemberValue instanceof ConstantValue)
-            constMemberMap.put(memberDef.getRef(), (ConstantValue) constantifiedMemberValue);
-         else
+         if(constantifiedMemberValue instanceof ConstantValue cv) {
+            constMemberMap.put(storageMember.getRef(), cv);
+         } else {
             allConst = false;
+         }
       }
       if(allConst) {
-         // Constant struct
          return new ConstantStructValue(structType, constMemberMap);
       } else {
-         // Constantified list with a cast
          return new CastValue(structType, new ValueList(constantifiedList));
       }
    }

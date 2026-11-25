@@ -24,11 +24,16 @@ public class Pass2ConditionalJumpSequenceImprovement extends Pass2SsaOptimizatio
          Graph.Block conditionalSuccessor = getGraph().getConditionalSuccessor(block);
          Graph.Block defaultSuccessor = getGraph().getDefaultSuccessor(block);
          if(conditionalSuccessor != null && defaultSuccessor != null) {
-            if(conditionalSuccessor.getDefaultSuccessor().equals(defaultSuccessor.getLabel())) {
+            LabelRef condDefault = conditionalSuccessor.getDefaultSuccessor();
+            if(condDefault != null && condDefault.equals(defaultSuccessor.getLabel())) {
                if(conditionalSuccessor.equals(block)) continue;
+               // CF-06: Avoid infinite oscillation on symmetric 2-block cycles (B.default == C && C.default == B)
+               if(java.util.Objects.equals(defaultSuccessor.getDefaultSuccessor(), conditionalSuccessor.getLabel())) {
+                  continue;
+               }
                // conditional successor is current blocks default successor
                // Negate condition and swap conditional/default successor.
-               modified = negateCondition(block);
+               modified |= negateCondition(block);
             }
 
          }

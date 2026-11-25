@@ -17,9 +17,17 @@ public class OperatorModulo extends OperatorBinary {
    @Override
    public ConstantLiteral calculateLiteral(ConstantLiteral left, ConstantLiteral right) {
       if(left instanceof ConstantEnumerable && right instanceof ConstantEnumerable) {
-         return new ConstantInteger(((ConstantEnumerable) left).getInteger() % ((ConstantEnumerable) right).getInteger());
+         long divisor = ((ConstantEnumerable) right).getInteger();
+         if(divisor == 0L) {
+            throw new CompileError("Modulo by zero in constant expression");
+         }
+         return new ConstantInteger(((ConstantEnumerable) left).getInteger() % divisor);
       } else if(left instanceof ConstantPointer && right instanceof ConstantEnumerable) {
-         return new ConstantInteger(((ConstantPointer) left).getLocation() % ((ConstantEnumerable) right).getInteger());
+         long divisor = ((ConstantEnumerable) right).getInteger();
+         if(divisor == 0L) {
+            throw new CompileError("Modulo by zero in constant expression");
+         }
+         return new ConstantInteger(((ConstantPointer) left).getLocation() % divisor);
       }
       throw new CompileError("Calculation not implemented " + left + " " + getOperator() + " " + right);
    }

@@ -24,7 +24,7 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
       super(program);
    }
 
-   private static class LineRef {
+   private static class AlignedLineRef {
       final int index;
       final AsmChunk chunk;
       final AsmLine line;
@@ -32,7 +32,7 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
       final String segment;
       final int offset;
 
-      LineRef(int index, AsmChunk chunk, AsmLine line, String scope, String segment, int offset) {
+      AlignedLineRef(int index, AsmChunk chunk, AsmLine line, String scope, String segment, int offset) {
          this.index = index;
          this.chunk = chunk;
          this.line = line;
@@ -68,7 +68,7 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
       }
 
       // Collect all lines with scope, segment, and linear byte offset
-      List<LineRef> allLines = new ArrayList<>();
+      List<AlignedLineRef> allLines = new ArrayList<>();
       String currentScope = null;
       String currentSegment = null;
       int currentOffset = 0;
@@ -86,23 +86,23 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
                currentSegment = ((AsmSegment) line).getName();
             }
 
-            allLines.add(new LineRef(lineIdx++, chunk, line, currentScope, currentSegment, currentOffset));
+            allLines.add(new AlignedLineRef(lineIdx++, chunk, line, currentScope, currentSegment, currentOffset));
             currentOffset += line.getLineBytes();
          }
       }
 
-      // Map from scope::label -> earliest LineRef defining that label
-      Map<String, LineRef> labelRefs = new HashMap<>();
+      // Map from scope::label -> earliest AlignedLineRef defining that label
+      Map<String, AlignedLineRef> labelRefs = new HashMap<>();
       for(int i = 0; i < allLines.size(); i++) {
-         LineRef ref = allLines.get(i);
+         AlignedLineRef ref = allLines.get(i);
          if(ref.line instanceof AsmLabel) {
             String label = ((AsmLabel) ref.line).getLabel();
             if(!label.startsWith("!")) {
                String key = (ref.scope != null ? ref.scope + "::" : "") + label;
                // Find the earliest label at the exact same offset
-               LineRef earliest = ref;
+               AlignedLineRef earliest = ref;
                for(int j = i - 1; j >= 0; j--) {
-                  LineRef prev = allLines.get(j);
+                  AlignedLineRef prev = allLines.get(j);
                   if(prev.line instanceof AsmComment) continue;
                   if(prev.line instanceof AsmLabel && prev.offset == ref.offset) {
                      earliest = prev;
@@ -115,12 +115,12 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
          }
       }
 
-      // Map to track max loop length per target label LineRef
-      Map<LineRef, Integer> loopLengths = new LinkedHashMap<>();
+      // Map to track max loop length per target label AlignedLineRef
+      Map<AlignedLineRef, Integer> loopLengths = new LinkedHashMap<>();
 
       // Detect backward branches
       for(int i = 0; i < allLines.size(); i++) {
-         LineRef branchRef = allLines.get(i);
+         AlignedLineRef branchRef = allLines.get(i);
          if(branchRef.line instanceof AsmInstruction) {
             AsmInstruction instr = (AsmInstruction) branchRef.line;
             // Backward relative branch or jump (bne, beq, bcs, bcc, bmi, bpl, bvs, bvc, jmp)
@@ -128,7 +128,7 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
                String target = instr.getOperandJumpTarget();
                if(target != null && !target.startsWith("!")) {
                   String key = (branchRef.scope != null ? branchRef.scope + "::" : "") + target;
-                  LineRef targetRef = labelRefs.get(key);
+                  AlignedLineRef targetRef = labelRefs.get(key);
                   if(targetRef != null && targetRef.offset < branchRef.offset) {
                      // Check segment compatibility
                      if(targetRef.segment != null && targetRef.segment.equals(branchRef.segment)) {
@@ -139,7 +139,7 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
                         // Verify that all lines within the loop are contiguous in the same segment without data chunks
                         boolean validLoop = true;
                         for(int k = targetRef.index; k <= branchRef.index; k++) {
-                           LineRef inside = allLines.get(k);
+                           AlignedLineRef inside = allLines.get(k);
                            if(inside.segment != null && !inside.segment.equals(targetRef.segment)) {
                               validLoop = false;
                               break;
@@ -170,14 +170,14 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
 
       // Insert alignment directives
       int insertedCount = 0;
-      for(Map.Entry<LineRef, Integer> entry : loopLengths.entrySet()) {
-         LineRef targetRef = entry.getKey();
+      for(Map.Entry<AlignedLineRef, Integer> entry : loopLengths.entrySet()) {
+         AlignedLineRef targetRef = entry.getKey();
          int loopLen = entry.getValue();
 
          // Check if already aligned immediately before
          boolean alreadyAligned = false;
          for(int j = targetRef.index - 1; j >= 0; j--) {
-            LineRef prev = allLines.get(j);
+            AlignedLineRef prev = allLines.get(j);
             if(prev.line instanceof AsmComment) continue;
             if(prev.line instanceof AsmLoopAlign || prev.line instanceof AsmDataAlignment) {
                alreadyAligned = true;
@@ -187,11 +187,27 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
 
          // Ensure target is not entered via linear fall-through from previous instruction.
          // KickAssembler pads .align with $00 (BRK), so fall-through into padding causes CPU crash.
+         // CF-02: If the loop immediately follows AsmScopeBegin (proc: {), place AsmLoopAlign BEFORE AsmScopeBegin
+         // so $00 padding is never inserted between the procedure entry label and its first instruction.
          boolean hasFallThrough = false;
+         AlignedLineRef insertBeforeRef = targetRef;
          for(int j = targetRef.index - 1; j >= 0; j--) {
-            LineRef prev = allLines.get(j);
+            AlignedLineRef prev = allLines.get(j);
             if(prev.line instanceof AsmComment || prev.line instanceof AsmLabel) continue;
-            if(prev.line instanceof AsmScopeBegin || prev.line instanceof AsmScopeEnd) {
+            if(prev.line instanceof AsmScopeBegin) {
+               insertBeforeRef = prev;
+               // Check if already aligned immediately before AsmScopeBegin
+               for(int k = j - 1; k >= 0; k--) {
+                  AlignedLineRef beforeScope = allLines.get(k);
+                  if(beforeScope.line instanceof AsmComment) continue;
+                  if(beforeScope.line instanceof AsmLoopAlign || beforeScope.line instanceof AsmDataAlignment) {
+                     alreadyAligned = true;
+                  }
+                  break;
+               }
+               break;
+            }
+            if(prev.line instanceof AsmScopeEnd) {
                break;
             }
             if(prev.line instanceof AsmInstruction) {
@@ -208,7 +224,7 @@ public class Pass5ZeroWasteLoopAlignment extends Pass5AsmOptimization {
          }
 
          if(!alreadyAligned && !hasFallThrough) {
-            targetRef.chunk.addLineBefore(targetRef.line, new AsmLoopAlign(loopLen));
+            insertBeforeRef.chunk.addLineBefore(insertBeforeRef.line, new AsmLoopAlign(loopLen));
             insertedCount++;
          }
       }

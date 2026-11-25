@@ -63,70 +63,29 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
    }
 
    private Procedure getOrCreateHelperProcedure16uDiv(long constant) {
-      String procName = "__div16u_const_" + constant;
-      Procedure existing = getProgramScope().getLocalProcedure(procName);
-      if(existing != null) return existing;
-
-      Procedure procedure = new Procedure(procName,
-            new SymbolTypeProcedure(SymbolType.WORD, Collections.singletonList(SymbolType.WORD)),
-            getProgramScope(), Scope.SEGMENT_CODE_DEFAULT, Scope.SEGMENT_DATA_DEFAULT,
-            Procedure.CallingConvention.PHI_CALL, Bank.COMMON);
-
-      Variable param = new Variable("val", Variable.Kind.PHI_MASTER, SymbolType.WORD, procedure,
-            Variable.MemoryArea.MAIN_MEMORY, Scope.SEGMENT_DATA_DEFAULT, null);
-      procedure.add(param);
-      procedure.setParameters(Collections.singletonList(param));
-
-      Variable returnVar = new Variable("return", Variable.Kind.PHI_MASTER, SymbolType.WORD, procedure,
-            Variable.MemoryArea.MAIN_MEMORY, Scope.SEGMENT_DATA_DEFAULT, null);
-      procedure.add(returnVar);
-
-      getProgramScope().add(procedure);
-
-      ProcedureCompilation pc = getProgram().createProcedureCompilation(procedure.getRef());
-
-      Label procExit = procedure.addLabel(SymbolRef.PROCEXIT_BLOCK_NAME);
-      Graph.Block procBlock = new ControlFlowBlock(procedure.getLabel().getRef(), procedure.getRef());
-
-      StatementAssignment assign = new StatementAssignment(
-            (LValue) returnVar.getRef(),
-            param.getRef(),
-            Operators.DIVIDE,
-            new ConstantInteger(constant, SymbolType.WORD),
-            true, StatementSource.NONE, Comment.NO_COMMENTS);
-      procBlock.addStatement(assign);
-      procBlock.setDefaultSuccessor(procExit.getRef());
-
-      Graph.Block returnBlock = new ControlFlowBlock(procExit.getRef(), procedure.getRef());
-      returnBlock.addStatement(new StatementAssignment(returnVar.getVariableRef(), returnVar.getRef(), false, StatementSource.NONE, Comment.NO_COMMENTS));
-      returnBlock.addStatement(new StatementReturn(returnVar.getRef(), StatementSource.NONE, Comment.NO_COMMENTS));
-
-      List<Graph.Block> blocks = new ArrayList<>();
-      blocks.add(procBlock);
-      blocks.add(returnBlock);
-
-      ControlFlowGraph cfg = new ControlFlowGraph(blocks);
-      pc.setGraph(cfg);
-
-      return procedure;
+      return getOrCreateHelperProcedureDiv(constant, SymbolType.WORD, "__div16u_const_");
    }
 
    private Procedure getOrCreateHelperProcedure8uDiv(long constant) {
-      String procName = "__div8u_const_" + constant;
+      return getOrCreateHelperProcedureDiv(constant, SymbolType.BYTE, "__div8u_const_");
+   }
+
+   private Procedure getOrCreateHelperProcedureDiv(long constant, SymbolType type, String prefix) {
+      String procName = prefix + constant;
       Procedure existing = getProgramScope().getLocalProcedure(procName);
       if(existing != null) return existing;
 
       Procedure procedure = new Procedure(procName,
-            new SymbolTypeProcedure(SymbolType.BYTE, Collections.singletonList(SymbolType.BYTE)),
+            new SymbolTypeProcedure(type, Collections.singletonList(type)),
             getProgramScope(), Scope.SEGMENT_CODE_DEFAULT, Scope.SEGMENT_DATA_DEFAULT,
             Procedure.CallingConvention.PHI_CALL, Bank.COMMON);
 
-      Variable param = new Variable("val", Variable.Kind.PHI_MASTER, SymbolType.BYTE, procedure,
+      Variable param = new Variable("val", Variable.Kind.PHI_MASTER, type, procedure,
             Variable.MemoryArea.MAIN_MEMORY, Scope.SEGMENT_DATA_DEFAULT, null);
       procedure.add(param);
       procedure.setParameters(Collections.singletonList(param));
 
-      Variable returnVar = new Variable("return", Variable.Kind.PHI_MASTER, SymbolType.BYTE, procedure,
+      Variable returnVar = new Variable("return", Variable.Kind.PHI_MASTER, type, procedure,
             Variable.MemoryArea.MAIN_MEMORY, Scope.SEGMENT_DATA_DEFAULT, null);
       procedure.add(returnVar);
 
@@ -141,7 +100,7 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
             (LValue) returnVar.getRef(),
             param.getRef(),
             Operators.DIVIDE,
-            new ConstantInteger(constant, SymbolType.BYTE),
+            new ConstantInteger(constant, type),
             true, StatementSource.NONE, Comment.NO_COMMENTS);
       procBlock.addStatement(assign);
       procBlock.setDefaultSuccessor(procExit.getRef());
@@ -181,9 +140,6 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
                if(Operators.DIVIDE.equals(op) && assign.getrValue2() instanceof ConstantInteger constInt) {
                   long c = constInt.getInteger();
                   divConstCounts.put(c, divConstCounts.getOrDefault(c, 0) + 1);
-               } else if(Operators.MODULO.equals(op) && assign.getrValue2() instanceof ConstantInteger constInt) {
-                  long c = constInt.getInteger();
-                  divConstCounts.put(c, divConstCounts.getOrDefault(c, 0) + 1);
                } else if(Operators.MULTIPLY.equals(op) && assign.getrValue2() instanceof ConstantInteger constInt) {
                   long c = constInt.getInteger();
                   mulConstCounts.put(c, mulConstCounts.getOrDefault(c, 0) + 1);
@@ -217,13 +173,41 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
       return modified;
    }
 
+   private SymbolType resolveOperandType(RValue val) {
+      SymbolType t = SymbolTypeInference.inferType(getProgramScope(), val);
+      if(t instanceof dk.camelot64.kickc.model.types.SymbolTypeIntegerAuto && val instanceof ConstantInteger ci) {
+         long v = ci.getInteger();
+         SymbolType fixed = v < 0
+               ? dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed.getSmallestSigned(v)
+               : dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed.getSmallestUnsigned(v);
+         if(fixed != null) return fixed;
+      }
+      return t;
+   }
+
+   private SymbolType resolveCommonType(RValue left, RValue right) {
+      SymbolType lt = resolveOperandType(left);
+      SymbolType rt = resolveOperandType(right);
+      if(lt instanceof dk.camelot64.kickc.model.types.SymbolTypeInteger && rt instanceof dk.camelot64.kickc.model.types.SymbolTypeInteger) {
+         SymbolType common = dk.camelot64.kickc.model.types.SymbolTypeConversion.convertedMathType(
+               (dk.camelot64.kickc.model.types.SymbolTypeInteger) lt,
+               (dk.camelot64.kickc.model.types.SymbolTypeInteger) rt);
+         if(common != null) return common;
+      }
+      return lt.getSizeBytes() >= rt.getSizeBytes() ? lt : rt;
+   }
+
+   private static boolean isPowerOfTwo(long c) {
+      return c > 0 && (c & (c - 1L)) == 0L;
+   }
+
    private boolean rewriteDivide(StatementAssignment assign, ListIterator<Statement> stmtIt, Map<Long, Integer> divConstCounts) {
       RValue dividend = assign.getrValue1();
       RValue divisor = assign.getrValue2();
-      SymbolType divType = SymbolTypeInference.inferType(getProgramScope(), dividend);
-      SymbolType divisorType = SymbolTypeInference.inferType(getProgramScope(), divisor);
-      boolean isSigned = isSigned(divType) || isSigned(divisorType);
-      int divBytes = divType.getSizeBytes();
+      SymbolType commonType = resolveCommonType(dividend, divisor);
+      SymbolType divisorType = resolveOperandType(divisor);
+      boolean isSigned = isSigned(commonType);
+      int divBytes = commonType.getSizeBytes();
       int divisorBytes = divisorType.getSizeBytes();
 
       if(divisor instanceof ConstantInteger constInt) {
@@ -231,8 +215,7 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
          if(c == 1) {
             return false; // Identity, handled in Pass 2
          }
-         double pow2 = Math.log(c) / Math.log(2);
-         if(pow2 >= 0.0 && Math.round(pow2) == pow2) {
+         if(isPowerOfTwo(c)) {
             if(!isSigned) {
                return false; // Power of 2 unsigned, optimal shift in Pass 2
             }
@@ -246,13 +229,33 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
                   stmtIt.set(call);
                   return true;
                }
-            } else {
+            } else if(divBytes == 2) {
                Procedure div16s = getProgramScope().getLocalProcedure("div16s");
                if(div16s != null) {
                   StatementCall call = new StatementCall(assign.getlValue(), "div16s",
                         list(dividend, new ConstantInteger(c, SymbolType.SWORD)),
                         assign.getSource(), assign.getComments());
                   call.setProcedure(div16s.getRef());
+                  stmtIt.set(call);
+                  return true;
+               }
+            } else if(divBytes == 3) {
+               Procedure div24s = getProgramScope().getLocalProcedure("div24s");
+               if(div24s != null) {
+                  StatementCall call = new StatementCall(assign.getlValue(), "div24s",
+                        list(dividend, new ConstantInteger(c, SymbolType.STRIBYTE)),
+                        assign.getSource(), assign.getComments());
+                  call.setProcedure(div24s.getRef());
+                  stmtIt.set(call);
+                  return true;
+               }
+            } else if(divBytes == 4) {
+               Procedure div32s = getProgramScope().getLocalProcedure("div32s");
+               if(div32s != null) {
+                  StatementCall call = new StatementCall(assign.getlValue(), "div32s",
+                        list(dividend, new ConstantInteger(c, SymbolType.SDWORD)),
+                        assign.getSource(), assign.getComments());
+                  call.setProcedure(div32s.getRef());
                   stmtIt.set(call);
                   return true;
                }
@@ -479,15 +482,13 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
    private boolean rewriteModulo(StatementAssignment assign, ListIterator<Statement> stmtIt, Map<Long, Integer> divConstCounts) {
       RValue dividend = assign.getrValue1();
       RValue divisor = assign.getrValue2();
-      SymbolType modType = SymbolTypeInference.inferType(getProgramScope(), dividend);
-      SymbolType divisorType = SymbolTypeInference.inferType(getProgramScope(), divisor);
-      boolean isSigned = isSigned(modType) || isSigned(divisorType);
-      int modBytes = modType.getSizeBytes();
+      SymbolType commonType = resolveCommonType(dividend, divisor);
+      boolean isSigned = isSigned(commonType);
+      int modBytes = commonType.getSizeBytes();
 
       if(divisor instanceof ConstantInteger constInt) {
          long c = constInt.getInteger();
-         double pow2 = Math.log(c) / Math.log(2);
-         if(pow2 >= 0.0 && Math.round(pow2) == pow2 && !isSigned) {
+         if(isPowerOfTwo(c) && !isSigned) {
             return false; // Power of 2 bitwise AND in Pass 2
          }
       }
@@ -568,17 +569,17 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
    private boolean rewriteMultiply(StatementAssignment assign, ListIterator<Statement> stmtIt, Map<Long, Integer> mulConstCounts) {
       RValue left = assign.getrValue1();
       RValue right = assign.getrValue2();
-      SymbolType mulType = SymbolTypeInference.inferType(getProgramScope(), left);
-      SymbolType rightType = SymbolTypeInference.inferType(getProgramScope(), right);
-      boolean isSigned = isSigned(mulType) || isSigned(rightType);
+      SymbolType commonType = resolveCommonType(left, right);
+      SymbolType mulType = resolveOperandType(left);
+      SymbolType rightType = resolveOperandType(right);
+      boolean isSigned = isSigned(commonType);
       int leftBytes = mulType.getSizeBytes();
       int rightBytes = rightType.getSizeBytes();
 
       if(right instanceof ConstantInteger constInt) {
          long c = constInt.getInteger();
          if(c <= 1) return false;
-         double pow2 = Math.log(c) / Math.log(2);
-         if(pow2 >= 0.0 && Math.round(pow2) == pow2) {
+         if(isPowerOfTwo(c)) {
             return false; // Power of 2 shift
          }
 

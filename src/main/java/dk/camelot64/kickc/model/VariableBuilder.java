@@ -196,6 +196,14 @@ public class VariableBuilder {
       return type instanceof SymbolTypeStruct;
    }
 
+   private boolean hasBitfields() {
+      if(!(type instanceof SymbolTypeStruct typeStruct))
+         return false;
+      ProgramScope programScope = scope != null ? scope.getProgramScope() : null;
+      StructDefinition structDef = typeStruct.getStructDefinition(programScope);
+      return structDef != null && structDef.hasBitfields();
+   }
+
    /**
     * Is the type is a pointer type.
     *
@@ -387,6 +395,8 @@ public class VariableBuilder {
       else if(isTypeStruct() && config.isStructModelClassic())
          return false;
       else if(isTypeStruct() && ((SymbolTypeStruct)type).isUnion())
+         return false;
+      else if(isTypeStruct() && hasBitfields())
          return false;
       else {
          VariableBuilderConfig.Scope scope = VariableBuilderConfig.getScope(isScopeGlobal(), isScopeLocal(), isScopeIntermediate(), isScopeParameter(), isScopeMember());

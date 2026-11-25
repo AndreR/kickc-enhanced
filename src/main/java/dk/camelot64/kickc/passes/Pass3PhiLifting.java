@@ -39,6 +39,10 @@ public class Pass3PhiLifting {
    private void upliftProcedure(ProcedureCompilation procedureCompilation) {
       final ControlFlowGraph graph = procedureCompilation.getGraph();
       List<Graph.Block> liftedBlocks = new ArrayList<>(graph.getAllBlocks());
+      Map<LabelRef, Graph.Block> liftedBlockMap = new HashMap<>(liftedBlocks.size() * 2);
+      for(Graph.Block b : liftedBlocks) {
+         liftedBlockMap.put(b.getLabel(), b);
+      }
       ProgramScope programScope = program.getScope();
       ListIterator<Graph.Block> blocksIt = liftedBlocks.listIterator();
       while(blocksIt.hasNext()) {
@@ -51,7 +55,7 @@ public class Pass3PhiLifting {
                for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
                   if(!(phiRValue.getrValue() instanceof ConstantValue)) {
                      LabelRef predecessorRef = phiRValue.getPredecessor();
-                     Graph.Block predecessorBlock = getBlock(liftedBlocks, predecessorRef);
+                     Graph.Block predecessorBlock = liftedBlockMap.get(predecessorRef);
                      if(predecessorBlock==null) {
                         // Look for the predecessor in the entire graph
                         predecessorBlock = program.getGraph().getBlock(predecessorRef);
@@ -85,6 +89,7 @@ public class Pass3PhiLifting {
                            Label newBlockLabel = currentScope.addLabelIntermediate();
                            newBlock = new ControlFlowBlock(newBlockLabel.getRef(), currentScope.getRef());
                            blocksIt.add(newBlock);
+                           liftedBlockMap.put(newBlock.getLabel(), newBlock);
                            newBlock.setDefaultSuccessor(block.getLabel());
                            newBlocks.put(predecessorRef, newBlock.getLabel());
                            StatementConditionalJump previousConditionalJump = (StatementConditionalJump) lastPredecessorStatement;
@@ -98,7 +103,7 @@ public class Pass3PhiLifting {
                            }
                            program.getLog().append("Added new block during phi lifting " + newBlock.getLabel() + "(between " + predecessorRef + " and " + block.getLabel() + ")");
                         } else {
-                           newBlock = getBlock(liftedBlocks, newBlockRef);
+                           newBlock = liftedBlockMap.get(newBlockRef);
                         }
                         List<Statement> newBlockStatements = newBlock.getStatements();
                         newBlockStatements.add(newAssignment);
@@ -135,10 +140,6 @@ public class Pass3PhiLifting {
       // Update the procedure with the PHI-lifted blocks
       procedureCompilation.setGraph(new ControlFlowGraph(liftedBlocks));
 
-   }
-
-   private Graph.Block getBlock(List<Graph.Block> blocks, LabelRef blockRef) {
-      return blocks.stream().filter(block -> block.getLabel().equals(blockRef)).findFirst().orElse(null);
    }
 
 }

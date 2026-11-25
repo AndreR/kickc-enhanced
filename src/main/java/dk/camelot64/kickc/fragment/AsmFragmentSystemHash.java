@@ -5,10 +5,10 @@ import dk.camelot64.kickc.fragment.synthesis.AsmFragmentTemplateSynthesisRuleMan
 import dk.camelot64.kickc.model.InternalError;
 import dk.camelot64.kickc.model.TargetCpu;
 
-import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.EnumSet;
 
 /**
  * Capable of creating a hash code that describes the total state of the ASM fragment system.
@@ -42,83 +42,62 @@ public class AsmFragmentSystemHash {
     * @return The fragment system hash
     */
    public static AsmFragmentSystemHash calculate(Path baseFragmentFolder, boolean allSystems) {
-      Long hashLF = 0L;
-      Long hashCRLF = 0L;
-      long lastModified = 0;
+      final boolean systemLF = isSystemLF();
+      final long[] acc = new long[3]; // [0]=hashLF, [1]=hashCRLF, [2]=lastModified
       final TargetCpu.Feature[] cpuFeatures = TargetCpu.Feature.values();
       for(TargetCpu.Feature cpuFeature : cpuFeatures) {
-         hashCRLF += cpuFeature.getName().hashCode();
-         hashLF += cpuFeature.getName().hashCode();
+         acc[0] += cpuFeature.getName().hashCode();
+         acc[1] += cpuFeature.getName().hashCode();
          final Path cpuFeatureFolder = baseFragmentFolder.resolve(cpuFeature.getName());
-         final File cpuFeatureFolderFile = cpuFeatureFolder.toFile();
-         if(cpuFeatureFolderFile.exists() && cpuFeatureFolderFile.isDirectory()) {
-            final File[] files = cpuFeatureFolderFile.listFiles((dir, name) -> name.endsWith(".asm"));
-            if(files != null)
-               for(File file : files) {
-                  long lengthLF;
-                  long lengthCRLF;
-                  if(allSystems) {
-                     // Calculate length for all systems by reading the file (slow!)
-                     int fileNewlines = getFileNewlineCount(file);
-                     if(isSystemLF()) {
-                        lengthLF = file.length();
-                        lengthCRLF = file.length() + fileNewlines;
-                     } else {
-                        lengthLF = file.length() - fileNewlines;
-                        lengthCRLF = file.length();
+         if(Files.isDirectory(cpuFeatureFolder)) {
+            try {
+               Files.walkFileTree(cpuFeatureFolder, EnumSet.noneOf(FileVisitOption.class), 1, new SimpleFileVisitor<>() {
+                  @Override
+                  public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                     String fileName = file.getFileName().toString();
+                     if(fileName.endsWith(".asm")) {
+                        long size = attrs.size();
+                        if(systemLF) {
+                           acc[0] += size;
+                        } else {
+                           acc[1] += size;
+                        }
+                        int nameHash = fileName.hashCode();
+                        acc[0] += nameHash;
+                        acc[1] += nameHash;
+                        long mtime = attrs.lastModifiedTime().toMillis();
+                        if(mtime > acc[2]) {
+                           acc[2] = mtime;
+                        }
                      }
-                  }  else {
-                     // Use filesystem length for current system only - set other to zero (fast!)
-                     if(isSystemLF()) {
-                        lengthLF = file.length();
-                        lengthCRLF = 0;
-                     } else {
-                        lengthLF = 0;
-                        lengthCRLF = file.length();
-                     }
+                     return FileVisitResult.CONTINUE;
                   }
-                  hashCRLF += lengthCRLF;
-                  hashLF += lengthLF;
-                  hashCRLF += file.getName().hashCode();
-                  hashLF += file.getName().hashCode();
-                  if(file.lastModified() > lastModified)
-                     lastModified = file.lastModified();
-               }
+               });
+            } catch(IOException e) {
+               throw new InternalError("Error scanning ASM fragment folder " + cpuFeatureFolder.toAbsolutePath(), e);
+            }
          }
       }
       // Also hash in all synthesis rules for all CPU's
       for(AsmFragmentTemplateSynthesisRule synthesisRule : AsmFragmentTemplateSynthesisRuleManager.getAllSynthesisRules()) {
-         hashCRLF += synthesisRule.hashCode();
-         hashLF += synthesisRule.hashCode();
+         int ruleHash = synthesisRule.hashCode();
+         acc[0] += ruleHash;
+         acc[1] += ruleHash;
       }
+      Long hashLF = acc[0];
+      Long hashCRLF = acc[1];
       if(!allSystems) {
-         // If not all systems - null out other system hash since it is wrong
-         if(isSystemLF())
+         if(systemLF)
             hashCRLF = null;
          else
             hashLF = null;
+      } else {
+         if(systemLF)
+            hashCRLF = 0L;
+         else
+            hashLF = 0L;
       }
-      return new AsmFragmentSystemHash(hashLF, hashCRLF, lastModified);
-   }
-
-   /**
-    * Get the number of newlines in a file
-    * @param file The file to examine
-    * @return The number of newline characters
-    */
-   private static int getFileNewlineCount(File file) {
-      int fileNewlines = 0;
-      final byte[] fileBytes;
-      try {
-         fileBytes = Files.readAllBytes(file.toPath());
-      } catch(IOException e) {
-         throw new InternalError("Error reading ASM fragment file "+file.getAbsolutePath(),e);
-      }
-      for(int i = 0; i < fileBytes.length; i++) {
-         byte fileByte = fileBytes[i];
-         if(fileByte=='\n') fileNewlines++;
-      }
-      return fileNewlines;
+      return new AsmFragmentSystemHash(hashLF, hashCRLF, acc[2]);
    }
 
    /**

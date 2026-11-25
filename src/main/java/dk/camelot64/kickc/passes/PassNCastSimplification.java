@@ -52,7 +52,13 @@ public class PassNCastSimplification extends Pass2SsaOptimization {
             } else if(unaryOperand instanceof ConstantInteger) {
                ConstantInteger constantInteger = (ConstantInteger) unaryOperand;
                if(SymbolType.NUMBER.equals(constantInteger.getType())) {
-                  if(castType instanceof SymbolTypeIntegerFixed || SymbolType.UNUMBER.equals(castType) || SymbolType.SNUMBER.equals(castType)) {
+                  if(castType instanceof SymbolTypeIntegerFixed) {
+                     long normalized = ((SymbolTypeIntegerFixed) castType).normalize(constantInteger.getInteger());
+                     ConstantInteger newConstInt = new ConstantInteger(normalized, castType);
+                     programExpression.set(newConstInt);
+                     getLog().append("Simplifying constant integer cast " + newConstInt.toString());
+                     optimized.set(true);
+                  } else if(SymbolType.UNUMBER.equals(castType) || SymbolType.SNUMBER.equals(castType)) {
                      ConstantInteger newConstInt = new ConstantInteger(constantInteger.getInteger(), castType);
                      programExpression.set(newConstInt);
                      getLog().append("Simplifying constant integer cast " + newConstInt.toString());

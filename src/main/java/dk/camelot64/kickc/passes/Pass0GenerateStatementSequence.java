@@ -286,7 +286,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          case CParser.PRAGMA_ENCODING -> {
             final String encodingName = pragmaParamName(pragmaParamSingle(ctx));
             try {
-               this.currentEncoding = StringEncoding.fromName(encodingName);
+               this.currentEncoding = StringEncoding.fromName(encodingName, program);
             } catch(IllegalArgumentException e) {
                throw new CompileError("Unknown string encoding " + encodingName, new StatementSource(ctx));
             }
@@ -478,7 +478,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       if(params.size() > 1 && params.get(1) instanceof KickCParser.PragmaParamNameContext) {
          String baseName = pragmaParamName(params.get(1));
          try {
-            baseEncoding = StringEncoding.fromName(baseName);
+            baseEncoding = StringEncoding.fromName(baseName, program);
          } catch(IllegalArgumentException e) {
             throw new CompileError("Unknown base encoding '" + baseName + "' in #pragma " + ctx.NAME().getText(), new StatementSource(ctx));
          }
@@ -496,7 +496,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          }
       }
 
-      StringEncoding.createCustom(encodingName, baseEncoding, encodingName, customMappings);
+      program.registerCustomStringEncoding(StringEncoding.createCustom(encodingName, baseEncoding, encodingName, customMappings));
    }
 
    private void parseCharmapString(String mappingStr, Map<Character, Byte> mappings, StatementSource source) {
@@ -1785,6 +1785,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          BlockScope blockScope = getCurrentScope().addBlockScope();
          scopeStack.push(blockScope);
          this.visit(ctx.stmtSeq());
+         pendingLoopLabel = null;
          scopeStack.pop();
       }
       return null;
@@ -1820,21 +1821,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       }
       KickCParser.StmtContext ifStmt = ctx.stmt(0);
       KickCParser.StmtContext elseStmt = ctx.stmt(1);
-      RValue rValue = addCondition(ctx.commaExpr(), StatementSource.ifThen(ctx));
       List<Comment> comments = ensureUnusedComments(getCommentsSymbol(ctx));
       if(elseStmt == null) {
-         // If without else - skip the entire section if condition not met
-         SymbolVariableRef notExprVar = addIntermediateVar().getRef();
-         addStatement(new StatementAssignment((LValue) notExprVar, null, Operators.LOGIC_NOT, rValue, true, StatementSource.ifThen(ctx), comments));
+         // If without else - skip the entire section if condition not met (short-circuit jump-code)
          Label endJumpLabel = getCurrentScope().addLabelIntermediate();
-         addStatement(new StatementConditionalJump(notExprVar, endJumpLabel.getRef(), StatementSource.ifThen(ctx), Comment.NO_COMMENTS));
+         addConditionBranch(ctx.commaExpr(), null, endJumpLabel.getRef(), StatementSource.ifThen(ctx), comments);
          this.visit(ifStmt);
          // No else statement - just add the label
          addStatement(new StatementLabel(endJumpLabel.getRef(), StatementSource.ifThen(ctx), Comment.NO_COMMENTS));
       } else {
-         // If with else - jump to if section if condition met - fall into else otherwise.
+         // If with else - jump to if section if condition met - fall into else otherwise (short-circuit jump-code)
          Label ifJumpLabel = getCurrentScope().addLabelIntermediate();
-         addStatement(new StatementConditionalJump(rValue, ifJumpLabel.getRef(), StatementSource.ifThen(ctx), comments));
+         addConditionBranch(ctx.commaExpr(), ifJumpLabel.getRef(), null, StatementSource.ifThen(ctx), comments);
          // Add else body
          this.visit(elseStmt);
          // There is an else statement - add the if part and any needed labels/jumps
@@ -1926,11 +1924,17 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       List<Comment> comments = ensureUnusedComments(getCommentsSymbol(ctx));
       StatementLabel beginJumpTarget = new StatementLabel(beginJumpLabel.getRef(), StatementSource.whileDo(ctx), comments);
       addStatement(beginJumpTarget);
-      RValue rValue = addCondition(ctx.commaExpr(), StatementSource.whileDo(ctx));
-      StatementConditionalJump doJmpStmt = new StatementConditionalJump(rValue, doJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
-      addStatement(doJmpStmt);
-      Statement endJmpStmt = new StatementJump(endJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
-      addStatement(endJmpStmt);
+      boolean hasDirectives = ctx.directive() != null && !ctx.directive().isEmpty();
+      StatementConditionalJump doJmpStmt = null;
+      if(!hasDirectives) {
+         addConditionBranch(ctx.commaExpr(), null, endJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
+      } else {
+         RValue rValue = addCondition(ctx.commaExpr(), StatementSource.whileDo(ctx));
+         doJmpStmt = new StatementConditionalJump(rValue, doJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
+         addStatement(doJmpStmt);
+         Statement endJmpStmt = new StatementJump(endJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
+         addStatement(endJmpStmt);
+      }
       StatementLabel doJumpTarget = new StatementLabel(doJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
       addStatement(doJumpTarget);
       // Reuse the begin jump target for continue.
@@ -1941,7 +1945,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       StatementLabel endJumpTarget = new StatementLabel(endJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
       addStatement(endJumpTarget);
       // Add directives
-      addDirectives(doJmpStmt, ctx.directive());
+      if(doJmpStmt != null) {
+         addDirectives(doJmpStmt, ctx.directive());
+      }
       addLoopBreakLabel(loopStack.pop(), ctx);
       scopeStack.pop();
       return null;
@@ -1973,6 +1979,178 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return rValue;
    }
 
+   /**
+    * Emit direct short-circuit control-flow jump code for a comma-expression condition.
+    * A null target means fallthrough to the immediately following statement.
+    */
+   private void addConditionBranch(KickCParser.CommaExprContext commaCtx, LabelRef trueTarget, LabelRef falseTarget, StatementSource source, List<Comment> comments) {
+      if(commaCtx instanceof KickCParser.CommaSimpleContext cs) {
+         PrePostModifierHandler.addPreModifiers(this, cs.commaExpr(), source);
+         RValue discarded = (RValue) this.visit(cs.commaExpr());
+         consumeExpr(discarded);
+         PrePostModifierHandler.addPostModifiers(this, cs.commaExpr(), source);
+         addConditionBranch(cs.expr(), trueTarget, falseTarget, source, comments);
+      } else if(commaCtx instanceof KickCParser.CommaNoneContext cn) {
+         addConditionBranch(cn.expr(), trueTarget, falseTarget, source, comments);
+      }
+   }
+
+   /**
+    * Emit direct short-circuit control-flow jump code for a boolean condition expression
+    * without materializing intermediate 0/1 values or boolean Phi blocks.
+    * A null target means fallthrough to the immediately following statement.
+    */
+   private void addConditionBranch(KickCParser.ExprContext exprCtx, LabelRef trueTarget, LabelRef falseTarget, StatementSource source, List<Comment> comments) {
+      if(exprCtx instanceof KickCParser.ExprParContext par) {
+         addConditionBranch(par.commaExpr(), trueTarget, falseTarget, source, comments);
+         return;
+      }
+      if(exprCtx instanceof KickCParser.ExprUnaryContext unary) {
+         String op = ((TerminalNode) unary.getChild(0)).getSymbol().getText();
+         if("!".equals(op)) {
+            addConditionBranch(unary.expr(), falseTarget, trueTarget, source, comments);
+            return;
+         }
+      }
+      if(exprCtx instanceof KickCParser.ExprBinaryContext bin) {
+         String op = ((TerminalNode) bin.getChild(1)).getSymbol().getText();
+         if("&&".equals(op)) {
+            if(falseTarget != null) {
+               addConditionBranch(bin.expr(0), null, falseTarget, source, comments);
+               addConditionBranch(bin.expr(1), trueTarget, falseTarget, source, Comment.NO_COMMENTS);
+            } else {
+               Label falseLabel = getCurrentScope().addLabelIntermediate();
+               addConditionBranch(bin.expr(0), null, falseLabel.getRef(), source, comments);
+               addConditionBranch(bin.expr(1), trueTarget, null, source, Comment.NO_COMMENTS);
+               addStatement(new StatementLabel(falseLabel.getRef(), source, Comment.NO_COMMENTS));
+            }
+            return;
+         }
+         if("||".equals(op)) {
+            if(trueTarget != null) {
+               addConditionBranch(bin.expr(0), trueTarget, null, source, comments);
+               addConditionBranch(bin.expr(1), trueTarget, falseTarget, source, Comment.NO_COMMENTS);
+            } else {
+               Label trueLabel = getCurrentScope().addLabelIntermediate();
+               addConditionBranch(bin.expr(0), trueLabel.getRef(), null, source, comments);
+               addConditionBranch(bin.expr(1), null, falseTarget, source, Comment.NO_COMMENTS);
+               addStatement(new StatementLabel(trueLabel.getRef(), source, Comment.NO_COMMENTS));
+            }
+            return;
+         }
+      }
+      RValue rVal = evalShortCircuitOperand(exprCtx, source);
+      Boolean constBool = tryEvaluateConstantBool(rVal);
+      if(constBool != null) {
+         consumeExpr(rVal);
+         if(constBool) {
+            if(trueTarget != null) {
+               addStatement(new StatementJump(trueTarget, source, comments));
+            }
+         } else {
+            if(falseTarget != null) {
+               addStatement(new StatementJump(falseTarget, source, comments));
+            }
+         }
+         return;
+      }
+      if(trueTarget != null && falseTarget == null) {
+         addStatement(new StatementConditionalJump(rVal, trueTarget, source, comments));
+         consumeExpr(rVal);
+      } else if(trueTarget == null && falseTarget != null) {
+         SymbolVariableRef notExprVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) notExprVar, null, Operators.LOGIC_NOT, rVal, true, source, comments));
+         addStatement(new StatementConditionalJump(notExprVar, falseTarget, source, Comment.NO_COMMENTS));
+         consumeExpr(rVal);
+      } else if(trueTarget != null) {
+         addStatement(new StatementConditionalJump(rVal, trueTarget, source, comments));
+         addStatement(new StatementJump(falseTarget, source, Comment.NO_COMMENTS));
+         consumeExpr(rVal);
+      }
+   }
+
+   private Boolean tryEvaluateConstantBool(RValue val) {
+      if(val instanceof ConstantValue cv) {
+         try {
+            ConstantLiteral lit = cv.calculateLiteral(program.getScope());
+            if(lit instanceof ConstantBool cb) return cb.getBool();
+            if(lit instanceof ConstantInteger ci) return ci.getValue() != 0;
+            if(lit instanceof ConstantPointer cp) return cp.getLocation() != 0;
+         } catch(ConstantNotLiteral ignored) {
+         }
+      }
+      return null;
+   }
+
+   private boolean containsLogicalAndOr(ParseTree node) {
+      if(node == null) return false;
+      if(node instanceof KickCParser.ExprBinaryContext bin) {
+         String op = ((TerminalNode) bin.getChild(1)).getSymbol().getText();
+         if("&&".equals(op) || "||".equals(op)) {
+            return true;
+         }
+      }
+      for(int i = 0; i < node.getChildCount(); i++) {
+         if(containsLogicalAndOr(node.getChild(i))) return true;
+      }
+      return false;
+   }
+
+   /**
+    * Conservative check whether evaluating an AST subexpression may perform side effects,
+    * trap (division/modulo, pointer dereference), or read volatile/MMIO state.
+    */
+   private boolean mayHaveSideEffectsOrTrap(ParseTree node) {
+      if(node == null) return false;
+      if(node instanceof KickCParser.ExprSizeOfContext
+            || node instanceof KickCParser.ExprSizeOfTypeContext
+            || node instanceof KickCParser.ExprCountOfContext
+            || node instanceof KickCParser.ExprCountOfTypeContext
+            || node instanceof KickCParser.ExprTypeIdContext
+            || node instanceof KickCParser.ExprTypeIdTypeContext
+            || node instanceof KickCParser.ExprDefinedContext) {
+         return false;
+      }
+      if(node instanceof KickCParser.ExprCallContext
+            || node instanceof KickCParser.ExprPreModContext
+            || node instanceof KickCParser.ExprPostModContext
+            || node instanceof KickCParser.ExprAssignmentContext
+            || node instanceof KickCParser.ExprAssignmentCompoundContext
+            || node instanceof KickCParser.ExprPtrContext
+            || node instanceof KickCParser.ExprArrowContext) {
+         return true;
+      }
+      if(node instanceof KickCParser.ExprArrayContext arr) {
+         if(arr.expr() instanceof KickCParser.ExprIdContext baseId) {
+            Symbol sym = getCurrentScope().findSymbol(baseId.NAME().getText());
+            if(sym instanceof Variable v
+                  && !v.isVolatile()
+                  && !v.isToVolatile()
+                  && v.getType() instanceof SymbolTypePointer pt
+                  && pt.getArraySpec() != null) {
+               return mayHaveSideEffectsOrTrap(arr.commaExpr());
+            }
+         }
+         return true;
+      }
+      if(node instanceof KickCParser.ExprBinaryContext bin) {
+         String op = ((TerminalNode) bin.getChild(1)).getSymbol().getText();
+         if("/".equals(op) || "%".equals(op)) {
+            return true;
+         }
+      }
+      if(node instanceof KickCParser.ExprIdContext id) {
+         Symbol sym = getCurrentScope().findSymbol(id.NAME().getText());
+         if(sym instanceof Variable v) {
+            if(v.isVolatile() || v.isToVolatile()) return true;
+         }
+      }
+      for(int i = 0; i < node.getChildCount(); i++) {
+         if(mayHaveSideEffectsOrTrap(node.getChild(i))) return true;
+      }
+      return false;
+   }
+
    @Override
    public Void visitStmtDoWhile(KickCParser.StmtDoWhileContext ctx) {
       // Create the block scope early - to keep all statements of the loop inside it
@@ -1985,10 +2163,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       addStatement(beginJumpTarget);
       addLoopBody(ctx.stmt());
       addLoopContinueLabel(loopStack.peek(), ctx);
-      RValue rValue = addCondition(ctx.commaExpr(), StatementSource.doWhile(ctx));
-      StatementConditionalJump doJmpStmt = new StatementConditionalJump(rValue, beginJumpLabel.getRef(), StatementSource.doWhile(ctx), Comment.NO_COMMENTS);
-      addStatement(doJmpStmt);
-      addDirectives(doJmpStmt, ctx.directive());
+      boolean hasDirectives = ctx.directive() != null && !ctx.directive().isEmpty();
+      if(!hasDirectives) {
+         addConditionBranch(ctx.commaExpr(), beginJumpLabel.getRef(), null, StatementSource.doWhile(ctx), Comment.NO_COMMENTS);
+      } else {
+         RValue rValue = addCondition(ctx.commaExpr(), StatementSource.doWhile(ctx));
+         StatementConditionalJump doJmpStmt = new StatementConditionalJump(rValue, beginJumpLabel.getRef(), StatementSource.doWhile(ctx), Comment.NO_COMMENTS);
+         addStatement(doJmpStmt);
+         addDirectives(doJmpStmt, ctx.directive());
+      }
       addLoopBreakLabel(loopStack.pop(), ctx);
       scopeStack.pop();
       return null;
@@ -2186,12 +2369,17 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          }
 
          if(conditionCtx != null) {
-            RValue conditionRvalue = addCondition(conditionCtx.commaExpr(), StatementSource.forClassic(ctx));
-            StatementConditionalJump doJmpStmt = new StatementConditionalJump(conditionRvalue, doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
-            addStatement(doJmpStmt);
-            doJmpStmt.setDeclaredCountdown(true);
-            if(stmtForCtx.directive() != null)
-               addDirectives(doJmpStmt, stmtForCtx.directive());
+            boolean hasDirectives = stmtForCtx.directive() != null && !stmtForCtx.directive().isEmpty();
+            if(!hasDirectives && containsLogicalAndOr(conditionCtx.commaExpr())) {
+               addConditionBranch(conditionCtx.commaExpr(), doJumpLabel.getRef(), null, StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+            } else {
+               RValue conditionRvalue = addCondition(conditionCtx.commaExpr(), StatementSource.forClassic(ctx));
+               StatementConditionalJump doJmpStmt = new StatementConditionalJump(conditionRvalue, doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+               addStatement(doJmpStmt);
+               doJmpStmt.setDeclaredCountdown(true);
+               if(stmtForCtx.directive() != null)
+                  addDirectives(doJmpStmt, stmtForCtx.directive());
+            }
          } else {
             StatementJump doJmpStmt = new StatementJump(doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
             addStatement(doJmpStmt);
@@ -2212,16 +2400,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       List<Comment> comments = getCommentsSymbol(stmtForCtx);
       StatementLabel repeatTarget = new StatementLabel(beginJumpLabel.getRef(), StatementSource.forClassic(ctx), comments);
       addStatement(repeatTarget);
-      RValue conditionRvalue = null;
+      boolean hasDirectives = stmtForCtx.directive() != null && !stmtForCtx.directive().isEmpty();
+      Statement doJmpStmt = null;
       if(conditionCtx != null) {
-         conditionRvalue = addCondition(conditionCtx.commaExpr(), StatementSource.forClassic(ctx));
-      }
-      Statement doJmpStmt;
-      if(conditionRvalue != null) {
-         doJmpStmt = new StatementConditionalJump(conditionRvalue, doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
-         addStatement(doJmpStmt);
-         Statement endJmpStmt = new StatementJump(endJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
-         addStatement(endJmpStmt);
+         if(!hasDirectives) {
+            addConditionBranch(conditionCtx.commaExpr(), null, endJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+         } else {
+            RValue conditionRvalue = addCondition(conditionCtx.commaExpr(), StatementSource.forClassic(ctx));
+            doJmpStmt = new StatementConditionalJump(conditionRvalue, doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+            addStatement(doJmpStmt);
+            Statement endJmpStmt = new StatementJump(endJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
+            addStatement(endJmpStmt);
+         }
       } else {
          doJmpStmt = new StatementJump(doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
          addStatement(doJmpStmt);
@@ -2258,8 +2448,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    @Override
    public Object visitIfInitExpr(KickCParser.IfInitExprContext ctx) {
       if(ctx.commaExpr() != null) {
+         StatementSource source = new StatementSource(ctx);
+         PrePostModifierHandler.addPreModifiers(this, ctx.commaExpr(), source);
          RValue rValue = (RValue) this.visit(ctx.commaExpr());
          consumeExpr(rValue);
+         PrePostModifierHandler.addPostModifiers(this, ctx.commaExpr(), source);
       }
       return null;
    }
@@ -2372,7 +2565,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          throw new CompileError("label already defined '" + labelName + "'.", new StatementSource(ctx));
       Label label = targetScope.addLabel(labelName);
       addStatement(new StatementLabel(label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
-      pendingLoopLabel = labelName;
+      KickCParser.StmtContext childStmt = ctx.stmt();
+      if(childStmt != null) {
+         boolean isLoopOrSwitch = (childStmt instanceof KickCParser.StmtWhileContext)
+               || (childStmt instanceof KickCParser.StmtDoWhileContext)
+               || (childStmt instanceof KickCParser.StmtForContext)
+               || (childStmt instanceof KickCParser.StmtSwitchContext);
+         pendingLoopLabel = isLoopOrSwitch ? labelName : null;
+         this.visit(childStmt);
+         pendingLoopLabel = null;
+      } else {
+         pendingLoopLabel = null;
+      }
       return null;
    }
 
@@ -2576,23 +2780,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          PrePostModifierHandler.addPreModifiers(this, exprCtx, new StatementSource(ctx));
          rValue = (RValue) this.visit(exprCtx);
          Variable returnVar = procedure.getLocalVariable("return");
-         if(returnVar != null) {
-            SymbolType returnVarType = returnVar.getType();
-            SymbolType exprType = inferExprType(getExprFromCommaExpr(exprCtx));
-            if(isInt24Type(returnVarType) && !isInt24Type(exprType)) {
-               StructMemberRef loMember = new StructMemberRef(returnVar.getRef(), "lo");
-               StructMemberRef hiMember = new StructMemberRef(returnVar.getRef(), "hi");
-               RValue byte0 = addExprUnary(ctx, Operators.BYTE0, rValue);
-               RValue byte1 = addExprUnary(ctx, Operators.BYTE1, rValue);
-               RValue byte2 = addExprUnary(ctx, Operators.BYTE2, rValue);
-               RValue loVal = addExprBinary(ctx, byte1, Operators.WORD, byte0);
-               addStatement(new StatementAssignment(loMember, loVal, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-               addStatement(new StatementAssignment(hiMember, byte2, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-               rValue = null;
-            } else if(!isInt24Type(returnVarType) && isInt24Type(exprType) && rValue instanceof LValue) {
-               rValue = promoteInt24ToDword(ctx, (LValue) rValue, exprType);
-            }
-         }
          if(rValue != null) {
             addStatement(new StatementAssignment((LValue) returnVar.getRef(), rValue, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
          }
@@ -2605,9 +2792,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public RValue visitInitUnion(KickCParser.InitUnionContext ctx) {
-      final String memberName = ctx.NAME().getText();
-      final RValue rValue = (RValue) visit(ctx.expr());
-      return new UnionDesignator(memberName, rValue);
+      if(ctx.NAME().size() == 1) {
+         final String memberName = ctx.NAME(0).getText();
+         final RValue rValue = (RValue) visit(ctx.expr(0));
+         return new UnionDesignator(memberName, rValue);
+      }
+      List<RValue> designators = new ArrayList<>();
+      for(int i = 0; i < ctx.NAME().size(); i++) {
+         final String memberName = ctx.NAME(i).getText();
+         final RValue rValue = (RValue) visit(ctx.expr(i));
+         designators.add(new UnionDesignator(memberName, rValue));
+      }
+      return new ValueList(designators);
    }
 
    @Override
@@ -2815,6 +3011,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             enumUnderlyingType = varDecl.getEffectiveType();
          }
          EnumDefinition enumDefinition = new EnumDefinition(enumDefName, getCurrentScope());
+         enumDefinition.setUnderlyingType(enumUnderlyingType);
          getCurrentScope().add(enumDefinition);
          this.currentEnum = enumDefinition;
          this.currentEnumUnderlyingType = enumUnderlyingType;
@@ -2894,7 +3091,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       if(enumDefinition == null) {
          throw new CompileError("Unknown enum " + enumDefName, new StatementSource(ctx));
       }
-      varDecl.setDeclType(SymbolType.BYTE);
+      varDecl.setDeclType(enumDefinition.getUnderlyingType());
       return null;
    }
 
@@ -3187,11 +3384,21 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       throw new CompileError("Unexpected bitfield expression: " + exprCtx.getText());
    }
 
+   private int getBitfieldContainerSize(Variable member) {
+      if(member.getScope() instanceof StructDefinition structDef && member.getBitFieldContainerName() != null) {
+         Variable container = structDef.getLocalVar(member.getBitFieldContainerName());
+         if(container != null && container.getType() != null) {
+            return container.getType().getSizeBytes();
+         }
+      }
+      return member.getType().getSizeBytes();
+   }
+
    public RValue desugarBitfieldRead(ParserRuleContext ctx, StructMemberRef containerRef, Variable member) {
       int offset = member.getBitFieldOffset();
       int width = member.getBitFieldWidth();
       long valMask = (1L << width) - 1;
-      int containerSize = member.getType().getSizeBytes();
+      int containerSize = getBitfieldContainerSize(member);
 
       RValue val = containerRef;
       if(offset > 0) {
@@ -3201,10 +3408,14 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       if(needsMask) {
          val = addExprBinary(ctx, val, Operators.BOOL_AND, new ConstantInteger(valMask));
       }
-      if((member.getType() instanceof SymbolTypeIntegerFixed && ((SymbolTypeIntegerFixed) member.getType()).isSigned()) && width < (containerSize * 8)) {
-         long signBit = 1L << (width - 1);
-         RValue xored = addExprBinary(ctx, val, Operators.BOOL_XOR, new ConstantInteger(signBit));
-         val = addExprBinary(ctx, xored, Operators.MINUS, new ConstantInteger(signBit));
+      if(member.getType() instanceof SymbolTypeIntegerFixed fixedType && fixedType.isSigned()) {
+         if(width < (containerSize * 8)) {
+            long signBit = 1L << (width - 1);
+            RValue xored = addExprBinary(ctx, val, Operators.BOOL_XOR, new ConstantInteger(signBit));
+            val = addExprBinary(ctx, xored, Operators.MINUS, new ConstantInteger(signBit));
+         }
+         SymbolType signedType = (containerSize == 1) ? SymbolType.SBYTE : SymbolType.SWORD;
+         val = addExprUnary(ctx, Operators.getCastUnary(signedType), val);
       }
       return val;
    }
@@ -3212,7 +3423,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    public RValue writeBitfield(ParserRuleContext ctx, LValue containerLVal, Variable bitfieldMember, RValue rhsVal) {
       int offset = bitfieldMember.getBitFieldOffset();
       int width = bitfieldMember.getBitFieldWidth();
-      int containerSize = bitfieldMember.getType().getSizeBytes();
+      int containerSize = getBitfieldContainerSize(bitfieldMember);
       long valMask = (1L << width) - 1;
       long fullMask = (valMask << offset);
       long invMask = (~fullMask) & (containerSize == 1 ? 0xFFL : 0xFFFFL);
@@ -3528,216 +3739,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return null;
    }
 
-   public RValue promoteInt24ToDword(ParserRuleContext ctx, LValue val, SymbolType type) {
-      StructMemberRef loMember = new StructMemberRef(val, "lo");
-      StructMemberRef hiMember = new StructMemberRef(val, "hi");
-      SymbolVariableRef hiWordVar = addIntermediateVar().getRef();
-      SymbolType hiWordType = isSignedInt24(type) ? SymbolType.SWORD : SymbolType.WORD;
-      addStatement(new StatementAssignment((LValue) hiWordVar, Operators.getCastUnary(hiWordType), hiMember, true, new StatementSource(ctx), Comment.NO_COMMENTS));
-      return addExprBinary(ctx, hiWordVar, Operators.DWORD, loMember);
-   }
-
-   public boolean isInt24Type(SymbolType type) {
-      if(type instanceof SymbolTypeStruct structType) {
-         if(!structType.isUnion() && structType.getSizeBytes() == 3) {
-            return true;
-         }
-      }
-      return false;
-   }
-
-   public boolean isSignedInt24(SymbolType type) {
-      if(type instanceof SymbolTypeStruct structType) {
-         StructDefinition sDef = structType.getStructDefinition(program.getScope());
-         if(sDef != null) {
-            Variable hi = sDef.getMember("hi");
-            if(hi != null && hi.getType() instanceof SymbolTypeIntegerFixed && ((SymbolTypeIntegerFixed) hi.getType()).isSigned()) {
-               return true;
-            }
-         }
-      }
-      return false;
-   }
-
-   public KickCParser.ExprArrayContext getInt24ArrayContext(KickCParser.ExprContext exprCtx) {
-      while(exprCtx instanceof KickCParser.ExprParContext) {
-         KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) exprCtx).commaExpr();
-         if(commaCtx instanceof KickCParser.CommaNoneContext) {
-            exprCtx = ((KickCParser.CommaNoneContext) commaCtx).expr();
-         } else if(commaCtx instanceof KickCParser.CommaSimpleContext) {
-            exprCtx = ((KickCParser.CommaSimpleContext) commaCtx).expr();
-         } else {
-            return null;
-         }
-      }
-      if(exprCtx instanceof KickCParser.ExprArrayContext arrayCtx) {
-         SymbolType arrayType = inferExprType(arrayCtx.expr());
-         if(arrayType instanceof SymbolTypePointer ptrType && isInt24Type(ptrType.getElementType())) {
-            return arrayCtx;
-         }
-      }
-      return null;
-   }
-
-   public RValue desugarInt24ArrayRead(KickCParser.ExprArrayContext arrayCtx) {
-      SymbolType arrayType = inferExprType(arrayCtx.expr());
-      SymbolType elementType = (arrayType instanceof SymbolTypePointer) ? ((SymbolTypePointer) arrayType).getElementType() : null;
-      boolean signed = isSignedInt24(elementType);
-
-      RValue arrayRVal = (RValue) visit(arrayCtx.expr());
-      RValue indexRVal = (RValue) visit(arrayCtx.commaExpr());
-
-      if(!(indexRVal instanceof SymbolVariableRef || indexRVal instanceof ConstantValue)) {
-         SymbolVariableRef idxVar = addIntermediateVar().getRef();
-         addStatement(new StatementAssignment((LValue) idxVar, indexRVal, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
-         indexRVal = idxVar;
-      }
-
-      SymbolTypePointer bytePtrType = new SymbolTypePointer(SymbolType.BYTE);
-
-      if(indexRVal instanceof ConstantInteger ci && arrayRVal instanceof ConstantValue cv) {
-         long byteOffset = ci.getInteger() * 3;
-         ConstantCastValue baseBytePtr = new ConstantCastValue(bytePtrType, cv);
-         ConstantBinary ptr0 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(byteOffset, SymbolType.WORD));
-         ConstantBinary ptr1 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(byteOffset + 1, SymbolType.WORD));
-         ConstantBinary ptr2 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(byteOffset + 2, SymbolType.WORD));
-
-         PointerDereferenceSimple deref0 = new PointerDereferenceSimple(ptr0);
-         PointerDereferenceSimple deref1 = new PointerDereferenceSimple(ptr1);
-         PointerDereferenceSimple deref2 = new PointerDereferenceSimple(ptr2);
-
-         SymbolVariableRef b0Var = addIntermediateVar().getRef();
-         addStatement(new StatementAssignment((LValue) b0Var, deref0, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
-
-         SymbolVariableRef b1Var = addIntermediateVar().getRef();
-         addStatement(new StatementAssignment((LValue) b1Var, deref1, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
-
-         SymbolVariableRef b2Var = addIntermediateVar().getRef();
-         addStatement(new StatementAssignment((LValue) b2Var, deref2, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
-
-         RValue loVar = addExprBinary(arrayCtx, b1Var, Operators.WORD, b0Var);
-
-         SymbolVariableRef hiWordVar = addIntermediateVar().getRef();
-         SymbolType hiWordType = signed ? SymbolType.SWORD : SymbolType.WORD;
-         addStatement(new StatementAssignment((LValue) hiWordVar, Operators.getCastUnary(hiWordType), b2Var, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
-
-         return addExprBinary(arrayCtx, hiWordVar, Operators.DWORD, loVar);
-      }
-
-      SymbolVariableRef byteOffsetVar = addIntermediateVar().getRef();
-      addStatement(new StatementAssignment((LValue) byteOffsetVar, indexRVal, Operators.MULTIPLY, new ConstantInteger(3L, SymbolType.BYTE), true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
-
-      PointerDereferenceIndexed deref0, deref1, deref2;
-      if(arrayRVal instanceof ConstantValue cv) {
-         ConstantCastValue baseBytePtr = new ConstantCastValue(bytePtrType, cv);
-         ConstantBinary basePlus1 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(1L, SymbolType.WORD));
-         ConstantBinary basePlus2 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(2L, SymbolType.WORD));
-
-         deref0 = new PointerDereferenceIndexed(baseBytePtr, byteOffsetVar);
-         deref1 = new PointerDereferenceIndexed(basePlus1, byteOffsetVar);
-         deref2 = new PointerDereferenceIndexed(basePlus2, byteOffsetVar);
-      } else {
-         SymbolVariableRef ptrAddress = addIntermediateVar().getRef();
-         CastValue baseBytePtr = new CastValue(bytePtrType, arrayRVal);
-         addStatement(new StatementAssignment((LValue) ptrAddress, baseBytePtr, Operators.PLUS, byteOffsetVar, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
-
-         deref0 = new PointerDereferenceIndexed(ptrAddress, new ConstantInteger(0L, SymbolType.BYTE));
-         deref1 = new PointerDereferenceIndexed(ptrAddress, new ConstantInteger(1L, SymbolType.BYTE));
-         deref2 = new PointerDereferenceIndexed(ptrAddress, new ConstantInteger(2L, SymbolType.BYTE));
-      }
-
-      SymbolVariableRef b0Var = addIntermediateVar().getRef();
-      addStatement(new StatementAssignment((LValue) b0Var, deref0, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
-
-      SymbolVariableRef b1Var = addIntermediateVar().getRef();
-      addStatement(new StatementAssignment((LValue) b1Var, deref1, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
-
-      SymbolVariableRef b2Var = addIntermediateVar().getRef();
-      addStatement(new StatementAssignment((LValue) b2Var, deref2, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
-
-      RValue loVar = addExprBinary(arrayCtx, b1Var, Operators.WORD, b0Var);
-
-      SymbolVariableRef hiWordVar = addIntermediateVar().getRef();
-      SymbolType hiWordType = signed ? SymbolType.SWORD : SymbolType.WORD;
-      addStatement(new StatementAssignment((LValue) hiWordVar, Operators.getCastUnary(hiWordType), b2Var, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
-
-      return addExprBinary(arrayCtx, hiWordVar, Operators.DWORD, loVar);
-   }
-
-   public RValue writeInt24Array(ParserRuleContext ctx, KickCParser.ExprArrayContext arrayCtx, RValue rhsVal) {
-      RValue arrayRVal = (RValue) visit(arrayCtx.expr());
-      RValue indexRVal = (RValue) visit(arrayCtx.commaExpr());
-
-      if(!(indexRVal instanceof SymbolVariableRef || indexRVal instanceof ConstantValue)) {
-         SymbolVariableRef idxVar = addIntermediateVar().getRef();
-         addStatement(new StatementAssignment((LValue) idxVar, indexRVal, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
-         indexRVal = idxVar;
-      }
-      if(!(rhsVal instanceof SymbolVariableRef || rhsVal instanceof ConstantValue)) {
-         SymbolVariableRef rhsVar = addIntermediateVar().getRef();
-         addStatement(new StatementAssignment((LValue) rhsVar, rhsVal, true, new StatementSource(ctx), Comment.NO_COMMENTS));
-         rhsVal = rhsVar;
-      }
-
-      RValue byte0, byte1, byte2;
-      if(rhsVal instanceof ConstantInteger ci) {
-         long val = ci.getInteger();
-         byte0 = new ConstantInteger(val & 0xffL, SymbolType.BYTE);
-         byte1 = new ConstantInteger((val >> 8) & 0xffL, SymbolType.BYTE);
-         byte2 = new ConstantInteger((val >> 16) & 0xffL, SymbolType.BYTE);
-      } else {
-         byte0 = addExprUnary(ctx, Operators.BYTE0, rhsVal);
-         byte1 = addExprUnary(ctx, Operators.BYTE1, rhsVal);
-         byte2 = addExprUnary(ctx, Operators.BYTE2, rhsVal);
-      }
-
-      SymbolTypePointer bytePtrType = new SymbolTypePointer(SymbolType.BYTE);
-
-      if(indexRVal instanceof ConstantInteger ci && arrayRVal instanceof ConstantValue cv) {
-         long byteOffset = ci.getInteger() * 3;
-         ConstantCastValue baseBytePtr = new ConstantCastValue(bytePtrType, cv);
-         ConstantBinary ptr0 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(byteOffset, SymbolType.WORD));
-         ConstantBinary ptr1 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(byteOffset + 1, SymbolType.WORD));
-         ConstantBinary ptr2 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(byteOffset + 2, SymbolType.WORD));
-
-         addStatement(new StatementAssignment(new PointerDereferenceSimple(ptr0), byte0, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-         addStatement(new StatementAssignment(new PointerDereferenceSimple(ptr1), byte1, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-         addStatement(new StatementAssignment(new PointerDereferenceSimple(ptr2), byte2, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-         return rhsVal;
-      }
-
-      SymbolVariableRef byteOffsetVar = addIntermediateVar().getRef();
-      addStatement(new StatementAssignment((LValue) byteOffsetVar, indexRVal, Operators.MULTIPLY, new ConstantInteger(3L, SymbolType.BYTE), true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
-
-      if(arrayRVal instanceof ConstantValue cv) {
-         ConstantCastValue baseBytePtr = new ConstantCastValue(bytePtrType, cv);
-         ConstantBinary basePlus1 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(1L, SymbolType.WORD));
-         ConstantBinary basePlus2 = new ConstantBinary(baseBytePtr, Operators.PLUS, new ConstantInteger(2L, SymbolType.WORD));
-
-         PointerDereferenceIndexed deref0 = new PointerDereferenceIndexed(baseBytePtr, byteOffsetVar);
-         PointerDereferenceIndexed deref1 = new PointerDereferenceIndexed(basePlus1, byteOffsetVar);
-         PointerDereferenceIndexed deref2 = new PointerDereferenceIndexed(basePlus2, byteOffsetVar);
-
-         addStatement(new StatementAssignment(deref0, byte0, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-         addStatement(new StatementAssignment(deref1, byte1, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-         addStatement(new StatementAssignment(deref2, byte2, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-      } else {
-         SymbolVariableRef ptrAddress = addIntermediateVar().getRef();
-         CastValue baseBytePtr = new CastValue(bytePtrType, arrayRVal);
-         addStatement(new StatementAssignment((LValue) ptrAddress, baseBytePtr, Operators.PLUS, byteOffsetVar, true, new StatementSource(arrayCtx), Comment.NO_COMMENTS));
-
-         PointerDereferenceIndexed deref0 = new PointerDereferenceIndexed(ptrAddress, new ConstantInteger(0L, SymbolType.BYTE));
-         PointerDereferenceIndexed deref1 = new PointerDereferenceIndexed(ptrAddress, new ConstantInteger(1L, SymbolType.BYTE));
-         PointerDereferenceIndexed deref2 = new PointerDereferenceIndexed(ptrAddress, new ConstantInteger(2L, SymbolType.BYTE));
-
-         addStatement(new StatementAssignment(deref0, byte0, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-         addStatement(new StatementAssignment(deref1, byte1, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-         addStatement(new StatementAssignment(deref2, byte2, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-      }
-
-      return rhsVal;
-   }
-
    public KickCParser.ExprArrayContext getNibbleArrayContext(KickCParser.ExprContext exprCtx) {
       while(exprCtx instanceof KickCParser.ExprParContext) {
          KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) exprCtx).commaExpr();
@@ -3916,11 +3917,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          RValue rhsVal = (RValue) visit(ctx.expr(1));
          return writeLoHiArray(ctx, loHiArrayCtx, rhsVal);
       }
-      KickCParser.ExprArrayContext int24ArrayCtx = getInt24ArrayContext(ctx.expr(0));
-      if(int24ArrayCtx != null) {
-         RValue rhsVal = (RValue) visit(ctx.expr(1));
-         return writeInt24Array(ctx, int24ArrayCtx, rhsVal);
-      }
       Object val = visit(ctx.expr(0));
       if(val instanceof ConstantRef) {
          throw new CompileError("const variable may not be modified " + val, new StatementSource(ctx));
@@ -3936,7 +3932,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       SymbolType lType = inferExprType(ctx.expr(0));
       if(lType instanceof SymbolTypeStruct && ((SymbolTypeStruct) lType).isUnion()) {
          StructDefinition sDef = ((SymbolTypeStruct) lType).getStructDefinition(program.getScope());
-         int unionSize = (sDef != null && !sDef.getAllVars(false).isEmpty()) ? sDef.getAllVars(false).iterator().next().getType().getSizeBytes() : 0;
+         int unionSize = (sDef != null) ? ((SymbolTypeStruct) lType).calculateSizeBytes(sDef, program.getScope()) : 0;
          if(rValue instanceof ConstantInteger ci && ci.getFixedPointSuffix() != null) {
             String sfx = ci.getFixedPointSuffix();
             if("f8".equals(sfx) || unionSize == 3 || ("f16".equals(sfx) && unionSize != 4) || ("f24".equals(sfx) && unionSize != 4)) {
@@ -3953,26 +3949,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
                lValue = new StructMemberRef(lValue, firstMember.getLocalName());
             }
          }
-      } else if(isInt24Type(lType) && !isInt24Type(inferExprType(ctx.expr(1)))) {
-         StructMemberRef loMember = new StructMemberRef(lValue, "lo");
-         StructMemberRef hiMember = new StructMemberRef(lValue, "hi");
-         RValue byte0, byte1, byte2;
-         if(rValue instanceof ConstantInteger ci) {
-            long cval = ci.getInteger();
-            byte0 = new ConstantInteger(cval & 0xffL, SymbolType.BYTE);
-            byte1 = new ConstantInteger((cval >> 8) & 0xffL, SymbolType.BYTE);
-            byte2 = new ConstantInteger((cval >> 16) & 0xffL, SymbolType.BYTE);
-         } else {
-            byte0 = addExprUnary(ctx, Operators.BYTE0, rValue);
-            byte1 = addExprUnary(ctx, Operators.BYTE1, rValue);
-            byte2 = addExprUnary(ctx, Operators.BYTE2, rValue);
-         }
-         RValue loVal = (rValue instanceof ConstantInteger) ? new ConstantInteger(((ConstantInteger) rValue).getInteger() & 0xffffL, SymbolType.WORD) : addExprBinary(ctx, byte1, Operators.WORD, byte0);
-         addStatement(new StatementAssignment(loMember, loVal, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-         addStatement(new StatementAssignment(hiMember, byte2, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-         consumeExpr(lValue);
-         consumeExpr(rValue);
-         return lValue;
       } else if(rValue instanceof LValue) {
          SymbolType rType = inferExprType(ctx.expr(1));
          if(rType instanceof SymbolTypeStruct && ((SymbolTypeStruct) rType).isUnion()) {
@@ -3981,8 +3957,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
                Variable firstMember = sDef.getAllVars(false).iterator().next();
                rValue = new StructMemberRef((LValue) rValue, firstMember.getLocalName());
             }
-         } else if(isInt24Type(rType) && !isInt24Type(lType)) {
-            rValue = promoteInt24ToDword(ctx, (LValue) rValue, rType);
          }
       }
       Statement stmt = new StatementAssignment(lValue, rValue, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx)));
@@ -4023,15 +3997,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          RValue updatedVal = addExprBinary(ctx, currentVal, operator, rhsVal);
          return writeLoHiArray(ctx, loHiArrayCtx, updatedVal);
       }
-      KickCParser.ExprArrayContext int24ArrayCtx = getInt24ArrayContext(ctx.expr(0));
-      if(int24ArrayCtx != null) {
-         RValue rhsVal = (RValue) visit(ctx.expr(1));
-         String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
-         Operator operator = Operators.getBinaryCompound(op);
-         RValue currentVal = desugarInt24ArrayRead(int24ArrayCtx);
-         RValue updatedVal = addExprBinary(ctx, currentVal, operator, rhsVal);
-         return writeInt24Array(ctx, int24ArrayCtx, updatedVal);
-      }
       // Assignment (rValue/lValue)
       Object value = visit(ctx.expr(0));
       if(!(value instanceof LValue lValue)) {
@@ -4056,21 +4021,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       // Binary Operator
       String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
       Operator operator = Operators.getBinaryCompound(op);
-      if(isInt24Type(lCompoundType)) {
-         RValue currentVal = promoteInt24ToDword(ctx, lValue, lCompoundType);
-         RValue updatedVal = addExprBinary(ctx, currentVal, operator, rValue);
-         StructMemberRef loMember = new StructMemberRef(copyLValue(lValue), "lo");
-         StructMemberRef hiMember = new StructMemberRef(copyLValue(lValue), "hi");
-         RValue byte0 = addExprUnary(ctx, Operators.BYTE0, updatedVal);
-         RValue byte1 = addExprUnary(ctx, Operators.BYTE1, updatedVal);
-         RValue byte2 = addExprUnary(ctx, Operators.BYTE2, updatedVal);
-         RValue loVal = addExprBinary(ctx, byte1, Operators.WORD, byte0);
-         addStatement(new StatementAssignment(loMember, loVal, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-         addStatement(new StatementAssignment(hiMember, byte2, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
-         consumeExpr(lValue);
-         consumeExpr(rValue);
-         return lValue;
-      }
       // Assignment with operator
       LValue rValue1 = copyLValue(lValue);
       Statement stmt = new StatementAssignment(lValue, rValue1, operator, rValue, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx)));
@@ -4160,6 +4110,13 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    public RValue visitExprCast(KickCParser.ExprCastContext ctx) {
       RValue child = (RValue) this.visit(ctx.expr());
       SymbolType castType = (SymbolType) this.visit(ctx.typeName());
+      if(castType instanceof SymbolTypeStruct && (child instanceof ValueList || child instanceof UnionDesignator)) {
+         RValue resolved = Initializers.constantify(child, new Initializers.ValueTypeSpec(castType), program, new StatementSource(ctx));
+         if(resolved instanceof ConstantValue) {
+            consumeExpr(child);
+         }
+         return resolved;
+      }
       Operator operator = Operators.getCastUnary(castType);
       if(child instanceof ConstantValue) {
          consumeExpr(child);
@@ -4196,6 +4153,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       RValue child = (RValue) this.visit(ctx.expr());
       if(child instanceof ConstantValue) {
          return new ConstantUnary(Operators.COUNTOF, (ConstantValue) child);
+      }
+      SymbolType childType = SymbolTypeInference.inferType(program.getScope(), child);
+      if(childType instanceof SymbolTypePointer ptrType && ptrType.getArraySpec() != null && ptrType.getArraySpec().getArraySize() != null) {
+         consumeExpr(child);
+         return ptrType.getArraySpec().getArraySize();
       }
       Variable tmpVar = addIntermediateVar();
       SymbolVariableRef tmpVarRef = tmpVar.getRef();
@@ -4307,11 +4269,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       } else if(ctx instanceof KickCParser.ExprPtrContext) {
          SymbolType ptrType = inferExprType(((KickCParser.ExprPtrContext) ctx).expr());
          if(ptrType instanceof SymbolTypePointer) {
-            SymbolType elem = ((SymbolTypePointer) ptrType).getElementType();
-            if(isInt24Type(elem)) {
-               return isSignedInt24(elem) ? SymbolType.SDWORD : SymbolType.DWORD;
-            }
-            return elem;
+            return ((SymbolTypePointer) ptrType).getElementType();
          }
          return null;
       } else if(ctx instanceof KickCParser.ExprPreModContext) {
@@ -4332,11 +4290,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          }
          return left != null ? left : right;
       } else if(ctx instanceof KickCParser.ExprTernaryContext) {
-         SymbolType tType = inferExprType(((KickCParser.ExprTernaryContext) ctx).expr(1));
-         if(isInt24Type(tType)) {
-            return isSignedInt24(tType) ? SymbolType.SDWORD : SymbolType.DWORD;
-         }
-         return tType;
+         return inferExprType(((KickCParser.ExprTernaryContext) ctx).expr(1));
       } else if(ctx instanceof KickCParser.ExprDotContext) {
          KickCParser.ExprDotContext dotCtx = (KickCParser.ExprDotContext) ctx;
          SymbolType structType = inferExprType(dotCtx.expr());
@@ -4362,26 +4316,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       } else if(ctx instanceof KickCParser.ExprArrayContext) {
          SymbolType arrType = inferExprType(((KickCParser.ExprArrayContext) ctx).expr());
          if(arrType instanceof SymbolTypePointer) {
-            SymbolType elem = ((SymbolTypePointer) arrType).getElementType();
-            if(isInt24Type(elem)) {
-               return isSignedInt24(elem) ? SymbolType.SDWORD : SymbolType.DWORD;
-            }
-            return elem;
+            return ((SymbolTypePointer) arrType).getElementType();
          }
          return null;
       } else if(ctx instanceof KickCParser.ExprCallContext) {
          KickCParser.ExprCallContext callCtx = (KickCParser.ExprCallContext) ctx;
          SymbolType fnType = inferExprType(callCtx.expr());
-         SymbolType ret = null;
          if(fnType instanceof SymbolTypeProcedure) {
-            ret = ((SymbolTypeProcedure) fnType).getReturnType();
+            return ((SymbolTypeProcedure) fnType).getReturnType();
          } else if(fnType instanceof SymbolTypePointer && ((SymbolTypePointer) fnType).getElementType() instanceof SymbolTypeProcedure) {
-            ret = ((SymbolTypeProcedure) ((SymbolTypePointer) fnType).getElementType()).getReturnType();
+            return ((SymbolTypeProcedure) ((SymbolTypePointer) fnType).getElementType()).getReturnType();
          }
-         if(isInt24Type(ret)) {
-            return isSignedInt24(ret) ? SymbolType.SDWORD : SymbolType.DWORD;
-         }
-         return ret;
+         return null;
       } else if(ctx instanceof KickCParser.ExprSizeOfContext || ctx instanceof KickCParser.ExprSizeOfTypeContext || ctx instanceof KickCParser.ExprCountOfContext || ctx instanceof KickCParser.ExprCountOfTypeContext || ctx instanceof KickCParser.ExprTypeIdContext || ctx instanceof KickCParser.ExprTypeIdTypeContext) {
          return SymbolType.WORD;
       } else if(ctx instanceof KickCParser.ExprAssignmentContext) {
@@ -4611,9 +4557,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          addStatement(new StatementLabel(afterCallLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
       }
 
-      if(isInt24Type(returnType)) {
-         return promoteInt24ToDword(ctx, result, returnType);
-      }
       return result;
    }
 
@@ -4634,9 +4577,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       }
       if(getLoHiArrayVariableFromArrayContext(ctx) != null) {
          return desugarLoHiArrayRead(ctx);
-      }
-      if(getInt24ArrayContext(ctx) != null) {
-         return desugarInt24ArrayRead(ctx);
       }
       RValue array = (RValue) visit(ctx.expr());
       RValue index = (RValue) visit(ctx.commaExpr());
@@ -4671,7 +4611,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       for(TerminalNode stringNode : ctx.STRING()) {
          subText = stringNode.getText();
          String suffix = subText.substring(subText.lastIndexOf('"') + 1);
-         StringEncoding suffixEncoding = StringEncoding.fromSuffix(suffix, currentEncoding);
+         StringEncoding suffixEncoding = StringEncoding.fromSuffix(suffix, currentEncoding, program);
          if(suffixEncoding != null) {
             if(encoding != null && !encoding.equals(suffixEncoding)) {
                throw new CompileError("Cannot mix encodings in concatenated strings " + ctx.getText(), new StatementSource(ctx));
@@ -4703,7 +4643,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          int lastQuote = fullText.lastIndexOf('\'');
          String charText = fullText.substring(1, lastQuote);
          String suffix = fullText.substring(lastQuote + 1);
-         StringEncoding encoding = StringEncoding.fromSuffix(suffix, currentEncoding);
+         StringEncoding encoding = StringEncoding.fromSuffix(suffix, currentEncoding, program);
          char constChar = encoding.escapeToAscii(charText).charAt(0);
          return new ConstantChar(constChar, encoding);
       } catch(CompileError e) {
@@ -4714,17 +4654,146 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public RValue visitExprBinary(KickCParser.ExprBinaryContext ctx) {
-      RValue left = (RValue) this.visit(ctx.expr(0));
-      RValue right = (RValue) this.visit(ctx.expr(1));
       String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
       Operator operator = Operators.getBinary(op);
-      if(left instanceof LValue && isInt24Type(inferExprType(ctx.expr(0)))) {
-         left = promoteInt24ToDword(ctx, (LValue) left, inferExprType(ctx.expr(0)));
+      if((Operators.LOGIC_AND.equals(operator) || Operators.LOGIC_OR.equals(operator)) && getCurrentProcedureCompilation() != null) {
+         if(mayHaveSideEffectsOrTrap(ctx.expr(1))) {
+            return visitExprLogicalShortCircuit(ctx, operator);
+         }
+         // RHS is pure & trap-free: emit compact Operators.LOGIC_AND / LOGIC_OR while still
+         // running any pre/post modifiers inside operands (PrePostModifierHandler stops at && / ||)
+         StatementSource source = new StatementSource(ctx);
+         RValue left = evalShortCircuitOperand(ctx.expr(0), source);
+         RValue right = evalShortCircuitOperand(ctx.expr(1), source);
+         return addExprBinary(ctx, left, operator, right);
       }
-      if(right instanceof LValue && isInt24Type(inferExprType(ctx.expr(1)))) {
-         right = promoteInt24ToDword(ctx, (LValue) right, inferExprType(ctx.expr(1)));
-      }
+      RValue left = (RValue) this.visit(ctx.expr(0));
+      RValue right = (RValue) this.visit(ctx.expr(1));
       return addExprBinary(ctx, left, operator, right);
+   }
+
+   private RValue evalShortCircuitOperand(KickCParser.ExprContext exprCtx, StatementSource source) {
+      PrePostModifierHandler.addPreModifiers(this, exprCtx, source);
+      RValue val = (RValue) this.visit(exprCtx);
+      if(PrePostModifierHandler.hasPostModifiers(this, exprCtx, source)) {
+         if(!(val instanceof VariableRef vr) || !vr.isIntermediate()) {
+            Variable tmpVar = addIntermediateVar();
+            addStatement(new StatementAssignment(tmpVar.getVariableRef(), val, true, source, Comment.NO_COMMENTS));
+            val = tmpVar.getRef();
+         }
+         PrePostModifierHandler.addPostModifiers(this, exprCtx, source);
+      }
+      return val;
+   }
+
+   /**
+    * Lower logical && and || with C short-circuit semantics inside procedures so that
+    * the right-hand operand (including pointer dereferences, volatile reads, pre/post modifiers, and calls)
+    * is only evaluated when the left-hand operand does not determine the result.
+    */
+   private RValue visitExprLogicalShortCircuit(KickCParser.ExprBinaryContext ctx, Operator operator) {
+      boolean isAnd = Operators.LOGIC_AND.equals(operator);
+      StatementSource source = new StatementSource(ctx);
+      RValue left = evalShortCircuitOperand(ctx.expr(0), source);
+      if(left instanceof ConstantValue leftConst) {
+         try {
+            ConstantLiteral lit = leftConst.calculateLiteral(program.getScope());
+            if(lit != null) {
+               boolean leftBool;
+               if(lit instanceof ConstantBool cb) {
+                  leftBool = cb.getBool();
+               } else if(lit instanceof ConstantInteger ci) {
+                  leftBool = ci.getValue() != 0;
+               } else if(lit instanceof ConstantPointer cp) {
+                  leftBool = cp.getLocation() != 0;
+               } else {
+                  leftBool = true;
+               }
+               if(isAnd && !leftBool) {
+                  return new ConstantBool(false);
+               }
+               if(!isAnd && leftBool) {
+                  return new ConstantBool(true);
+               }
+               // Otherwise right-hand side must be evaluated unconditionally (with its pre/post modifiers)
+               RValue right = evalShortCircuitOperand(ctx.expr(1), source);
+               return addExprBinary(ctx, left, operator, right);
+            }
+         } catch(ConstantNotLiteral ignored) {
+            // Fall through: if right is also a ConstantValue, preserve ConstantBinary
+            RValue right = evalShortCircuitOperand(ctx.expr(1), source);
+            if(right instanceof ConstantValue) {
+               return addExprBinary(ctx, left, operator, right);
+            }
+            return addExprBinary(ctx, left, operator, right);
+         }
+      }
+
+      Label evalRightLabel = getCurrentScope().addLabelIntermediate();
+      Label shortLabel = getCurrentScope().addLabelIntermediate();
+      Label rightBranchLabel = getCurrentScope().addLabelIntermediate();
+      Label rightFallthroughLabel = getCurrentScope().addLabelIntermediate();
+      Label endLabel = getCurrentScope().addLabelIntermediate();
+
+      Variable shortVarObj = addIntermediateVar();
+      shortVarObj.setType(SymbolType.BOOLEAN);
+      SymbolVariableRef shortVar = shortVarObj.getRef();
+      Variable rightFallthroughVarObj = addIntermediateVar();
+      rightFallthroughVarObj.setType(SymbolType.BOOLEAN);
+      SymbolVariableRef rightFallthroughVar = rightFallthroughVarObj.getRef();
+      Variable rightBranchVarObj = addIntermediateVar();
+      rightBranchVarObj.setType(SymbolType.BOOLEAN);
+      SymbolVariableRef rightBranchVar = rightBranchVarObj.getRef();
+
+      if(isAnd) {
+         // if (left) goto evalRightLabel else shortLabel (false)
+         addStatement(new StatementConditionalJump(left, evalRightLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementLabel(shortLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementAssignment((LValue) shortVar, new ConstantBool(false), true, source, Comment.NO_COMMENTS));
+         addStatement(new StatementJump(endLabel.getRef(), source, Comment.NO_COMMENTS));
+
+         addStatement(new StatementLabel(evalRightLabel.getRef(), source, Comment.NO_COMMENTS));
+         RValue right = evalShortCircuitOperand(ctx.expr(1), source);
+         addStatement(new StatementConditionalJump(right, rightBranchLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementLabel(rightFallthroughLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementAssignment((LValue) rightFallthroughVar, new ConstantBool(false), true, source, Comment.NO_COMMENTS));
+         addStatement(new StatementJump(endLabel.getRef(), source, Comment.NO_COMMENTS));
+
+         addStatement(new StatementLabel(rightBranchLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementAssignment((LValue) rightBranchVar, new ConstantBool(true), true, source, Comment.NO_COMMENTS));
+         consumeExpr(right);
+      } else {
+         // if (left) goto shortLabel (true) else evalRightLabel
+         addStatement(new StatementConditionalJump(left, shortLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementLabel(evalRightLabel.getRef(), source, Comment.NO_COMMENTS));
+         RValue right = evalShortCircuitOperand(ctx.expr(1), source);
+         addStatement(new StatementConditionalJump(right, rightBranchLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementLabel(rightFallthroughLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementAssignment((LValue) rightFallthroughVar, new ConstantBool(false), true, source, Comment.NO_COMMENTS));
+         addStatement(new StatementJump(endLabel.getRef(), source, Comment.NO_COMMENTS));
+
+         addStatement(new StatementLabel(rightBranchLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementAssignment((LValue) rightBranchVar, new ConstantBool(true), true, source, Comment.NO_COMMENTS));
+         addStatement(new StatementJump(endLabel.getRef(), source, Comment.NO_COMMENTS));
+
+         addStatement(new StatementLabel(shortLabel.getRef(), source, Comment.NO_COMMENTS));
+         addStatement(new StatementAssignment((LValue) shortVar, new ConstantBool(true), true, source, Comment.NO_COMMENTS));
+         consumeExpr(right);
+      }
+
+      addStatement(new StatementLabel(endLabel.getRef(), source, Comment.NO_COMMENTS));
+      StatementPhiBlock phiBlock = new StatementPhiBlock(Comment.NO_COMMENTS);
+      phiBlock.setSource(source);
+      Variable finalVarObj = addIntermediateVar();
+      finalVarObj.setType(SymbolType.BOOLEAN);
+      SymbolVariableRef finalVar = finalVarObj.getRef();
+      StatementPhiBlock.PhiVariable phiVariable = phiBlock.addPhiVariable((VariableRef) finalVar);
+      phiVariable.setrValue(shortLabel.getRef(), shortVar);
+      phiVariable.setrValue(rightFallthroughLabel.getRef(), rightFallthroughVar);
+      phiVariable.setrValue(rightBranchLabel.getRef(), rightBranchVar);
+      addStatement(phiBlock);
+      consumeExpr(left);
+      return finalVar;
    }
 
    private RValue addExprBinary(ParserRuleContext ctx, RValue left, Operator operator, RValue right) {
@@ -4767,8 +4836,10 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          if(constantAddressOf != null)
             return constantAddressOf;
       }
-      if(operator.equals(Operators.NEG) && child instanceof ConstantInteger) {
-         return new ConstantInteger(-((ConstantInteger) child).getInteger(), ((ConstantInteger) child).getType());
+      if(operator.equals(Operators.NEG) && child instanceof ConstantInteger ci) {
+         ConstantInteger negCi = new ConstantInteger(-ci.getInteger(), ci.getType());
+         negCi.setFixedPointSuffix(ci.getFixedPointSuffix());
+         return negCi;
       } else if(child instanceof ConstantValue) {
          return new ConstantUnary((OperatorUnary) operator, (ConstantValue) child);
       } else {
@@ -4829,18 +4900,12 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       addStatement(new StatementConditionalJump(condValue, trueLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
       addStatement(new StatementLabel(falseLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
       RValue falseValue = (RValue) this.visit(ctx.expr(2));
-      if(falseValue instanceof LValue && isInt24Type(inferExprType(ctx.expr(2)))) {
-         falseValue = promoteInt24ToDword(ctx, (LValue) falseValue, inferExprType(ctx.expr(2)));
-      }
       SymbolVariableRef falseVar = addIntermediateVar().getRef();
       addStatement(new StatementAssignment((LValue) falseVar, falseValue, true, new StatementSource(ctx), Comment.NO_COMMENTS));
       LabelRef falseExitLabel = getCurrentProcedureCompilation().getStatementSequence().getCurrentBlockLabel();
       addStatement(new StatementJump(endJumpLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
       addStatement(new StatementLabel(trueLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
       RValue trueValue = (RValue) this.visit(ctx.expr(1));
-      if(trueValue instanceof LValue && isInt24Type(inferExprType(ctx.expr(1)))) {
-         trueValue = promoteInt24ToDword(ctx, (LValue) trueValue, inferExprType(ctx.expr(1)));
-      }
       SymbolVariableRef trueVar = addIntermediateVar().getRef();
       addStatement(new StatementAssignment((LValue) trueVar, trueValue, true, new StatementSource(ctx), Comment.NO_COMMENTS));
       LabelRef trueExitLabel = getCurrentProcedureCompilation().getStatementSequence().getCurrentBlockLabel();
@@ -5055,37 +5120,52 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       private final List<PrePostModifier> postMods;
       private final List<PrePostModifier> preMods;
       private final Pass0GenerateStatementSequence mainParser;
+      private final boolean stopAtShortCircuit;
 
-      PrePostModifierHandler(Pass0GenerateStatementSequence mainParser) {
+      PrePostModifierHandler(Pass0GenerateStatementSequence mainParser, boolean stopAtShortCircuit) {
          this.mainParser = mainParser;
+         this.stopAtShortCircuit = stopAtShortCircuit;
          preMods = new ArrayList<>();
          postMods = new ArrayList<>();
       }
 
       static void addPostModifiers(Pass0GenerateStatementSequence parser, ParserRuleContext ctx, StatementSource statementSource) {
-         PrePostModifierHandler prePostModifierHandler = new PrePostModifierHandler(parser);
+         PrePostModifierHandler prePostModifierHandler = new PrePostModifierHandler(parser, true);
          prePostModifierHandler.visit(ctx);
          List<PrePostModifier> modifiers = prePostModifierHandler.getPostMods();
          addModifierStatements(parser, modifiers, statementSource);
       }
 
       static void addPreModifiers(Pass0GenerateStatementSequence parser, ParserRuleContext ctx, StatementSource statementSource) {
-         PrePostModifierHandler modifierHandler = new PrePostModifierHandler(parser);
+         PrePostModifierHandler modifierHandler = new PrePostModifierHandler(parser, true);
          modifierHandler.visit(ctx);
          List<PrePostModifier> modifiers = modifierHandler.getPreMods();
          addModifierStatements(parser, modifiers, statementSource);
       }
 
       static boolean hasPrePostModifiers(Pass0GenerateStatementSequence parser, ParserRuleContext ctx, StatementSource statementSource) {
-         PrePostModifierHandler modifierHandler = new PrePostModifierHandler(parser);
+         PrePostModifierHandler modifierHandler = new PrePostModifierHandler(parser, false);
          modifierHandler.visit(ctx);
          return (modifierHandler.getPreMods().size() > 0) || (modifierHandler.getPostMods().size() > 0);
       }
 
       static boolean hasPostModifiers(Pass0GenerateStatementSequence parser, ParserRuleContext ctx, StatementSource statementSource) {
-         PrePostModifierHandler modifierHandler = new PrePostModifierHandler(parser);
+         PrePostModifierHandler modifierHandler = new PrePostModifierHandler(parser, true);
          modifierHandler.visit(ctx);
          return modifierHandler.getPostMods().size() > 0;
+      }
+
+      @Override
+      public Void visitExprBinary(KickCParser.ExprBinaryContext ctx) {
+         if(stopAtShortCircuit && mainParser.getCurrentProcedureCompilation() != null) {
+            String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
+            Operator operator = Operators.getBinary(op);
+            if(Operators.LOGIC_AND.equals(operator) || Operators.LOGIC_OR.equals(operator)) {
+               // KRIT-09: Short-circuit && / || owns pre/post modifiers for both LHS and RHS internally
+               return null;
+            }
+         }
+         return super.visitExprBinary(ctx);
       }
 
 
@@ -5114,13 +5194,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
                Operator op = mod.operator.equals(Operators.INCREMENT) ? Operators.PLUS : Operators.MINUS;
                RValue updatedVal = parser.addExprBinary(mod.ctx, currentVal, op, new ConstantInteger(1L));
                parser.writeLoHiArray(mod.ctx, mod.loHiArrayCtx, updatedVal);
-               continue;
-            }
-            if(mod.int24ArrayCtx != null) {
-               RValue currentVal = parser.desugarInt24ArrayRead(mod.int24ArrayCtx);
-               Operator op = mod.operator.equals(Operators.INCREMENT) ? Operators.PLUS : Operators.MINUS;
-               RValue updatedVal = parser.addExprBinary(mod.ctx, currentVal, op, new ConstantInteger(1L));
-               parser.writeInt24Array(mod.ctx, mod.int24ArrayCtx, updatedVal);
                continue;
             }
             if(mod.child instanceof ConstantValue) {
@@ -5173,15 +5246,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             this.visit(ctx.expr());
             return null;
          }
-         KickCParser.ExprArrayContext int24ArrayCtx = mainParser.getInt24ArrayContext(ctx.expr());
-         if(int24ArrayCtx != null) {
-            String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
-            Operator operator = Operators.getUnary(op);
-            PrePostModifier modifier = new PrePostModifier(ctx, operator, int24ArrayCtx, 24);
-            postMods.add(modifier);
-            this.visit(ctx.expr());
-            return null;
-         }
          // First handle the ++/-- modifier
          RValue child = (RValue) mainParser.visit(ctx.expr());
          String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
@@ -5223,15 +5287,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             this.visit(ctx.expr());
             return null;
          }
-         KickCParser.ExprArrayContext int24ArrayCtx = mainParser.getInt24ArrayContext(ctx.expr());
-         if(int24ArrayCtx != null) {
-            String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
-            Operator operator = Operators.getUnary(op);
-            PrePostModifier modifier = new PrePostModifier(ctx, operator, int24ArrayCtx, 24);
-            preMods.add(modifier);
-            this.visit(ctx.expr());
-            return null;
-         }
          // First handle the ++/-- modifier
          RValue child = (RValue) mainParser.visit(ctx.expr());
          String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
@@ -5251,13 +5306,6 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          LValue containerLVal;
          KickCParser.ExprArrayContext nibbleArrayCtx;
          KickCParser.ExprArrayContext loHiArrayCtx;
-         KickCParser.ExprArrayContext int24ArrayCtx;
-
-         PrePostModifier(ParserRuleContext ctx, Operator operator, KickCParser.ExprArrayContext int24ArrayCtx, int marker24) {
-            this.ctx = ctx;
-            this.operator = operator;
-            this.int24ArrayCtx = int24ArrayCtx;
-         }
 
          PrePostModifier(RValue child, Operator operator) {
             this.child = child;

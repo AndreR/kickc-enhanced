@@ -16,7 +16,7 @@ public class OperatorWord extends OperatorBinary {
    @Override
    public ConstantLiteral calculateLiteral(ConstantLiteral left, ConstantLiteral right) {
       if(left instanceof ConstantInteger && right instanceof ConstantInteger) {
-         return new ConstantInteger(0x100 * ((ConstantInteger) left).getInteger()  + ((ConstantInteger) right).getInteger());
+         return new ConstantInteger(0x100L * (((ConstantInteger) left).getInteger() & 0xffL) + (((ConstantInteger) right).getInteger() & 0xffL), SymbolType.WORD);
       }
       throw new CompileError("Calculation not implemented " + left + " " + getOperator() + " " + right);
    }

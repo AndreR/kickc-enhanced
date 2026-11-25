@@ -329,6 +329,17 @@ public class Pass1UnwindStructValues extends Pass1Base {
          if(lValueSource.getSymbolType() instanceof SymbolTypeStruct) {
             SymbolTypeStruct structType = (SymbolTypeStruct) lValueSource.getSymbolType();
             if(structType.isUnion()) {
+               if(rValueSource instanceof dk.camelot64.kickc.passes.unwinding.ValueSourceStructValueList vsvl && vsvl.isDesignatedUnion()) {
+                  for(RValue rv : vsvl.getValueList().getList()) {
+                     UnionDesignator ud = (UnionDesignator) rv;
+                     ValueSource lValueSubSource = lValueSource.getMemberUnwinding(ud.getMemberName(), program, program.getScope(), currentStmt, stmtIt, currentBlock);
+                     ValueSource rValueSubSource = ValueSourceFactory.getValueSource(ud.getMemberValue(), program, program.getScope(), currentStmt, stmtIt, currentBlock);
+                     boolean success = copyValues(lValueSubSource, rValueSubSource, lValueUnwoundList, initialAssignment, currentStmt, currentBlock, stmtIt, program);
+                     if(!success)
+                        throw new InternalError("Error during value unwinding copy! ", currentStmt);
+                  }
+                  return true;
+               }
                // Find the largest member to unwind to
                final StructDefinition unionDefinition = structType.getStructDefinition(program.getScope());
                int unionBytes = structType.getSizeBytes();

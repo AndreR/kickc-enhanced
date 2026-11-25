@@ -5,6 +5,7 @@ import dk.camelot64.kickc.model.values.*;
 import dk.camelot64.kickc.passes.calcs.PassNCalcVariableReferenceInfos;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -167,7 +168,7 @@ public class VariableReferenceInfos {
    }
 
    /** Caches results for getDefinedVars(). */
-   private Map<Integer, List<VariableRef>> cachedDefinedVars = new HashMap<>();
+   private final Map<Integer, List<VariableRef>> cachedDefinedVars = new ConcurrentHashMap<>();
 
    /**
     * Get the variables defined by a statement
@@ -176,22 +177,23 @@ public class VariableReferenceInfos {
     * @return Variables defined by the statement
     */
    public Collection<VariableRef> getDefinedVars(Statement stmt) {
-      List<VariableRef> result = cachedDefinedVars.get(stmt.getIndex());
-      if(result!=null)
+      Integer stmtIndex = stmt.getIndex();
+      if(stmtIndex == null)
+         return new ArrayList<>();
+      List<VariableRef> result = cachedDefinedVars.get(stmtIndex);
+      if(result != null)
          return result;
-      Collection<ReferenceToSymbolVar> referenceToSymbolVars = statementVarReferences.get(stmt.getIndex());
+      Collection<ReferenceToSymbolVar> referenceToSymbolVars = statementVarReferences.get(stmtIndex);
       if(referenceToSymbolVars == null)
          // TODO: This may cause problems since it is a sign that the maps are out of date!
          return new ArrayList<>();
-      result = referenceToSymbolVars
+      return cachedDefinedVars.computeIfAbsent(stmtIndex, idx -> referenceToSymbolVars
             .stream()
             .filter(referenceToSymbolVar -> referenceToSymbolVar.getReferenced() instanceof VariableRef)
             .filter(referenceToSymbolVar -> ReferenceToSymbolVar.ReferenceType.DEFINE.equals(referenceToSymbolVar.getReferenceType()))
             .map(ReferenceToSymbolVar::getReferenced)
             .map(symbolVariableRef -> (VariableRef) symbolVariableRef)
-            .collect(Collectors.toList());
-      cachedDefinedVars.put(stmt.getIndex(), result);
-      return result;
+            .collect(Collectors.toList()));
    }
 
    /**
@@ -232,27 +234,29 @@ public class VariableReferenceInfos {
     * @return The referenced variables
     */
    /** Caches results for getReferencedVars(LabelRef). */
-   private Map<LabelRef, Collection<VariableRef>> cachedReferencedVarsByBlock = new HashMap<>();
+   private final Map<LabelRef, Collection<VariableRef>> cachedReferencedVarsByBlock = new ConcurrentHashMap<>();
 
    public Collection<VariableRef> getReferencedVars(LabelRef labelRef) {
+      if(labelRef == null) {
+         return Collections.emptyList();
+      }
       Collection<VariableRef> cached = cachedReferencedVarsByBlock.get(labelRef);
       if(cached != null) {
          return cached;
       }
-      Collection<ReferenceToSymbolVar> refs = blockVarReferences.get(labelRef);
-      if(refs == null) {
-         cached = Collections.emptyList();
-         cachedReferencedVarsByBlock.put(labelRef, cached);
-         return cached;
-      }
-      LinkedHashSet<VariableRef> variableRefs = new LinkedHashSet<>();
-      for(ReferenceToSymbolVar ref : refs) {
-         if(ref.getReferenced() instanceof VariableRef) {
-            variableRefs.add((VariableRef) ref.getReferenced());
+      return cachedReferencedVarsByBlock.computeIfAbsent(labelRef, key -> {
+         Collection<ReferenceToSymbolVar> refs = blockVarReferences.get(key);
+         if(refs == null) {
+            return Collections.emptyList();
          }
-      }
-      cachedReferencedVarsByBlock.put(labelRef, variableRefs);
-      return variableRefs;
+         LinkedHashSet<VariableRef> variableRefs = new LinkedHashSet<>();
+         for(ReferenceToSymbolVar ref : refs) {
+            if(ref.getReferenced() instanceof VariableRef) {
+               variableRefs.add((VariableRef) ref.getReferenced());
+            }
+         }
+         return variableRefs;
+      });
    }
 
    /**

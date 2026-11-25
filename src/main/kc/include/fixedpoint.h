@@ -164,8 +164,8 @@ typedef union {
 #define UFIXED24_8(i_lo, i_hi, f) ((ufixed24_8){ .frac = (uint8_t)(f), .int_lo = (uint16_t)(i_lo), .int_hi = (uint8_t)(i_hi) })
 
 /// Construct a fixed8_24 from 8-bit integer and 24-bit fraction
-#define FIXED8_24(i, f_lo, f_hi) ((fixed8_24){ .frac = ((uint24_t){(uint16_t)(f_lo), (uint8_t)(f_hi)}), .integer = (int8_t)(i) })
-#define UFIXED8_24(i, f_lo, f_hi) ((ufixed8_24){ .frac = ((uint24_t){(uint16_t)(f_lo), (uint8_t)(f_hi)}), .integer = (uint8_t)(i) })
+#define FIXED8_24(i, f_lo, f_hi) ((fixed8_24){ .frac = ((uint24_t)(f_lo) | ((uint24_t)(f_hi) << 16)), .integer = (int8_t)(i) })
+#define UFIXED8_24(i, f_lo, f_hi) ((ufixed8_24){ .frac = ((uint24_t)(f_lo) | ((uint24_t)(f_hi) << 16)), .integer = (uint8_t)(i) })
 
 // =============================================================================
 // Mathematical, Geometric & Retro Constants for Fixed-Point Types

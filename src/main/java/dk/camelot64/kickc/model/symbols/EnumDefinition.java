@@ -7,8 +7,18 @@ import dk.camelot64.kickc.model.types.SymbolTypeEnum;
 
 public class EnumDefinition extends Scope {
 
+   private SymbolType underlyingType = SymbolType.BYTE;
+
    public EnumDefinition(String name, Scope parentScope) {
       super(name, parentScope, parentScope.getSegmentData());
+   }
+
+   public SymbolType getUnderlyingType() {
+      return underlyingType;
+   }
+
+   public void setUnderlyingType(SymbolType underlyingType) {
+      this.underlyingType = underlyingType;
    }
 
    @Override

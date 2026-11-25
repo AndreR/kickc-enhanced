@@ -141,7 +141,8 @@ public class AsmFormat {
    private static String getAsmConstantUnary(Program program, ScopeRef codeScope, Operator operator, ConstantValue operand, int outerPrecedence) {
       if(Operators.CAST_BYTE.equals(operator) || Operators.CAST_SBYTE.equals(operator)) {
          SymbolType operandType = SymbolTypeInference.inferType(program.getScope(), operand);
-         if(SymbolType.BYTE.equals(operandType) || SymbolType.SBYTE.equals(operandType)) {
+         if((Operators.CAST_BYTE.equals(operator) && SymbolType.BYTE.equals(operandType)) ||
+            (Operators.CAST_SBYTE.equals(operator) && SymbolType.SBYTE.equals(operandType))) {
             // No cast needed
             return getAsmConstant(program, operand, outerPrecedence, codeScope);
          }
@@ -162,9 +163,14 @@ public class AsmFormat {
          return getAsmConstant(program, new ConstantBinary(new ConstantInteger((long) 0xff), Operators.BOOL_AND, operand), outerPrecedence, codeScope);
       } else if(operator instanceof OperatorCastPtr || Operators.CAST_WORD.equals(operator) || Operators.CAST_SWORD.equals(operator)) {
          SymbolType operandType = SymbolTypeInference.inferType(program.getScope(), operand);
-         if(SymbolType.WORD.equals(operandType) || SymbolType.SWORD.equals(operandType) || SymbolType.BYTE.equals(operandType) || SymbolType.SBYTE.equals(operandType) || operandType instanceof SymbolTypePointer) {
-            // No cast needed
-            return getAsmConstant(program, operand, outerPrecedence, codeScope);
+         if(Operators.CAST_SWORD.equals(operator)) {
+            if(SymbolType.SWORD.equals(operandType) || SymbolType.BYTE.equals(operandType) || SymbolType.SBYTE.equals(operandType)) {
+               return getAsmConstant(program, operand, outerPrecedence, codeScope);
+            }
+         } else {
+            if(SymbolType.WORD.equals(operandType) || SymbolType.BYTE.equals(operandType) || operandType instanceof SymbolTypePointer) {
+               return getAsmConstant(program, operand, outerPrecedence, codeScope);
+            }
          }
          try {
             ConstantLiteral constantLiteral = operand.calculateLiteral(program.getScope());
@@ -187,15 +193,26 @@ public class AsmFormat {
          return getAsmConstant(program, new ConstantBinary(new ConstantInteger((long) 0xffff), Operators.BOOL_AND, operand), outerPrecedence, codeScope);
       } else if(Operators.CAST_TRIBYTE.equals(operator) || Operators.CAST_STRIBYTE.equals(operator)) {
          SymbolType operandType = SymbolTypeInference.inferType(program.getScope(), operand);
-         if(SymbolType.TRIBYTE.equals(operandType) || SymbolType.STRIBYTE.equals(operandType) || SymbolType.WORD.equals(operandType) || SymbolType.SWORD.equals(operandType) || SymbolType.BYTE.equals(operandType) || SymbolType.SBYTE.equals(operandType)) {
-            return getAsmConstant(program, operand, outerPrecedence, codeScope);
+         if(Operators.CAST_STRIBYTE.equals(operator)) {
+            if(SymbolType.STRIBYTE.equals(operandType) || SymbolType.WORD.equals(operandType) || SymbolType.SWORD.equals(operandType) || SymbolType.BYTE.equals(operandType) || SymbolType.SBYTE.equals(operandType)) {
+               return getAsmConstant(program, operand, outerPrecedence, codeScope);
+            }
+         } else {
+            if(SymbolType.TRIBYTE.equals(operandType) || SymbolType.WORD.equals(operandType) || SymbolType.BYTE.equals(operandType)) {
+               return getAsmConstant(program, operand, outerPrecedence, codeScope);
+            }
          }
          return getAsmConstant(program, new ConstantBinary(new ConstantInteger(0xffffffL), Operators.BOOL_AND, operand), outerPrecedence, codeScope);
       } else if(Operators.CAST_DWORD.equals(operator) || Operators.CAST_SDWORD.equals(operator)) {
          SymbolType operandType = SymbolTypeInference.inferType(program.getScope(), operand);
-         if(SymbolType.DWORD.equals(operandType) || SymbolType.SDWORD.equals(operandType) || SymbolType.WORD.equals(operandType) || SymbolType.SWORD.equals(operandType) || SymbolType.BYTE.equals(operandType) || SymbolType.SBYTE.equals(operandType) || operandType instanceof SymbolTypePointer) {
-            // No cast needed
-            return getAsmConstant(program, operand, outerPrecedence, codeScope);
+         if(Operators.CAST_SDWORD.equals(operator)) {
+            if(SymbolType.SDWORD.equals(operandType) || SymbolType.TRIBYTE.equals(operandType) || SymbolType.STRIBYTE.equals(operandType) || SymbolType.WORD.equals(operandType) || SymbolType.SWORD.equals(operandType) || SymbolType.BYTE.equals(operandType) || SymbolType.SBYTE.equals(operandType) || operandType instanceof SymbolTypePointer) {
+               return getAsmConstant(program, operand, outerPrecedence, codeScope);
+            }
+         } else {
+            if(SymbolType.DWORD.equals(operandType) || SymbolType.TRIBYTE.equals(operandType) || SymbolType.WORD.equals(operandType) || SymbolType.BYTE.equals(operandType) || operandType instanceof SymbolTypePointer) {
+               return getAsmConstant(program, operand, outerPrecedence, codeScope);
+            }
          }
          try {
             ConstantLiteral constantLiteral = operand.calculateLiteral(program.getScope());
@@ -259,8 +276,10 @@ public class AsmFormat {
             if(val != null) {
                if(val >= 0 && val <= 0xffL) {
                   return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger((long) 0xff)), outerPrecedence, codeScope);
-               } else if(val <= 0xffffL) {
+               } else if(val >= 0 && val <= 0xffffL) {
                   return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger((long) 0xffff)), outerPrecedence, codeScope);
+               } else if(val >= 0 && val <= 0xffffffL) {
+                  return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger(0xffffffL)), outerPrecedence, codeScope);
                } else {
                   return getAsmConstant(program, new ConstantBinary(operand, Operators.BOOL_XOR, new ConstantInteger(0xffffffffL)), outerPrecedence, codeScope);
                }
@@ -284,10 +303,13 @@ public class AsmFormat {
    
    public static String getAsmNumber(Number number) {
       if(number instanceof Long || number instanceof Integer) {
-         if(number.longValue() < 0) {
-            return "-" + getAsmNumber(-number.longValue());
-         } else if(number.longValue()<10){
-            return String.format("%d", number.longValue());
+         long lv = number.longValue();
+         if(lv == Long.MIN_VALUE) {
+            return "-$8000000000000000";
+         } else if(lv < 0) {
+            return "-" + getAsmNumber(-lv);
+         } else if(lv < 10) {
+            return String.format("%d", lv);
          } else {
             return String.format("$%x", number.longValue());
          }

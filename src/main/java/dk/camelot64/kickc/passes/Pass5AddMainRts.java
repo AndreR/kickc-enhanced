@@ -2,7 +2,10 @@ package dk.camelot64.kickc.passes;
 
 import dk.camelot64.cpufamily6502.CpuAddressingMode;
 import dk.camelot64.kickc.asm.AsmChunk;
+import dk.camelot64.kickc.asm.AsmComment;
+import dk.camelot64.kickc.asm.AsmConstant;
 import dk.camelot64.kickc.asm.AsmInstruction;
+import dk.camelot64.kickc.asm.AsmLabelDecl;
 import dk.camelot64.kickc.asm.AsmLine;
 import dk.camelot64.kickc.model.Program;
 import dk.camelot64.kickc.model.values.ScopeRef;
@@ -26,22 +29,29 @@ public class Pass5AddMainRts extends Pass5AsmOptimization {
             ListIterator<AsmLine> lineIterator = chunk.getLines().listIterator();
             while(lineIterator.hasNext()) {
                AsmLine line = lineIterator.next();
-               if(line instanceof AsmInstruction) {
-                  AsmInstruction instruction = (AsmInstruction) line;
+               if(line instanceof AsmInstruction instruction && instruction.getCpuOpcode() != null) {
                   if(instruction.getCpuOpcode().getMnemonic().equals("jsr")) {
-                     if(instruction.getOperand1().equals(SymbolRef.MAIN_PROC_NAME)) {
-                        // Add RTS if it is missing
-                        if(!lineIterator.hasNext()) {
-                           addRts(lineIterator);
-                           return true;
+                     if(SymbolRef.MAIN_PROC_NAME.equals(instruction.getOperand1())) {
+                        // Look ahead past comments/constants/label decls for an existing RTS (CF-16)
+                        int advanced = 0;
+                        boolean hasRts = false;
+                        while(lineIterator.hasNext()) {
+                           AsmLine nextLine = lineIterator.next();
+                           advanced++;
+                           if(nextLine instanceof AsmComment || nextLine instanceof AsmConstant || nextLine instanceof AsmLabelDecl) {
+                              continue;
+                           }
+                           if(nextLine instanceof AsmInstruction nextInstruction && nextInstruction.getCpuOpcode() != null
+                                 && "rts".equals(nextInstruction.getCpuOpcode().getMnemonic())) {
+                              hasRts = true;
+                           }
+                           break;
                         }
-                        AsmLine nextLine = lineIterator.next();
-                        if(!(nextLine instanceof AsmInstruction)) {
-                           addRts(lineIterator);
-                           return true;
-                        }
-                        AsmInstruction nextInstruction = (AsmInstruction) nextLine;
-                        if(!nextInstruction.getCpuOpcode().getMnemonic().equals("rts")) {
+                        if(!hasRts) {
+                           // Rewind right back to immediately after `jsr main` so RTS is never placed after `.segment Data`!
+                           while(advanced-- > 0) {
+                              lineIterator.previous();
+                           }
                            addRts(lineIterator);
                            return true;
                         }

@@ -9,9 +9,12 @@ import dk.camelot64.kickc.model.symbols.*;
 import dk.camelot64.kickc.model.values.LabelRef;
 import dk.camelot64.kickc.model.values.ProcedureRef;
 import dk.camelot64.kickc.model.values.ScopeRef;
+import dk.camelot64.kickc.model.values.StringEncoding;
 import dk.camelot64.kickc.passes.calcs.*;
 import dk.camelot64.kickc.passes.utils.ProcedureUtils;
 import dk.camelot64.kickc.passes.Pass2ConstantIdentification;
+import dk.camelot64.kickc.passes.Pass4RegisterUpliftCombinations;
+import dk.camelot64.kickc.passes.Pass5AsmOptimization;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -73,7 +76,7 @@ public class Program {
    private StructVariableMemberUnwinding structVariableMemberUnwinding;
 
    /** Cached information about calls. PASS 1-4 (CACHED ON-DEMAND) */
-   private CallGraph callGraph;
+   private volatile CallGraph callGraph;
 
    /** The procedures being compiled. PASS 1-5 (DYNAMIC)*/
    private List<ProcedureCompilation> procedureCompilations;
@@ -89,29 +92,40 @@ public class Program {
    private AsmProgram asm;
 
    /** Cached information about the variables referenced by blocks/statements. PASS 1-4 (CACHED ON-DEMAND) */
-   private VariableReferenceInfos variableReferenceInfos;
+   private volatile VariableReferenceInfos variableReferenceInfos;
    /** Cached information about the closure of all block successors. */
-   private ControlFlowBlockSuccessorClosure blockSuccessorClosure;
+   private volatile ControlFlowBlockSuccessorClosure blockSuccessorClosure;
    /** Information about dominators of all blocks. PASS 2U-4 (CACHED ON-DEMAND) */
-   private DominatorsGraph dominators;
+   private volatile DominatorsGraph dominators;
    /** Cached information about symbols. Contains a symbol table cache for fast access. PASS 3-4 (CACHED ON-DEMAND) */
-   private SymbolInfos symbolInfos;
+   private volatile SymbolInfos symbolInfos;
    /** Cached phi transitions into each block. PASS 4 (CACHED ON-DEMAND) */
-   private Map<LabelRef, PhiTransitions> phiTransitions;
+   private volatile Map<LabelRef, PhiTransitions> phiTransitions;
    /** The live ranges of all variables. PASS 3-4 (CACHED ON-DEMAND) */
-   private LiveRangeVariables liveRangeVariables;
+   private volatile LiveRangeVariables liveRangeVariables;
    /** The effective live ranges of all variables. PASS 3-4 (CACHED ON-DEMAND) */
-   private LiveRangeVariablesEffective liveRangeVariablesEffective;
+   private volatile LiveRangeVariablesEffective liveRangeVariablesEffective;
    /** Separation of live range equivalence classes into scopes - used for register uplift. PASS 4 (CACHED ON-DEMAND) */
-   private RegisterUpliftProgram registerUpliftProgram;
+   private volatile RegisterUpliftProgram registerUpliftProgram;
    /** Cached information about which block is each statement a part of. PASS 2U-5 (CACHED ON-DEMAND) */
-   private StatementInfos statementInfos;
+   private volatile StatementInfos statementInfos;
    /** Information about loops. PASS 2U-5 (CACHED ON-DEMAND) */
-   private NaturalLoopSet loopSet;
+   private volatile NaturalLoopSet loopSet;
    /** The register weight of all variables describing how much the variable would theoretically gain from being in a register. PASS 3-5 (CACHED ON-DEMAND) */
-   private VariableRegisterWeights variableRegisterWeights;
+   private volatile VariableRegisterWeights variableRegisterWeights;
    /** Cached live range interference matrix. PASS 4 (CACHED ON-DEMAND) */
-   private LiveRangeInterference liveRangeInterference;
+   private volatile LiveRangeInterference liveRangeInterference;
+
+   /** Per-program cache for Pass 4 register uplift analysis. */
+   private volatile Pass4RegisterUpliftCombinations.UpliftProgramCache upliftProgramCache;
+
+   /** Cached O(1) variable lookup index for Pass 5 ASM optimizations. */
+   private volatile Pass5AsmOptimization.AsmVarLookupIndex asmVarLookupIndex;
+
+   /** Custom string encodings registered for this program (via #pragma charmap). */
+   private final Map<String, StringEncoding> customStringEncodings = new LinkedHashMap<>();
+   /** Custom string encoding suffixes registered for this program. */
+   private final Map<String, StringEncoding> customStringEncodingSuffixes = new LinkedHashMap<>();
 
    public Program() {
       this.outputFileManager = new OutputFileManager();
@@ -154,29 +168,46 @@ public class Program {
       this.liveRangeVariablesEffective = null;
       this.registerPotentials = null;
       this.registerUpliftProgram = null;
+      this.asmVarLookupIndex = null;
    }
+
+   private final Graph totalGraph = new Graph() {
+      @Override
+      public Block getBlock(LabelRef symbol) {
+         for(ProcedureCompilation pc : procedureCompilations) {
+            ControlFlowGraph g = pc.getGraph();
+            if(g != null) {
+               Block b = g.getBlock(symbol);
+               if(b != null) return b;
+            }
+         }
+         return null;
+      }
+
+      @Override
+      public List<Block> getAllBlocks() {
+         List<Block> all = new ArrayList<>();
+         for(ProcedureCompilation pc : procedureCompilations) {
+            ControlFlowGraph g = pc.getGraph();
+            if(g != null) {
+               all.addAll(g.getAllBlocks());
+            }
+         }
+         return Collections.unmodifiableList(all);
+      }
+
+      @Override
+      public void addBlock(Block block) {
+         throw new CompileError("Internal Error! Cannot add blocks to the read-only total control flow graph!");
+      }
+   };
 
    /**
     * Get a read-only control flow graph for the entire program.
     * @return The control flow graph
     */
    public Graph getGraph() {
-      return new Graph() {
-         @Override
-         public Block getBlock(LabelRef symbol) {
-            return getProcedureCompilations().stream().map(ProcedureCompilation::getGraph).filter(Objects::nonNull).map(graph -> graph.getBlock(symbol)).filter(Objects::nonNull).findFirst().orElse(null);
-         }
-
-         @Override
-         public List<Block> getAllBlocks() {
-            return getProcedureCompilations().stream().map(ProcedureCompilation::getGraph).filter(Objects::nonNull).map(ControlFlowGraph::getAllBlocks).flatMap(Collection::stream).toList();
-         }
-
-         @Override
-         public void addBlock(Block block) {
-            throw new CompileError("Internal Error! Cannot add blocks to the read-only total control flow graph!");
-         }
-      };
+      return totalGraph;
    }
 
    public List<ProcedureCompilation> getProcedureCompilations() {
@@ -334,6 +365,20 @@ public class Program {
 
    public void setScope(ProgramScope scope) {
       this.scope = scope;
+      this.asmVarLookupIndex = null;
+   }
+
+   public Pass5AsmOptimization.AsmVarLookupIndex getAsmVarLookupIndex() {
+      Pass5AsmOptimization.AsmVarLookupIndex idx = this.asmVarLookupIndex;
+      if(idx == null && this.scope != null) {
+         idx = Pass5AsmOptimization.AsmVarLookupIndex.build(this.scope);
+         this.asmVarLookupIndex = idx;
+      }
+      return idx;
+   }
+
+   public void clearAsmVarLookupIndex() {
+      this.asmVarLookupIndex = null;
    }
 
    public ProcedureRef getStartProcedure() {
@@ -366,9 +411,17 @@ public class Program {
     * @return The call-graph
     */
    public CallGraph getCallGraph() {
-      if(callGraph == null)
-         this.callGraph = new PassNCalcCallGraph(this).calculate();
-      return callGraph;
+      CallGraph result = callGraph;
+      if(result == null) {
+         synchronized(this) {
+            result = callGraph;
+            if(result == null) {
+               result = new PassNCalcCallGraph(this).calculate();
+               callGraph = result;
+            }
+         }
+      }
+      return result;
    }
 
    /**
@@ -379,9 +432,17 @@ public class Program {
    }
 
    public VariableReferenceInfos getVariableReferenceInfos() {
-      if(variableReferenceInfos == null)
-         this.variableReferenceInfos = new PassNCalcVariableReferenceInfos(this).calculate();
-      return variableReferenceInfos;
+      VariableReferenceInfos result = variableReferenceInfos;
+      if(result == null) {
+         synchronized(this) {
+            result = variableReferenceInfos;
+            if(result == null) {
+               result = new PassNCalcVariableReferenceInfos(this).calculate();
+               variableReferenceInfos = result;
+            }
+         }
+      }
+      return result;
    }
 
    public void clearVariableReferenceInfos() {
@@ -389,9 +450,17 @@ public class Program {
    }
 
    public ControlFlowBlockSuccessorClosure getControlFlowBlockSuccessorClosure() {
-      if(blockSuccessorClosure == null)
-         this.blockSuccessorClosure = new PassNCalcBlockSuccessorClosure(this).calculate();
-      return blockSuccessorClosure;
+      ControlFlowBlockSuccessorClosure result = blockSuccessorClosure;
+      if(result == null) {
+         synchronized(this) {
+            result = blockSuccessorClosure;
+            if(result == null) {
+               result = new PassNCalcBlockSuccessorClosure(this).calculate();
+               blockSuccessorClosure = result;
+            }
+         }
+      }
+      return result;
    }
 
    public void clearControlFlowBlockSuccessorClosure() {
@@ -399,9 +468,17 @@ public class Program {
    }
 
    public DominatorsGraph getDominators() {
-      if(dominators == null)
-         this.dominators = new PassNCalcDominators(this).calculate();
-      return dominators;
+      DominatorsGraph result = dominators;
+      if(result == null) {
+         synchronized(this) {
+            result = dominators;
+            if(result == null) {
+               result = new PassNCalcDominators(this).calculate();
+               dominators = result;
+            }
+         }
+      }
+      return result;
    }
 
    public void clearDominators() {
@@ -409,9 +486,17 @@ public class Program {
    }
 
    public Map<LabelRef, PhiTransitions> getPhiTransitions() {
-      if(phiTransitions == null)
-         this.phiTransitions = new PassNCalcPhiTransitions(this).calculate();
-      return phiTransitions;
+      Map<LabelRef, PhiTransitions> result = phiTransitions;
+      if(result == null) {
+         synchronized(this) {
+            result = phiTransitions;
+            if(result == null) {
+               result = new PassNCalcPhiTransitions(this).calculate();
+               phiTransitions = result;
+            }
+         }
+      }
+      return result;
    }
 
    public void clearPhiTransitions() {
@@ -419,9 +504,17 @@ public class Program {
    }
 
    public LiveRangeVariables getLiveRangeVariables() {
-      if(liveRangeVariables == null)
-         this.liveRangeVariables = new PassNCalcLiveRangeVariables(this).calculate();
-      return liveRangeVariables;
+      LiveRangeVariables result = liveRangeVariables;
+      if(result == null) {
+         synchronized(this) {
+            result = liveRangeVariables;
+            if(result == null) {
+               result = new PassNCalcLiveRangeVariables(this).calculate();
+               liveRangeVariables = result;
+            }
+         }
+      }
+      return result;
    }
 
    public void setLiveRangeVariables(LiveRangeVariables liveRangeVariables) {
@@ -437,9 +530,17 @@ public class Program {
    }
 
    public StatementInfos getStatementInfos() {
-      if(statementInfos == null)
-         this.statementInfos = new PassNCalcStatementInfos(this).calculate();
-      return statementInfos;
+      StatementInfos result = statementInfos;
+      if(result == null) {
+         synchronized(this) {
+            result = statementInfos;
+            if(result == null) {
+               result = new PassNCalcStatementInfos(this).calculate();
+               statementInfos = result;
+            }
+         }
+      }
+      return result;
    }
 
    public void clearStatementInfos() {
@@ -454,9 +555,17 @@ public class Program {
    }
 
    public SymbolInfos getSymbolInfos() {
-      if(symbolInfos == null)
-         this.symbolInfos = new PassNCalcSymbolInfos(this).calculate();
-      return symbolInfos;
+      SymbolInfos result = symbolInfos;
+      if(result == null) {
+         synchronized(this) {
+            result = symbolInfos;
+            if(result == null) {
+               result = new PassNCalcSymbolInfos(this).calculate();
+               symbolInfos = result;
+            }
+         }
+      }
+      return result;
    }
 
    public boolean hasLiveRangeVariablesEffective() {
@@ -464,14 +573,21 @@ public class Program {
    }
 
    public LiveRangeVariablesEffective getLiveRangeVariablesEffective() {
-      if(liveRangeVariablesEffective == null) {
-         if(enableLiveRangeCallPath) {
-            this.liveRangeVariablesEffective = new PassNCalcLiveRangesEffectiveCallPaths(this).calculate();
-         } else {
-            this.liveRangeVariablesEffective = new PassNCalcLiveRangesEffectiveSimple(this).calculate();
+      LiveRangeVariablesEffective result = liveRangeVariablesEffective;
+      if(result == null) {
+         synchronized(this) {
+            result = liveRangeVariablesEffective;
+            if(result == null) {
+               if(enableLiveRangeCallPath) {
+                  result = new PassNCalcLiveRangesEffectiveCallPaths(this).calculate();
+               } else {
+                  result = new PassNCalcLiveRangesEffectiveSimple(this).calculate();
+               }
+               liveRangeVariablesEffective = result;
+            }
          }
       }
-      return liveRangeVariablesEffective;
+      return result;
    }
 
    public void clearLiveRangeVariablesEffective() {
@@ -479,15 +595,31 @@ public class Program {
    }
 
    public RegisterUpliftProgram getRegisterUpliftProgram() {
-      if(registerUpliftProgram == null)
-         this.registerUpliftProgram = new PassNCalcRegisterUpliftProgram(this).calculate();
-      return registerUpliftProgram;
+      RegisterUpliftProgram result = registerUpliftProgram;
+      if(result == null) {
+         synchronized(this) {
+            result = registerUpliftProgram;
+            if(result == null) {
+               result = new PassNCalcRegisterUpliftProgram(this).calculate();
+               registerUpliftProgram = result;
+            }
+         }
+      }
+      return result;
    }
 
    public NaturalLoopSet getLoopSet() {
-      if(loopSet == null)
-         this.loopSet = new PassNCalcLoopSet(this).calculate();
-      return loopSet;
+      NaturalLoopSet result = loopSet;
+      if(result == null) {
+         synchronized(this) {
+            result = loopSet;
+            if(result == null) {
+               result = new PassNCalcLoopSet(this).calculate();
+               loopSet = result;
+            }
+         }
+      }
+      return result;
    }
 
    public void clearLoopSet() {
@@ -495,9 +627,17 @@ public class Program {
    }
 
    public VariableRegisterWeights getVariableRegisterWeights() {
-      if(variableRegisterWeights == null)
-         this.variableRegisterWeights = new PassNCalcVariableRegisterWeight(this).calculate();
-      return variableRegisterWeights;
+      VariableRegisterWeights result = variableRegisterWeights;
+      if(result == null) {
+         synchronized(this) {
+            result = variableRegisterWeights;
+            if(result == null) {
+               result = new PassNCalcVariableRegisterWeight(this).calculate();
+               variableRegisterWeights = result;
+            }
+         }
+      }
+      return result;
    }
 
    public VariableRegisterWeights getOrNullVariableRegisterWeights() {
@@ -521,10 +661,17 @@ public class Program {
    }
 
    public LiveRangeInterference getLiveRangeInterference() {
-      if(liveRangeInterference == null && liveRangeEquivalenceClassSet != null) {
-         liveRangeInterference = new LiveRangeInterference(this);
+      LiveRangeInterference result = liveRangeInterference;
+      if(result == null && liveRangeEquivalenceClassSet != null) {
+         synchronized(this) {
+            result = liveRangeInterference;
+            if(result == null && liveRangeEquivalenceClassSet != null) {
+               result = new LiveRangeInterference(this);
+               liveRangeInterference = result;
+            }
+         }
       }
-      return liveRangeInterference;
+      return result;
    }
 
    public void setLiveRangeInterference(LiveRangeInterference liveRangeInterference) {
@@ -533,6 +680,35 @@ public class Program {
 
    public void clearLiveRangeInterference() {
       this.liveRangeInterference = null;
+   }
+
+   public Pass4RegisterUpliftCombinations.UpliftProgramCache getUpliftProgramCache() {
+      Pass4RegisterUpliftCombinations.UpliftProgramCache result = upliftProgramCache;
+      if(result == null) {
+         synchronized(this) {
+            result = upliftProgramCache;
+            if(result == null) {
+               result = new Pass4RegisterUpliftCombinations.UpliftProgramCache();
+               upliftProgramCache = result;
+            }
+         }
+      }
+      return result;
+   }
+
+   public void registerCustomStringEncoding(StringEncoding encoding) {
+      customStringEncodings.put(encoding.name.toLowerCase(Locale.ENGLISH), encoding);
+      if(encoding.suffix != null && !encoding.suffix.isEmpty()) {
+         customStringEncodingSuffixes.put(encoding.suffix.toLowerCase(Locale.ENGLISH), encoding);
+      }
+   }
+
+   public StringEncoding getCustomStringEncoding(String nameLower) {
+      return customStringEncodings.get(nameLower);
+   }
+
+   public StringEncoding getCustomStringEncodingBySuffix(String suffixLower) {
+      return customStringEncodingSuffixes.get(suffixLower);
    }
 
    /**

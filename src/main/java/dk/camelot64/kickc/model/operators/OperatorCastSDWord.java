@@ -17,9 +17,13 @@ public class OperatorCastSDWord extends OperatorCast {
    @Override
    public ConstantLiteral calculateLiteral(ConstantLiteral value, ProgramScope scope) {
       if(value instanceof ConstantInteger) {
-         return new ConstantInteger(0xffffffffL & ((ConstantInteger) value).getValue(), SymbolType.SDWORD);
+         return new ConstantInteger((long) (int) ((ConstantInteger) value).getValue().longValue(), SymbolType.SDWORD);
       } else if(value instanceof ConstantChar) {
-         return new ConstantInteger(((ConstantChar) value).getInteger(), SymbolType.SDWORD);
+         return new ConstantInteger((long) (int) ((ConstantChar) value).getInteger().longValue(), SymbolType.SDWORD);
+      } else if(value instanceof dk.camelot64.kickc.model.values.ConstantBool) {
+         return new ConstantInteger(((dk.camelot64.kickc.model.values.ConstantBool) value).getBool() ? 1L : 0L, SymbolType.SDWORD);
+      } else if(value instanceof dk.camelot64.kickc.model.values.ConstantPointer) {
+         return new ConstantInteger((long) (int) ((dk.camelot64.kickc.model.values.ConstantPointer) value).getLocation().longValue(), SymbolType.SDWORD);
       }
       throw new CompileError("Calculation not implemented " + getOperator() + " " + value );
    }

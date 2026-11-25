@@ -11,16 +11,6 @@ import java.util.*;
  */
 public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
 
-   private static class LineRef {
-      final AsmChunk chunk;
-      final AsmLine line;
-
-      LineRef(AsmChunk chunk, AsmLine line) {
-         this.chunk = chunk;
-         this.line = line;
-      }
-   }
-
    private static class BasicBlock {
       final String labelName;
       final LineRef labelRef;
@@ -109,6 +99,7 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
                LineRef lRef = sLines.get(i);
                if(lRef.line instanceof AsmLabel) {
                   AsmLabel label = (AsmLabel) lRef.line;
+                  if(label.isNoOptimize()) continue;
                   String labelName = label.getLabel();
                   // Only consider compiler-generated local block labels (__b1, __b2, etc.)
                   if(labelName == null || !labelName.startsWith("__b")) continue;
@@ -150,6 +141,10 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
                            validBlock = true;
                            break;
                         }
+                     } else {
+                        // CF-13: Data, segment, alignment, or unknown directives inside a block invalidate deduplication
+                        validBlock = false;
+                        break;
                      }
                   }
 

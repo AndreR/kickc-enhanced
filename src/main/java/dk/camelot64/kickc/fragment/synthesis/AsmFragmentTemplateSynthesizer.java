@@ -10,6 +10,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -33,14 +35,44 @@ public class AsmFragmentTemplateSynthesizer {
         this.targetCpu = targetCpu;
         this.synthesisGraph = new LinkedHashMap<>();
         this.bestTemplateUpdate = new ArrayDeque<>();
+        this.bestTemplateUpdateSet = Collections.newSetFromMap(new IdentityHashMap<>());
+        this.existingFragmentFiles = indexExistingFragmentFiles(baseFragmentFolder, targetCpu);
         if (fragmentCacheFolder!=null)
             this.fragmentCache = AsmFragmentTemplateCache.load(targetCpu, fragmentCacheFolder, baseFragmentFolder, log);
         else
             this.fragmentCache = AsmFragmentTemplateCache.memoryCache(targetCpu);
     }
 
+    /** Cached set of existing .asm filenames per CPU feature folder for O(1) existence checks. */
+    private final Map<TargetCpu.Feature, Set<String>> existingFragmentFiles;
+
+    private static Map<TargetCpu.Feature, Set<String>> indexExistingFragmentFiles(Path baseFragmentFolder, TargetCpu targetCpu) {
+        Map<TargetCpu.Feature, Set<String>> map = new EnumMap<>(TargetCpu.Feature.class);
+        for (TargetCpu.Feature feature : targetCpu.getFeatures()) {
+            Path folder = baseFragmentFolder.resolve(feature.getName());
+            Set<String> names = new HashSet<>();
+            if (Files.isDirectory(folder)) {
+                try (DirectoryStream<Path> stream = Files.newDirectoryStream(folder, "*.asm")) {
+                    for (Path entry : stream) {
+                        names.add(entry.getFileName().toString());
+                    }
+                } catch (IOException ignored) {
+                }
+            }
+            map.put(feature, names);
+        }
+        return map;
+    }
+
    /** The folder containing fragment files. */
     private final Path baseFragmentFolder;
+
+    /** Usage statistics for this synthesizer instance. */
+    private final AsmFragmentTemplateUsages usages = new AsmFragmentTemplateUsages();
+
+    public AsmFragmentTemplateUsages getUsages() {
+        return usages;
+    }
 
    /** The Target CPU - used for obtaining CPU-specific fragment files. */
     private final TargetCpu targetCpu;
@@ -91,8 +123,8 @@ public class AsmFragmentTemplateSynthesizer {
      * @param log       The log
      * @return The best templates (with different clobber profiles) for the signature
      */
-    private synchronized AsmFragmentTemplate getFragmentTemplate(String signature, CompileLog log) {
-        // Attempt to find in memory/disk cache
+    private AsmFragmentTemplate getFragmentTemplate(String signature, CompileLog log) {
+        // Lock-free fast path for memory/disk cache hits
         AsmFragmentTemplate bestTemplate = fragmentCache.get(signature);
         if (bestTemplate == AsmFragmentTemplateCache.NO_SYNTHESIS) {
             if (log.isVerboseFragmentLog()) {
@@ -101,38 +133,57 @@ public class AsmFragmentTemplateSynthesizer {
             throw new UnknownFragmentException(signature);
         }
         if (bestTemplate != null) {
-            AsmFragmentTemplateUsages.incUsage(new AsmFragmentSynthesisResult(bestTemplate, false, true, null, new ArrayList<>()));
+            if (AsmFragmentTemplateUsages.TRACK_USAGES) {
+                usages.incUsage(new AsmFragmentSynthesisResult(bestTemplate, false, true, null, Collections.emptyList()));
+            }
             return bestTemplate;
         }
 
-        AsmFragmentSynthesisResult bestResult = null;
-        // Attempt to synthesize or load in main fragment folder
-        Collection<AsmFragmentSynthesisResult> candidates = getBestTemplates(signature, log);
-        if (candidates.size() == 0) {
+        synchronized (this) {
+            // Re-check inside lock
+            bestTemplate = fragmentCache.get(signature);
+            if (bestTemplate == AsmFragmentTemplateCache.NO_SYNTHESIS) {
+                if (log.isVerboseFragmentLog()) {
+                    log.append("Unknown fragment " + signature);
+                }
+                throw new UnknownFragmentException(signature);
+            }
+            if (bestTemplate != null) {
+                if (AsmFragmentTemplateUsages.TRACK_USAGES) {
+                    usages.incUsage(new AsmFragmentSynthesisResult(bestTemplate, false, true, null, Collections.emptyList()));
+                }
+                return bestTemplate;
+            }
+
+            AsmFragmentSynthesisResult bestResult = null;
+            // Attempt to synthesize or load in main fragment folder
+            Collection<AsmFragmentSynthesisResult> candidates = getBestTemplates(signature, log);
+            if (candidates.size() == 0) {
+                if (log.isVerboseFragmentLog()) {
+                    log.append("Unknown fragment " + signature);
+                }
+                fragmentCache.put(signature, AsmFragmentTemplateCache.NO_SYNTHESIS);
+                throw new UnknownFragmentException(signature);
+            }
+            double minScore = Double.MAX_VALUE;
+            for (AsmFragmentSynthesisResult candidateTemplate : candidates) {
+                double score = candidateTemplate.getCycles();
+                if (candidateTemplate.getClobber().isClobberZ()) score += 0.25;
+                if (candidateTemplate.getClobber().isClobberA()) score += 0.5;
+                if (candidateTemplate.getClobber().isClobberY()) score += 1.0;
+                if (candidateTemplate.getClobber().isClobberX()) score += 1.5;
+                if (score < minScore) {
+                    minScore = score;
+                    bestResult = candidateTemplate;
+                }
+            }
             if (log.isVerboseFragmentLog()) {
-                log.append("Unknown fragment " + signature);
+                log.append("Found best fragment  " + bestResult.getName() + " score: " + minScore);
             }
-            fragmentCache.put(signature, AsmFragmentTemplateCache.NO_SYNTHESIS);
-            throw new UnknownFragmentException(signature);
+            fragmentCache.put(signature, bestResult.getFragment());
+            usages.incUsage(bestResult);
+            return bestResult.getFragment();
         }
-        double minScore = Double.MAX_VALUE;
-        for (AsmFragmentSynthesisResult candidateTemplate : candidates) {
-            double score = candidateTemplate.getCycles();
-            if (candidateTemplate.getClobber().isClobberZ()) score += 0.25;
-            if (candidateTemplate.getClobber().isClobberA()) score += 0.5;
-            if (candidateTemplate.getClobber().isClobberY()) score += 1.0;
-            if (candidateTemplate.getClobber().isClobberX()) score += 1.5;
-            if (score < minScore) {
-                minScore = score;
-                bestResult = candidateTemplate;
-            }
-        }
-        if (log.isVerboseFragmentLog()) {
-            log.append("Found best fragment  " + bestResult.getName() + " score: " + minScore);
-        }
-        fragmentCache.put(signature, bestResult.getFragment());
-        AsmFragmentTemplateUsages.incUsage(bestResult);
-        return bestResult.getFragment();
     }
 
 
@@ -206,8 +257,9 @@ public class AsmFragmentTemplateSynthesizer {
         }
         // Populate with synthesis options
         for (AsmFragmentTemplateSynthesisRule rule : AsmFragmentTemplateSynthesisRuleManager.getSynthesisRules(targetCpu)) {
-            if (rule.matches(signature)) {
-                AsmFragmentSynthesisOption synthesisOption = new AsmFragmentSynthesisOption(signature, rule);
+            List<String> subSignatures = rule.matchAndGetSubSignatures(signature);
+            if (subSignatures != null) {
+                AsmFragmentSynthesisOption synthesisOption = new AsmFragmentSynthesisOption(signature, rule, subSignatures);
                 synthesis.addSynthesisOption(synthesisOption);
                 if (log.isVerboseFragmentLog()) {
                     log.append("New fragment synthesis " + signature + " - sub-option " + String.join(",", synthesisOption.getSubSignatures()));
@@ -226,6 +278,7 @@ public class AsmFragmentTemplateSynthesizer {
 
    /** Work queue with synthesis that need to be recalculated to find the best templates. */
     private final Deque<AsmFragmentSynthesis> bestTemplateUpdate;
+    private final Set<AsmFragmentSynthesis> bestTemplateUpdateSet;
 
     /**
      * Queue an update of the best templates for a synthesis to the work queue
@@ -233,7 +286,7 @@ public class AsmFragmentTemplateSynthesizer {
      * @param synthesis The synthesis to add to the work queue
      */
     private void queueUpdateBestTemplate(AsmFragmentSynthesis synthesis) {
-        if (!bestTemplateUpdate.contains(synthesis)) {
+        if (bestTemplateUpdateSet.add(synthesis)) {
             bestTemplateUpdate.push(synthesis);
         }
     }
@@ -246,6 +299,7 @@ public class AsmFragmentTemplateSynthesizer {
     private void updateBestTemplates(CompileLog log) {
         while (!bestTemplateUpdate.isEmpty()) {
             AsmFragmentSynthesis synthesis = bestTemplateUpdate.pop();
+            bestTemplateUpdateSet.remove(synthesis);
             boolean modified = false;
             // Check if the file template is best in class
             List<AsmFragmentSynthesisResult> fileTemplates = synthesis.getFileTemplates();
@@ -343,8 +397,13 @@ public class AsmFragmentTemplateSynthesizer {
      */
     private List<AsmFragmentSynthesisResult> loadFragmentTemplates(String signature) {
         ArrayList<AsmFragmentSynthesisResult> fileTemplates = new ArrayList<>();
+        String fileName = signature + ".asm";
         List<TargetCpu.Feature> cpuFeatures = targetCpu.getFeatures();
         for (TargetCpu.Feature cpuFeature : cpuFeatures) {
+            Set<String> existing = existingFragmentFiles.get(cpuFeature);
+            if (existing != null && !existing.contains(fileName)) {
+                continue;
+            }
             AsmFragmentSynthesisResult fileFragment = loadFragmentTemplate(signature, baseFragmentFolder.resolve(cpuFeature.getName()));
             if (fileFragment != null)
                 fileTemplates.add(fileFragment);
@@ -365,16 +424,17 @@ public class AsmFragmentTemplateSynthesizer {
             if (!fragmentFile.exists()) {
                 return null;
             }
-            InputStream fragmentStream = new FileInputStream(fragmentFile);
             String body;
-            if (fragmentStream.available() == 0) {
-                body = "";
-            } else {
-                CharStream fragmentCharStream = CharStreams.fromStream(fragmentStream);
-                body = fixNewlines(fragmentCharStream.toString());
+            try (InputStream fragmentStream = new FileInputStream(fragmentFile)) {
+                if (fragmentStream.available() == 0) {
+                    body = "";
+                } else {
+                    CharStream fragmentCharStream = CharStreams.fromStream(fragmentStream);
+                    body = fixNewlines(fragmentCharStream.toString());
+                }
             }
             final AsmFragmentTemplate fragment = new AsmFragmentTemplate(signature, body, targetCpu);
-            return new AsmFragmentSynthesisResult(fragment, true, false, null, new ArrayList<>());
+            return new AsmFragmentSynthesisResult(fragment, true, false, null, Collections.emptyList());
         } catch (IOException e) {
             throw new RuntimeException("Error loading fragment file " + signature, e);
         } catch (StringIndexOutOfBoundsException e) {

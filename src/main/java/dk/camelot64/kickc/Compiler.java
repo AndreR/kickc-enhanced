@@ -201,7 +201,6 @@ public class Compiler {
    }
 
    public void compile(List<Path> cFiles, Map<String, String> defines) {
-      Pass2MultiplyToShiftRewriting.inlinedDivCounts.clear();
       if(cFiles.size() == 0)
          throw new CompileError("Error! You must supply at least one file to compile!");
 
@@ -468,11 +467,13 @@ public class Compiler {
       optimizations.add(new Pass2ConstantIfs(program));
       optimizations.add(new Pass2ConstantStringConsolidation(program));
       optimizations.add(new Pass2RangeResolving(program));
+      optimizations.add(new Pass2RangeNarrowing(program));
       optimizations.add(new Pass2ComparisonOptimization(program));
       optimizations.add(new Pass2InlineDerefIdx(program));
       optimizations.add(new Pass2DeInlineWordDerefIdx(program));
       optimizations.add(new PassNSimplifyConstantZero(program));
       optimizations.add(new PassNSimplifyExpressionWithZero(program));
+      optimizations.add(new Pass2BitShiftCanonicalization(program));
       optimizations.add(new PassNEliminateUnusedConstructors(program));
       optimizations.add(new Pass2EliminateUnusedBlocks(program));       // Notice sequence is important
       optimizations.add(new PassNEliminateUnusedVars(program, true));   // Notice sequence is important
@@ -486,8 +487,8 @@ public class Compiler {
       });
       if(enableLoopHeadConstant) {
          optimizations.add(new Pass2LoopHeadConstantIdentification(program));
-         optimizations.add(new Pass2LoopInvariantCodeMotion(program));
       }
+      optimizations.add(new Pass2LoopInvariantCodeMotion(program));
       optimizations.add(() -> {
          program.clearStatementIndices();
          return false;
@@ -511,17 +512,8 @@ public class Compiler {
       loopUnrolling.add(() -> {
          program.clearVariableReferenceInfos();
          program.clearControlFlowBlockSuccessorClosure();
-         return false;
-      });
-      loopUnrolling.add(() -> {
          program.clearStatementInfos();
-         return false;
-      });
-      loopUnrolling.add(() -> {
          program.clearDominators();
-         return false;
-      });
-      loopUnrolling.add(() -> {
          program.clearLoopSet();
          return false;
       });
@@ -677,16 +669,19 @@ public class Compiler {
       new Pass3AddNopBeforeCallOns(program).generate();
       new PassNStatementIndices(program).execute();
 
-      getLog().append("CALL GRAPH");
       program.clearCallGraph();
-      getLog().append(program.getCallGraph().toString());
+      if(getLog().isEnabled()) {
+         getLog().append("CALL GRAPH");
+         getLog().append(program.getCallGraph().toString());
+      } else {
+         program.getCallGraph();
+      }
 
       //getLog().setVerboseLiveRanges(true);
 
       program.clearStatementInfos();
       program.clearVariableReferenceInfos();
       program.clearControlFlowBlockSuccessorClosure();
-      pass2AssertSSA();
 
       // Phi mem coalesce removes as many variables introduced by phi lifting as possible - as long as their live ranges do not overlap
       CompilerProgress.status("Pass 3 (CFG & Live Ranges): Phi memory coalesce...");
@@ -712,7 +707,6 @@ public class Compiler {
       }
       new PassNBlockSequencePlanner(program).step();
       new Pass3AddNopBeforeCallOns(program).generate();
-      new PassNStatementIndices(program).execute();
 
       program.clearCallGraph();
       program.clearStatementIndices();
@@ -731,8 +725,10 @@ public class Compiler {
          System.out.println(String.format("   [PASS3] LiveRangesEffective took    %6.2f s", (System.currentTimeMillis() - tLiveRanges) / 1000.0));
       }
 
-      getLog().append("\nFINAL CONTROL FLOW GRAPH");
-      getLog().append(program.prettyControlFlowGraph());
+      if(getLog().isEnabled()) {
+         getLog().append("\nFINAL CONTROL FLOW GRAPH");
+         getLog().append(program.prettyControlFlowGraph());
+      }
 
    }
 
@@ -804,23 +800,28 @@ public class Compiler {
          tStep = System.currentTimeMillis();
          new Pass4RegisterUpliftPotentialInitialize(program).initPotentialRegisters();
          boolean change;
-         int iter = 0;
+         Pass4RegisterUpliftPotentialRegisterAnalysis potentialRegAnalysis = new Pass4RegisterUpliftPotentialRegisterAnalysis(program);
          do {
-            iter++;
-            change = new Pass4RegisterUpliftPotentialRegisterAnalysis(program).findPotentialRegisters();
+            change = potentialRegAnalysis.findPotentialRegisters();
          } while(change);
          if(getLog().isVerboseUplift()) {
             System.out.println(String.format("   [PASS4] Total Potential Reg Analysis: %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
          }
-         getLog().append(program.getRegisterPotentials().toString());
+         if(getLog().isEnabled()) {
+            getLog().append(program.getRegisterPotentials().toString());
+         }
 
          if(getLog().isVerboseSizeInfo()) {
             getLog().append(program.getSizeInfo());
          }
 
          // Find register uplift scopes
-         getLog().append("REGISTER UPLIFT SCOPES");
-         getLog().append(program.getRegisterUpliftProgram().toString((program.getVariableRegisterWeights())));
+         if(getLog().isEnabled()) {
+            getLog().append("REGISTER UPLIFT SCOPES");
+            getLog().append(program.getRegisterUpliftProgram().toString((program.getVariableRegisterWeights())));
+         } else {
+            program.getRegisterUpliftProgram();
+         }
 
          // Attempt uplifting registers through a lot of combinations
          CompilerProgress.status("Pass 4 (Register Allocation): Uplifting combinations...");
@@ -878,21 +879,16 @@ public class Compiler {
       new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing()).generate();
       new Pass4AssertNoCpuClobber(program).check();
 
-      // Remove unnecessary register savings from interrupts {@link InterruptType#HARDWARE_NOCLOBBER}
-      new Pass4InterruptClobberFix(program).fix();
-
       program.endPass4();
 
    }
 
    private int pass5GenerateAndOptimizeAsm() {
-      long t0 = System.currentTimeMillis();
       if(getLog().isSysOut() || getLog().isVerboseAsmOptimize()) {
          getLog().append("\nASSEMBLER BEFORE OPTIMIZATION");
          getLog().append(program.getAsm().toString(new AsmProgram.AsmPrintState(true), program));
          getLog().append("ASSEMBLER OPTIMIZATIONS");
       }
-      long tLogBefore = System.currentTimeMillis() - t0;
 
       long tOptStart = System.currentTimeMillis();
       List<Pass5AsmOptimization> pass5Optimizations = new ArrayList<>();
@@ -901,12 +897,14 @@ public class Compiler {
       pass5Optimizations.add(new Pass5RedundantStoreAndReloadElimination(program));
       pass5Optimizations.add(new Pass5InterproceduralParameterPreservation(program));
       pass5Optimizations.add(new Pass5DeadStoreElimination(program));
+      pass5Optimizations.add(new Pass5StandardPeepholeOptimization(program));
       pass5Optimizations.add(new Pass5IllegalOpcodeOptimization(program));
       pass5Optimizations.add(new Pass5BitTestOptimization(program));
       pass5Optimizations.add(new Pass5MultiEntryByteSkipping(program));
       pass5Optimizations.add(new Pass5PreIndexedAddressingOptimization(program));
       pass5Optimizations.add(new Pass5CarryFlagReturnOptimization(program));
       pass5Optimizations.add(new Pass5AxRegisterCallingConventionOptimization(program));
+      pass5Optimizations.add(new Pass5ARegisterReturnOptimization(program));
       pass5Optimizations.add(new Pass5PointerToSmcOptimization(program));
       pass5Optimizations.add(new Pass5SmallMemcpyUnrollingOptimization(program));
       pass5Optimizations.add(new Pass5PointerReloadElimination(program));
@@ -950,6 +948,9 @@ public class Compiler {
          System.out.println(String.format("   [PASS5] Peephole Optimizations (%d rounds): %6.2f s", pass5Rounds, tOptElapsed / 1000.0));
       }
 
+      // SSA-06: Prune interrupt register saves AFTER Pass 5 peephole passes (which may introduce X/Y clobbers)
+      new Pass4InterruptClobberFix(program).fix();
+
       if(program.getLoopAlignThreshold() > 0) {
          CompilerProgress.status("Pass 5 (ASM & Peephole): Loop alignment...");
          long tAlignStart = System.currentTimeMillis();
@@ -983,7 +984,6 @@ public class Compiler {
          System.out.println(String.format("   [PASS5] Fix Long Branches:            %6.2f s", tBranchElapsed / 1000.0));
       }
 
-      long tLogAfterStart = System.currentTimeMillis();
       if(getLog().isSysOut() || getLog().isVerboseAsmOptimize()) {
          getLog().append("\nFINAL SYMBOL TABLE");
          getLog().append(program.getScope().toStringVars(program, false));

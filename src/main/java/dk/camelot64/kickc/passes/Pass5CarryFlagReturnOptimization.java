@@ -32,20 +32,6 @@ import java.util.*;
  */
 public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
 
-   private static class LineRef {
-      final int index;
-      final AsmChunk chunk;
-      final AsmLine line;
-      final String scope;
-
-      LineRef(int index, AsmChunk chunk, AsmLine line, String scope) {
-         this.index = index;
-         this.chunk = chunk;
-         this.line = line;
-         this.scope = scope;
-      }
-   }
-
    public Pass5CarryFlagReturnOptimization(Program program) {
       super(program);
    }
@@ -112,10 +98,9 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
             for(AsmLine line : chunk.getLines()) {
                if(line instanceof AsmLabel) {
                   String lbl = ((AsmLabel) line).getLabel();
-                  if(!lbl.startsWith("!")) {
-                     String key = (scope != null ? scope + "::" : "") + lbl;
+                  if(lbl != null && !lbl.startsWith("!")) {
+                     String key = (scope != null ? scope : "") + "::" + lbl;
                      labelIndices.put(key, lineIdx);
-                     labelIndices.put(lbl, lineIdx);
                   }
                }
                allLines.add(new LineRef(lineIdx++, chunk, line, scope));
@@ -127,11 +112,8 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
             LineRef ref = allLines.get(i);
             if(ref.scope != null && carryProcs.contains(ref.scope)) {
                if(ref.line instanceof AsmInstruction inst && "rts".equalsIgnoreCase(inst.getCpuOpcode().getMnemonic())) {
-                  // Look backwards for LDA #1 or LDA #0
-                  int prevIdx = i - 1;
-                  while(prevIdx >= 0 && !(allLines.get(prevIdx).line instanceof AsmInstruction)) {
-                     prevIdx--;
-                  }
+                  // CF-14: Stop backward scan at AsmLabel / scope / inline-asm boundaries!
+                  int prevIdx = findPrevInstruction(allLines, i - 1);
                   if(prevIdx >= 0 && allLines.get(prevIdx).line instanceof AsmInstruction prevInst) {
                      String mn = prevInst.getCpuOpcode().getMnemonic().toLowerCase();
                      if("lda".equals(mn) && prevInst.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.IMM)) {
@@ -162,16 +144,10 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
                          overallModified = true;
                          break;
                       } else if("rol".equals(mn)) {
-                        int prevLdaIdx = prevIdx - 1;
-                        while(prevLdaIdx >= 0 && !(allLines.get(prevLdaIdx).line instanceof AsmInstruction)) {
-                           prevLdaIdx--;
-                        }
+                        int prevLdaIdx = findPrevInstruction(allLines, prevIdx - 1);
                         if(prevLdaIdx >= 0 && allLines.get(prevLdaIdx).line instanceof AsmInstruction ldaInst) {
                            if("lda".equalsIgnoreCase(ldaInst.getCpuOpcode().getMnemonic()) && isImmVal(ldaInst.getOperand1(), 0)) {
-                              int prevCmpIdx = prevLdaIdx - 1;
-                              while(prevCmpIdx >= 0 && !(allLines.get(prevCmpIdx).line instanceof AsmInstruction)) {
-                                 prevCmpIdx--;
-                              }
+                              int prevCmpIdx = findPrevInstruction(allLines, prevLdaIdx - 1);
                               if(prevCmpIdx >= 0 && allLines.get(prevCmpIdx).line instanceof AsmInstruction cmpInst) {
                                  String cmn = cmpInst.getCpuOpcode().getMnemonic().toLowerCase();
                                  if("cmp".equals(cmn) || "cpx".equals(cmn) || "cpy".equals(cmn)) {
@@ -213,9 +189,10 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
                   LineRef refRts = allLines.get(idxRts);
 
                   if(isRts(refRts.line)) {
+                     String scopedTargetKey = (refCmp.scope != null ? refCmp.scope : "") + "::" + bTarget;
                      if("bcc".equals(bmn) && isSec(refSec.line)) {
                         // Check if bTarget leads to CLC; RTS
-                        Integer targetIdx = labelIndices.get(bTarget);
+                        Integer targetIdx = labelIndices.get(scopedTargetKey);
                         if(targetIdx != null) {
                            int idxClc = nextInstIdx(allLines, targetIdx + 1);
                            if(idxClc != -1 && isClc(allLines.get(idxClc).line)) {
@@ -231,7 +208,7 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
                            }
                         }
                      } else if("bcs".equals(bmn) && isClc(refSec.line)) {
-                        Integer targetIdx = labelIndices.get(bTarget);
+                        Integer targetIdx = labelIndices.get(scopedTargetKey);
                         if(targetIdx != null) {
                            int idxSec2 = nextInstIdx(allLines, targetIdx + 1);
                            if(idxSec2 != -1 && isSec(allLines.get(idxSec2).line)) {
@@ -331,9 +308,13 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
    private int nextInstIdx(List<LineRef> allLines, int startIdx) {
       for(int i = startIdx; i < allLines.size(); i++) {
          AsmLine line = allLines.get(i).line;
+         if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) {
+            continue;
+         }
          if(line instanceof AsmInstruction) {
             return i;
          }
+         break;
       }
       return -1;
    }
@@ -366,7 +347,8 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
             continue;
          }
 
-         if(SymbolType.BOOLEAN.equals(procedure.getReturnType()) && procedure.getInterruptType() == null) {
+         if(SymbolType.BOOLEAN.equals(procedure.getReturnType()) && procedure.getInterruptType() == null
+               && !Pass2ConstantIdentification.isAddressOfUsed(procedure.getRef(), getProgram())) {
             if(calleeCanReturnCarry(allLines, name) && allCallSitesAreBranches(allLines, name)) {
                carryProcs.add(name);
                procedure.setCarryReturn(true);
@@ -423,16 +405,10 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
 
                // Transformable cmp; lda #0; rol
                if("rol".equals(mn)) {
-                  int prevLdaIdx = prevIdx - 1;
-                  while(prevLdaIdx >= 0 && !(allLines.get(prevLdaIdx).line instanceof AsmInstruction)) {
-                     prevLdaIdx--;
-                  }
+                  int prevLdaIdx = findPrevInstruction(allLines, prevIdx - 1);
                   if(prevLdaIdx >= 0 && allLines.get(prevLdaIdx).line instanceof AsmInstruction ldaInst) {
                      if("lda".equalsIgnoreCase(ldaInst.getCpuOpcode().getMnemonic()) && isImmVal(ldaInst.getOperand1(), 0)) {
-                        int prevCmpIdx = prevLdaIdx - 1;
-                        while(prevCmpIdx >= 0 && !(allLines.get(prevCmpIdx).line instanceof AsmInstruction)) {
-                           prevCmpIdx--;
-                        }
+                        int prevCmpIdx = findPrevInstruction(allLines, prevLdaIdx - 1);
                         if(prevCmpIdx >= 0 && allLines.get(prevCmpIdx).line instanceof AsmInstruction cmpInst) {
                            String cmn = cmpInst.getCpuOpcode().getMnemonic().toLowerCase();
                            if("cmp".equals(cmn) || "cpx".equals(cmn) || "cpy".equals(cmn)) {
@@ -455,9 +431,14 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
       int callCount = 0;
       for(int i = 0; i < allLines.size(); i++) {
          AsmLine line = allLines.get(i).line;
-         if(line instanceof AsmInstruction inst && "jsr".equalsIgnoreCase(inst.getCpuOpcode().getMnemonic())) {
+         if(line instanceof AsmInstruction inst && inst.getCpuOpcode() != null) {
+            String imn = inst.getCpuOpcode().getMnemonic().toLowerCase();
             String target = inst.getOperand1();
-            if(target != null && target.trim().equals(procName)) {
+            if("jmp".equals(imn) && target != null && target.trim().equals(procName)) {
+               // Interprocedural tail-call into auto-carry candidate -> reject
+               return false;
+            }
+            if("jsr".equals(imn) && target != null && target.trim().equals(procName)) {
                callCount++;
                int nextIdx = nextInstIdx(allLines, i + 1);
                if(nextIdx == -1) return false;

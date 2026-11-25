@@ -54,10 +54,28 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
       VariableReferenceInfos referenceInfo = getProgram().getVariableReferenceInfos();
       StatementInfos statementInfos = getProgram().getStatementInfos();
       dk.camelot64.kickc.model.symbols.ProgramScope scope = getProgram().getScope();
+      Graph graph = getProgram().getGraph();
 
-      for(Statement nextStmt : getProgram().getGraph().getAllStatements()) {
+      List<Graph.Block> allBlocks = graph.getAllBlocks();
+      Map<LabelRef, List<Graph.Block>> predecessorMap = new HashMap<>(allBlocks.size() * 2);
+      Statement[] prevInBlockByStmtIdx = new Statement[maxStmtIdx + 1];
+      for(Graph.Block b : allBlocks) {
+         if(b.getDefaultSuccessor() != null)
+            predecessorMap.computeIfAbsent(b.getDefaultSuccessor(), k -> new ArrayList<>()).add(b);
+         if(b.getConditionalSuccessor() != null)
+            predecessorMap.computeIfAbsent(b.getConditionalSuccessor(), k -> new ArrayList<>()).add(b);
+         if(b.getCallSuccessor() != null)
+            predecessorMap.computeIfAbsent(b.getCallSuccessor(), k -> new ArrayList<>()).add(b);
+         Statement prev = null;
+         for(Statement s : b.getStatements()) {
+            prevInBlockByStmtIdx[s.getIndex()] = prev;
+            prev = s;
+         }
+      }
+
+      for(Statement nextStmt : graph.getAllStatements()) {
          int idx = nextStmt.getIndex();
-         Collection<PreviousStatement> prevs = getPreviousStatements(nextStmt);
+         Collection<PreviousStatement> prevs = getPreviousStatements(nextStmt, graph, statementInfos, predecessorMap, prevInBlockByStmtIdx);
          previousStatementsByStmtIdx[idx] = prevs.toArray(new PreviousStatement[prevs.size()]);
          definedVarsByStmtIdx[idx] = referenceInfo.getDefinedVars(nextStmt);
 
@@ -352,10 +370,15 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
     * @param statement The statement to find previous for
     * @return statement(s) executed just before the passed statement
     */
-   private Collection<PreviousStatement> getPreviousStatements(Statement statement) {
+   private Collection<PreviousStatement> getPreviousStatements(
+         Statement statement,
+         Graph graph,
+         StatementInfos statementInfos,
+         Map<LabelRef, List<Graph.Block>> predecessorMap,
+         Statement[] prevInBlockByStmtIdx) {
       ArrayList<PreviousStatement> previousStatements = new ArrayList<>();
       // Find the statement(s) just before the current statement (disregarding if the current statement is a call - this will be handled later)
-      Collection<Statement> precedingStatements = getPrecedingStatement(statement, getGraph(), getProgram().getStatementInfos());
+      Collection<Statement> precedingStatements = getPrecedingStatement(statement, statementInfos, predecessorMap, prevInBlockByStmtIdx);
       if(statement instanceof StatementCalling) {
          // Add the statement(s) just before the call
          for(Statement precedingStatement : precedingStatements) {
@@ -366,9 +389,9 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
          ProcedureRef procedure = call.getProcedure();
          if(procedure!=null) {
             LabelRef procedureReturnBlock = procedure.getReturnBlock();
-            Graph.Block returnBlock = getProgram().getGraph().getBlock(procedureReturnBlock);
+            Graph.Block returnBlock = graph.getBlock(procedureReturnBlock);
             if(returnBlock != null) {
-               Collection<Statement> lastStatements = getLastInBlock(returnBlock, getGraph());
+               Collection<Statement> lastStatements = getLastInBlock(returnBlock, predecessorMap);
                for(Statement lastStatement : lastStatements) {
                   previousStatements.add(new PreviousStatement(lastStatement, PreviousStatement.Type.LAST_IN_METHOD));
                }
@@ -381,13 +404,13 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
          }
       } else {
          // No preceding statements. Examine if this is the first statement in a call.
-         Graph.Block block = getProgram().getStatementInfos().getBlock(statement);
+         Graph.Block block = statementInfos.getBlock(statement);
          if(getProgram().isProcedureEntry(block)) {
             // Current is first statement of a call - add the statement preceding the call.
             Collection<CallGraph.CallBlock.Call> callers = getProgram().getCallGraph().getCallers((ProcedureRef) block.getScope());
             for(CallGraph.CallBlock.Call call : callers) {
-               Statement callStmt = getProgram().getStatementInfos().getStatement(call.getCallStatementIdx());
-               Collection<Statement> precedingCallStmt = getPrecedingStatement(callStmt, getGraph(), getProgram().getStatementInfos());
+               Statement callStmt = statementInfos.getStatement(call.getCallStatementIdx());
+               Collection<Statement> precedingCallStmt = getPrecedingStatement(callStmt, statementInfos, predecessorMap, prevInBlockByStmtIdx);
                for(Statement precedingCall : precedingCallStmt) {
                   previousStatements.add(new PreviousStatement(precedingCall, PreviousStatement.Type.BEFORE_METHOD));
                }
@@ -430,54 +453,74 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
       Statement previousStmt = null;
       Statement prev = null;
       Graph.Block block = statementInfos.getBlock(statement);
-      List<Statement> statements = block.getStatements();
-      for(Statement stmt : statements) {
+      for(Statement stmt : block.getStatements()) {
          if(statement.getIndex().equals(stmt.getIndex())) {
             previousStmt = prev;
             break;
          }
          prev = stmt;
       }
-      Collection<Statement> previous;
       if(previousStmt != null) {
-         previous = Arrays.asList(previousStmt);
+         return Collections.singletonList(previousStmt);
       } else {
-         // Current is first in a block - look in predecessor blocks
-         previous = getLastInPredecessors(block, graph);
+         List<Graph.Block> predecessors = graph.getPredecessors(block);
+         ArrayList<Statement> last = new ArrayList<>();
+         for(var predecessor : predecessors) {
+            if(block.getLabel().equals(predecessor.getDefaultSuccessor()) || block.getLabel().equals(predecessor.getConditionalSuccessor())) {
+               last.addAll(getLastInBlockFallback(predecessor, graph));
+            }
+         }
+         return last;
       }
-      return previous;
    }
 
-   /**
-    * Find the last statement(s) of a block. Can trace back through predecessor blocks - but not back through calls.
-    *
-    * @param block The block
-    * @return The last statement(s). May contain multiple statements if the block is empty and has multiple predecessors.
-    * This method never traces back through calls, so the result may also be empty (if the block is an empty method).
-    */
-   private static Collection<Statement> getLastInBlock(Graph.Block block, Graph graph) {
+   private static Collection<Statement> getLastInBlockFallback(Graph.Block block, Graph graph) {
       List<Statement> statements = block.getStatements();
-      if(statements.size() > 0) {
-         return Arrays.asList(statements.get(statements.size() - 1));
-      } else {
-         // Trace back through direct/conditional predecessors (not calls)
-         return getLastInPredecessors(block, graph);
+      if(!statements.isEmpty()) {
+         return Collections.singletonList(statements.get(statements.size() - 1));
       }
-   }
-
-   /**
-    * Find the last statement(s) in the predecessors of a block. Can trace back through predecessor blocks - but not back through calls.
-    *
-    * @param block The block
-    * @return The last statement(s). May contain multiple statements if the block is empty and has multiple predecessors.
-    * This method never traces back through calls, so the result may also be empty (if the block is an empty method).
-    */
-   private static Collection<Statement> getLastInPredecessors(Graph.Block block, Graph graph) {
       List<Graph.Block> predecessors = graph.getPredecessors(block);
       ArrayList<Statement> last = new ArrayList<>();
       for(var predecessor : predecessors) {
          if(block.getLabel().equals(predecessor.getDefaultSuccessor()) || block.getLabel().equals(predecessor.getConditionalSuccessor())) {
-            last.addAll(getLastInBlock(predecessor, graph));
+            last.addAll(getLastInBlockFallback(predecessor, graph));
+         }
+      }
+      return last;
+   }
+
+   static Collection<Statement> getPrecedingStatement(
+         Statement statement,
+         StatementInfos statementInfos,
+         Map<LabelRef, List<Graph.Block>> predecessorMap,
+         Statement[] prevInBlockByStmtIdx) {
+      Statement previousStmt = prevInBlockByStmtIdx[statement.getIndex()];
+      if(previousStmt != null) {
+         return Collections.singletonList(previousStmt);
+      } else {
+         Graph.Block block = statementInfos.getBlock(statement);
+         return getLastInPredecessors(block, predecessorMap);
+      }
+   }
+
+   private static Collection<Statement> getLastInBlock(Graph.Block block, Map<LabelRef, List<Graph.Block>> predecessorMap) {
+      List<Statement> statements = block.getStatements();
+      if(statements.size() > 0) {
+         return Collections.singletonList(statements.get(statements.size() - 1));
+      } else {
+         return getLastInPredecessors(block, predecessorMap);
+      }
+   }
+
+   private static Collection<Statement> getLastInPredecessors(Graph.Block block, Map<LabelRef, List<Graph.Block>> predecessorMap) {
+      List<Graph.Block> predecessors = predecessorMap.get(block.getLabel());
+      if(predecessors == null || predecessors.isEmpty()) {
+         return Collections.emptyList();
+      }
+      ArrayList<Statement> last = new ArrayList<>();
+      for(var predecessor : predecessors) {
+         if(block.getLabel().equals(predecessor.getDefaultSuccessor()) || block.getLabel().equals(predecessor.getConditionalSuccessor())) {
+            last.addAll(getLastInBlock(predecessor, predecessorMap));
          }
       }
       return last;
