@@ -237,4 +237,45 @@ public class TestPhase4GeneralOpt {
       assertTrue(fnBody.contains("table,x"), "OPT-04 should pin g_idx in X and index table,x:\n" + fnBody);
       assertFalse(fnBody.contains("ldy.z g_idx"), "OPT-04 should eliminate ldy.z g_idx inside loop:\n" + fnBody);
    }
+
+   @Test
+   void testOpt05_RangeNarrowingSignedDiff() throws Exception {
+      String src = ""
+            + "#include <stdint.h>\n"
+            + "volatile uint8_t g_a, g_b;\n"
+            + "volatile int16_t g_out;\n"
+            + "void main(void) {\n"
+            + "   uint8_t a = g_a & 0x0f;\n"
+            + "   uint8_t b = g_b & 0x0f;\n"
+            + "   int16_t d = (int16_t)a - (int16_t)b;\n"
+            + "   if(d < 0) d = -d;\n"
+            + "   g_out = d;\n"
+            + "}\n";
+      Program prog = compileC(src);
+      String asm = prog.getAsm().toString();
+      assertTrue(asm.contains("sec"), "OPT-05 should compile cleanly:\n" + asm);
+      // With 8-bit narrowing, the initial difference should not need 16-bit sbc #0 on high byte
+      int mainIdx = asm.indexOf("main:");
+      String mainBody = asm.substring(mainIdx, asm.indexOf("}", mainIdx));
+      assertFalse(mainBody.contains("sbc #0"), "OPT-05 should narrow (int16_t)a - (int16_t)b to 8-bit subtraction without high-byte sbc #0:\n" + mainBody);
+   }
+
+   @Test
+   void testOpt05_RangeNarrowingPreservesUnbounded16Bit() throws Exception {
+      String src = ""
+            + "#include <stdint.h>\n"
+            + "volatile uint8_t g_a, g_b;\n"
+            + "volatile int16_t g_out;\n"
+            + "void main(void) {\n"
+            + "   uint8_t a = g_a;\n"
+            + "   uint8_t b = g_b;\n"
+            + "   int16_t d = (int16_t)a - (int16_t)b;\n"
+            + "   g_out = d;\n"
+            + "}\n";
+      Program prog = compileC(src);
+      String asm = prog.getAsm().toString();
+      int mainIdx = asm.indexOf("main:");
+      String mainBody = asm.substring(mainIdx, asm.indexOf("}", mainIdx));
+      assertTrue(mainBody.contains("sbc.z __2+1") || mainBody.contains("sbc #0"), "OPT-05 must keep 16-bit subtraction for unbounded uint8_t operands:\n" + mainBody);
+   }
 }
