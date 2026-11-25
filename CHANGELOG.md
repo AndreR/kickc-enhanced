@@ -22,6 +22,7 @@
   - Extended `Pass5TailCallOptimization` to allow `jsr; rts -> jmp` for non-`void` callers calling safe `void` callees.
   - Added intra-block overwritten-store DSE and byte-granular DSE (`Pass5DeadStoreElimination`).
   - Added static carry inference to eliminate redundant `clc` instructions when `C=0` is guaranteed (`Pass5StandardPeepholeOptimization`).
+  - Guarded `Pass5CarryFlagReturnOptimization` against `.byte $2c`/`.byte $24` byte-skippers, ordered it before `Pass5MultiEntryByteSkipping`, and extended carry-return detection to tail-call chains (`jmp`) between carry-return procedures.
   - Fixed `isRegDeadAlongPath` at `rts` for non-`void` procedures whose return value does not use `A`/`X`/`Y`, unlocking `Pass5LoopRegisterPinning` in non-`void` leaf loops.
   - Added CFG-meet pointer tracking, `INY`/`DEY` strength reduction, half-pointer reload elimination, and `knownZp` fallthrough.
   - Added NMOS 6510 illegal opcode rules (`ILL-04`..`ILL-08`) with pointer-aliasing, `FLAG_N`, and `$ff` liveness guards.
@@ -30,6 +31,7 @@
 ### Fragments
 
 - Added `_neg__byte_` / `_neg__sbyte_` base fragments, little-endian low-byte synthesis rules, tribyte `mapSToU`, and main-memory pointer synthesis (`p..mN`).
+- Added `vwsm1_ge_vwum2_then_la1` and `vwsm1_le_vwum2_then_la1` for mixed signed/unsigned 16-bit comparisons.
 - Restored `d` (dword) type support in `AsmFragmentSignature.g4`.
 
 ### Frontend, Type System & Thread Safety

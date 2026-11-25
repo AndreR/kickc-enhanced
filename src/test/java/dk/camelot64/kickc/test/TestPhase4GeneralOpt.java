@@ -10,6 +10,7 @@ import dk.camelot64.kickc.model.TargetCpu;
 import dk.camelot64.kickc.model.TargetPlatform;
 import dk.camelot64.kickc.model.values.ScopeRef;
 import dk.camelot64.kickc.parser.CTargetPlatformParser;
+import dk.camelot64.kickc.passes.Pass5CarryFlagReturnOptimization;
 import dk.camelot64.kickc.passes.Pass5DeadStoreElimination;
 import dk.camelot64.kickc.passes.Pass5StandardPeepholeOptimization;
 import org.junit.jupiter.api.BeforeAll;
@@ -315,5 +316,66 @@ public class TestPhase4GeneralOpt {
       Program prog = compileC(src);
       String asm = prog.getAsm().toString();
       assertTrue(asm.contains("jsr rec"), "OPT-06 must NOT inline recursive procedures:\n" + asm);
+   }
+
+   @Test
+   void testFix_ByteSkipperNotBrokenByCarryReturn() throws Exception {
+      String src = ""
+            + "#include <stdint.h>\n"
+            + "#include <stdbool.h>\n"
+            + "volatile uint8_t g_a, g_b;\n"
+            + "bool check_pair(uint8_t x) {\n"
+            + "   if(x == 0) return true;\n"
+            + "   if(x == g_a) return true;\n"
+            + "   return false;\n"
+            + "}\n"
+            + "void main(void) {\n"
+            + "   if(check_pair(g_b)) g_a = 1;\n"
+            + "   if(check_pair(g_a)) g_b = 2;\n"
+            + "}\n";
+      Program prog = compileC(src);
+      String asm = prog.getAsm().toString();
+      assertFalse(asm.contains(".byte $2c\n  __b") && asm.contains("sec\n    rts"),
+            "Must never emit 1-byte sec; rts immediately after 2-byte .byte $2c skipper:\n" + asm);
+      // Specifically verify no .byte $2c is immediately followed (ignoring labels) by sec or clc
+      String[] lines = asm.split("\r?\n");
+      for(int i = 0; i < lines.length; i++) {
+         if(lines[i].contains(".byte $2c")) {
+            for(int j = i + 1; j < lines.length; j++) {
+               String t = lines[j].trim();
+               if(t.isEmpty() || t.endsWith(":") || t.startsWith("//")) continue;
+               assertFalse(t.equals("sec") || t.equals("clc"),
+                     ".byte $2c must never skip a 1-byte sec/clc instruction:\n" + asm);
+               break;
+            }
+         }
+      }
+   }
+
+   @Test
+   void testOpt07_CarryReturnChainThroughTailCall() throws Exception {
+      String src = ""
+            + "#include <stdint.h>\n"
+            + "#include <stdbool.h>\n"
+            + "volatile uint8_t g_a, g_b, g_out;\n"
+            + "bool leaf_cmp(uint8_t x) {\n"
+            + "   return x >= g_a;\n"
+            + "}\n"
+            + "bool wrapper_cmp(uint8_t v) {\n"
+            + "   if(v == 0) return true;\n"
+            + "   if(leaf_cmp(v)) return true;\n"
+            + "   return leaf_cmp(v + 1);\n"
+            + "}\n"
+            + "void main(void) {\n"
+            + "   if(wrapper_cmp(g_a)) g_out = 1;\n"
+            + "   if(wrapper_cmp(g_b)) g_out = 2;\n"
+            + "}\n";
+      Program prog = compileC(src);
+      String asm = prog.getAsm().toString();
+      int wrapIdx = asm.indexOf("wrapper_cmp:");
+      assertTrue(wrapIdx >= 0, "wrapper_cmp missing:\n" + asm);
+      String wrapBody = asm.substring(wrapIdx, asm.indexOf("}", wrapIdx));
+      assertTrue(wrapBody.contains("bcs "), "Carry-return chain should convert wrapper_cmp branch after jsr leaf_cmp to bcs:\n" + wrapBody);
+      assertFalse(wrapBody.contains("cmp #0"), "Carry-return chain should eliminate cmp #0 after jsr leaf_cmp:\n" + wrapBody);
    }
 }
