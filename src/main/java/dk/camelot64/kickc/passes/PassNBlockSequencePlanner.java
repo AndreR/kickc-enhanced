@@ -167,32 +167,35 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
          if(scopeTodo != null) todoScopes.pop();
          return null;
       }
-      if(scopeTodo.todo.size() == 1) {
-         Graph.Block block = scopeTodo.todo.pop();
-         if(scopeTodo.todo.isEmpty()) {
-            todoScopes.pop();
-         }
+      int size = scopeTodo.todo.size();
+      if(size == 1) {
+         Graph.Block block = scopeTodo.todo.remove(0);
+         todoScopes.pop();
          return block;
       }
       // Topological selection: find a block that is NOT reached by any other pending block
-      Graph.Block bestBlock = null;
-      for(Graph.Block candidate : scopeTodo.todo) {
+      int bestIdx = -1;
+      for(int i = 0; i < size; i++) {
+         Graph.Block candidate = scopeTodo.todo.get(i);
+         LabelRef candLabel = candidate.getLabel();
          boolean reachedByOther = false;
-         for(Graph.Block other : scopeTodo.todo) {
-            if(!candidate.equals(other) && reachesFast(other, candidate.getLabel())) {
+         for(int j = 0; j < size; j++) {
+            if(i == j) continue;
+            Graph.Block other = scopeTodo.todo.get(j);
+            if(!candLabel.equals(other.getLabel()) && reachesFast(other, candLabel)) {
                reachedByOther = true;
                break;
             }
          }
          if(!reachedByOther) {
-            bestBlock = candidate;
+            bestIdx = i;
             break;
          }
       }
-      if(bestBlock == null) {
-         bestBlock = scopeTodo.todo.peek();
+      if(bestIdx == -1) {
+         bestIdx = 0;
       }
-      scopeTodo.todo.remove(bestBlock);
+      Graph.Block bestBlock = scopeTodo.todo.remove(bestIdx);
       if(scopeTodo.todo.isEmpty()) {
          todoScopes.pop();
       }
@@ -223,12 +226,24 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
       while(!work.isEmpty()) {
          Graph.Block curr = work.pop();
          Graph.Block defSucc = getDefaultSuccessorFast(curr);
-         if(defSucc != null && reach.add(defSucc.getLabel())) {
-            work.push(defSucc);
+         if(defSucc != null) {
+            boolean added = reach.add(defSucc.getLabel());
+            Set<LabelRef> cached = reachableMap.get(defSucc.getLabel());
+            if(cached != null) {
+               reach.addAll(cached);
+            } else if(added) {
+               work.push(defSucc);
+            }
          }
          Graph.Block condSucc = getConditionalSuccessorFast(curr);
-         if(condSucc != null && reach.add(condSucc.getLabel())) {
-            work.push(condSucc);
+         if(condSucc != null) {
+            boolean added = reach.add(condSucc.getLabel());
+            Set<LabelRef> cached = reachableMap.get(condSucc.getLabel());
+            if(cached != null) {
+               reach.addAll(cached);
+            } else if(added) {
+               work.push(condSucc);
+            }
          }
       }
       reachableMap.put(from.getLabel(), reach);
@@ -239,19 +254,19 @@ public class PassNBlockSequencePlanner extends Pass2SsaOptimization {
 
       Scope scope;
 
-      Deque<Graph.Block> todo;
+      List<Graph.Block> todo;
 
       public ScopeTodo(Scope scope) {
          this.scope = scope;
-         this.todo = new LinkedList<>();
+         this.todo = new ArrayList<>();
       }
 
       public void pushTodo(Graph.Block block) {
-         todo.addFirst(block);
+         todo.add(0, block);
       }
 
       public void addTodo(Graph.Block block) {
-         todo.addLast(block);
+         todo.add(block);
       }
 
    }

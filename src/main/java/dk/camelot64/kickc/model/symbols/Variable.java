@@ -84,6 +84,9 @@ public class Variable implements Symbol {
    /** The memory area where the variable lives (if stored in memory). [Only variables and arrays] */
    private MemoryArea memoryArea;
 
+   /** True if the variable was explicitly declared with the __zp directive. */
+   private boolean explicitZp;
+
    /** Explicit member byte offset within a struct/union (for anonymous union/struct members). Null if calculated consecutively. */
    private Long structMemberOffset;
 
@@ -116,6 +119,9 @@ public class Variable implements Symbol {
 
    /** If the variable is assigned to a specific "register", this contains the register. If null the variable has no allocation (yet). Constants are never assigned to registers. [Only variables - not constants and not PHI masters] */
    private Registers.Register allocation;
+
+   /** Cached reference to this variable, invalidated whenever name, scope, or kind changes. */
+   private transient volatile SymbolVariableRef cachedRef;
 
    /** If the variable is only declared and not defined (using the "extern" keyword). */
    private boolean declarationOnly;
@@ -167,6 +173,7 @@ public class Variable implements Symbol {
       version.setLoHi(phiMaster.isLoHi());
       version.setSoa(phiMaster.isSoa());
       version.setExplicitInitializer(phiMaster.isExplicitInitializer());
+      version.setExplicitZp(phiMaster.isExplicitZp());
       version.setComments(phiMaster.getComments());
       version.setStructUnwind(phiMaster.isStructUnwind());
       return version;
@@ -235,6 +242,7 @@ public class Variable implements Symbol {
       copy.setLoHi(original.isLoHi());
       copy.setSoa(original.isSoa());
       copy.setExplicitInitializer(original.isExplicitInitializer());
+      copy.setExplicitZp(original.isExplicitZp());
       copy.setRegister(original.getRegister());
       copy.setComments(original.getComments());
       copy.setStructUnwind(original.isStructUnwind());
@@ -270,6 +278,7 @@ public class Variable implements Symbol {
       memberVariable.setExport(structVar.isExport());
       memberVariable.setPermanent(structVar.isPermanent());
       memberVariable.setStructUnwind(memberDefinition.isStructUnwind());
+      memberVariable.setExplicitZp((structVar.isExplicitZp() || memberDefinition.isExplicitZp()) && MemoryArea.ZEROPAGE_MEMORY.equals(memoryArea));
       return memberVariable;
    }
 
@@ -296,6 +305,7 @@ public class Variable implements Symbol {
          this.nextPhiVersionNumber = 0;
       } else
          this.nextPhiVersionNumber = null;
+      this.cachedRef = null;
    }
 
    public boolean isKindConstant() {
@@ -328,10 +338,12 @@ public class Variable implements Symbol {
    }
 
    public SymbolVariableRef getRef() {
-      if(isKindConstant())
-         return new ConstantRef(this);
-      else
-         return new VariableRef(this);
+      SymbolVariableRef ref = this.cachedRef;
+      if(ref == null) {
+         ref = isKindConstant() ? new ConstantRef(this) : new VariableRef(this);
+         this.cachedRef = ref;
+      }
+      return ref;
    }
 
    public ConstantRef getConstantRef() {
@@ -345,6 +357,7 @@ public class Variable implements Symbol {
    private void setFullName() {
       String scopeName = (scope == null) ? "" : scope.getFullName();
       fullName = (scopeName.length() > 0) ? scopeName + "::" + name : name;
+      this.cachedRef = null;
    }
 
    /**
@@ -598,6 +611,14 @@ public class Variable implements Symbol {
 
    public boolean isMemoryAreaMain() {
       return MemoryArea.MAIN_MEMORY.equals(getMemoryArea());
+   }
+
+   public boolean isExplicitZp() {
+      return explicitZp;
+   }
+
+   public void setExplicitZp(boolean explicitZp) {
+      this.explicitZp = explicitZp;
    }
 
    public Integer getMemoryAlignment() {

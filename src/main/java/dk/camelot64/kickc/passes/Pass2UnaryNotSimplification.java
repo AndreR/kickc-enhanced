@@ -41,6 +41,8 @@ public class Pass2UnaryNotSimplification extends Pass2SsaOptimization {
     */
    private List<VariableRef> optimizeUnaryNots() {
       final VariableReferenceInfos variableReferenceInfos = getProgram().getVariableReferenceInfos();
+      StatementInfos statementInfos = null;
+      boolean refreshedStatementInfos = false;
       final List<VariableRef> unused = new ArrayList<>();
       for(var statement : getGraph().getAllStatements()) {
          if(statement instanceof StatementAssignment assignment) {
@@ -52,7 +54,21 @@ public class Pass2UnaryNotSimplification extends Pass2SsaOptimization {
                VariableRef tempVar = (VariableRef) assignment.getrValue2();
                final Integer tempVarDefineStmtIdx = variableReferenceInfos.getVarDefineStatement(tempVar);
                if(tempVarDefineStmtIdx != null) {
-                  final Statement tempVarDefineStmt = getGraph().getStatementByIndex(tempVarDefineStmtIdx);
+                  if(statementInfos == null) {
+                     statementInfos = getProgram().getStatementInfos();
+                  }
+                  Statement tempVarDefineStmt = (statementInfos != null)
+                        ? statementInfos.getStatement(tempVarDefineStmtIdx)
+                        : getGraph().getStatementByIndex(tempVarDefineStmtIdx);
+                  if(statementInfos != null && ((tempVarDefineStmt != null && !tempVarDefineStmtIdx.equals(tempVarDefineStmt.getIndex()))
+                        || (tempVarDefineStmt == null && !refreshedStatementInfos))) {
+                     getProgram().clearStatementInfos();
+                     statementInfos = getProgram().getStatementInfos();
+                     refreshedStatementInfos = true;
+                     tempVarDefineStmt = (statementInfos != null)
+                           ? statementInfos.getStatement(tempVarDefineStmtIdx)
+                           : getGraph().getStatementByIndex(tempVarDefineStmtIdx);
+                  }
                   if(tempVarDefineStmt instanceof StatementAssignment tempAssignment) {
                      int tempVarUsages = variableReferenceInfos.getVarUseStatements(tempVar).size();
                      if(tempVarUsages == 1 && tempAssignment.getOperator() != null && canSinkComparison(tempAssignment, assignment, variableReferenceInfos)) {

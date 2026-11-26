@@ -26,13 +26,13 @@ public class Pass2AliasElimination extends Pass2SsaOptimization {
     */
    @Override
    public boolean step() {
-      VarAssignments.Index varAssignmentsIndex = new VarAssignments.Index(getGraph());
-      final Aliases aliases = findAliases(getProgram(), varAssignmentsIndex);
+      VarAssignments.Index[] varAssignmentsIndexHolder = new VarAssignments.Index[1];
+      final Aliases aliases = findAliases(getProgram(), varAssignmentsIndexHolder);
       if(aliases.isEmpty()) {
          return false;
       }
 
-      fixAliasSources(aliases, varAssignmentsIndex);
+      fixAliasSources(aliases, getVarAssignmentsIndex(varAssignmentsIndexHolder, getGraph()));
       removeAliasAssignments(aliases);
       replaceVariables(aliases.getReplacements(getProgramScope()));
       for(AliasSet aliasSet : aliases.getAliasSets()) {
@@ -42,9 +42,15 @@ public class Pass2AliasElimination extends Pass2SsaOptimization {
       return true;
    }
 
+   private static VarAssignments.Index getVarAssignmentsIndex(VarAssignments.Index[] holder, Graph graph) {
+      if(holder[0] == null) {
+         holder[0] = new VarAssignments.Index(graph);
+      }
+      return holder[0];
+   }
 
-   private static Aliases findAliases(Program program, VarAssignments.Index varAssignmentsIndex) {
-      Aliases candidates = findAliasesCandidates(program, varAssignmentsIndex);
+   private static Aliases findAliases(Program program, VarAssignments.Index[] varAssignmentsIndexHolder) {
+      Aliases candidates = findAliasesCandidates(program, varAssignmentsIndexHolder);
       if(candidates.isEmpty()) {
          return candidates;
       }
@@ -152,7 +158,7 @@ public class Pass2AliasElimination extends Pass2SsaOptimization {
     *
     * @return A bunch of alias sets
     */
-   private static Aliases findAliasesCandidates(final Program program, VarAssignments.Index varAssignmentsIndex) {
+   private static Aliases findAliasesCandidates(final Program program, VarAssignments.Index[] varAssignmentsIndexHolder) {
       Aliases aliases = new Aliases();
       for(var block : program.getGraph().getAllBlocks()) {
          for(Statement statement : block.getStatements()) {
@@ -163,7 +169,7 @@ public class Pass2AliasElimination extends Pass2SsaOptimization {
                   if(assignment.getrValue1() == null && assignment.getOperator() == null && assignment.getrValue2() instanceof VariableRef) {
                      // Alias assignment
                      VariableRef alias = (VariableRef) assignment.getrValue2();
-                     List<VarAssignments.VarAssignment> assignments = varAssignmentsIndex.get(alias, program.getScope());
+                     List<VarAssignments.VarAssignment> assignments = getVarAssignmentsIndex(varAssignmentsIndexHolder, program.getGraph()).get(alias, program.getScope());
                      if(assignments.size() == 0)
                         throw new InternalError("Error! Var is never assigned! " + alias);
                      else if(assignments.size() > 1)
@@ -204,7 +210,7 @@ public class Pass2AliasElimination extends Pass2SsaOptimization {
                               alias = null;
                               break;
                            }
-                           List<VarAssignments.VarAssignment> assignments = varAssignmentsIndex.get(alias, program.getScope());
+                           List<VarAssignments.VarAssignment> assignments = getVarAssignmentsIndex(varAssignmentsIndexHolder, program.getGraph()).get(alias, program.getScope());
                            if(assignments.size() == 0)
                               throw new InternalError("Error! Var is never assigned! " + variable);
                            if(assignments.size() > 1) {

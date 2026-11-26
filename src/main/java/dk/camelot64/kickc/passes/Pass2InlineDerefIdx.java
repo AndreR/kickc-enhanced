@@ -29,7 +29,7 @@ public class Pass2InlineDerefIdx extends Pass2SsaOptimization {
 
    @Override
    public boolean step() {
-      this.varAssignmentsIndex = new VarAssignments.Index(getGraph());
+      this.varAssignmentsIndex = null;
       AtomicBoolean optimized = new AtomicBoolean(false);
       ProgramValueIterator.execute(getGraph(), (programValue, currentStmt, stmtIt, currentBlock) -> {
          if(programValue.get() instanceof PointerDereferenceSimple) {
@@ -42,6 +42,7 @@ public class Pass2InlineDerefIdx extends Pass2SsaOptimization {
             }
          }
       });
+      this.varAssignmentsIndex = null;
       return optimized.get();
    }
 
@@ -57,7 +58,10 @@ public class Pass2InlineDerefIdx extends Pass2SsaOptimization {
          final Variable var = getProgramScope().getVar(derefVar);
          if(var.isKindLoadStore())
             return null;
-         final List<VarAssignments.VarAssignment> varAssignments = (varAssignmentsIndex != null) ? varAssignmentsIndex.get(derefVar, getProgramScope()) : VarAssignments.get(derefVar, getGraph(), getProgramScope());
+         if(varAssignmentsIndex == null) {
+            varAssignmentsIndex = new VarAssignments.Index(getGraph());
+         }
+         final List<VarAssignments.VarAssignment> varAssignments = varAssignmentsIndex.get(derefVar, getProgramScope());
          if(varAssignments.size()!=1)
             return null;
          final VarAssignments.VarAssignment varAssignment = varAssignments.get(0);

@@ -25,6 +25,12 @@ public class ProgramScope extends Scope {
       this.cachedGlobalSymbols.clear();
    }
 
+   public void removeFromCache(String fullName) {
+      if(fullName != null) {
+         this.cachedGlobalSymbols.remove(fullName);
+      }
+   }
+
    @Override
    public SymbolType getType() {
       return new SymbolTypeProgram();

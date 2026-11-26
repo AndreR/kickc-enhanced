@@ -31,15 +31,14 @@ public class Pass1CallPhiParameters {
 
       final Graph graph = procedureCompilation.getGraph();
 
-      final List<Graph.Block> todoBlocks = new ArrayList<>(graph.getAllBlocks());
+      final Deque<Graph.Block> todoBlocks = new ArrayDeque<>(graph.getAllBlocks());
       List<Graph.Block> doneBlocks = new ArrayList<>();
 
       Map<LabelRef, LabelRef> splitBlockMap = new LinkedHashMap<>();
 
 
       while(!todoBlocks.isEmpty()) {
-         final Graph.Block block = todoBlocks.get(0);
-         todoBlocks.remove(0);
+         final Graph.Block block = todoBlocks.pollFirst();
          doneBlocks.add(block);
 
          final ListIterator<Statement> stmtIt = block.getStatements().listIterator();
@@ -53,7 +52,7 @@ public class Pass1CallPhiParameters {
                if(Procedure.CallingConvention.PHI_CALL.equals(procedure.getCallingConvention())) {
                   final ControlFlowBlock newBlock = handlePhiCall(call, procedure, stmtIt, block, splitBlockMap);
                   // The current block was split into two blocks - add the new block at the front of the todoBlocks
-                  todoBlocks.add(0, newBlock);
+                  todoBlocks.addFirst(newBlock);
                }
             }
             if(statement instanceof StatementReturn) {
@@ -77,13 +76,17 @@ public class Pass1CallPhiParameters {
       // Update graph blocks to include the new blocks added
       procedureCompilation.setGraph(new ControlFlowGraph(doneBlocks));
 
-      // Fix phi predecessors for any blocks has a split block as predecessor
+      // Fix phi predecessors for any blocks that have a split block as predecessor.
+      // Follow split chains transitively in case a block was split multiple times (multiple PHI calls).
       for(var block : procedureCompilation.getGraph().getAllBlocks()) {
          if(block.hasPhiBlock()) {
             for(StatementPhiBlock.PhiVariable phiVariable : block.getPhiBlock().getPhiVariables()) {
                for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
                   LabelRef splitBlockNew = splitBlockMap.get(phiRValue.getPredecessor());
                   if(splitBlockNew != null) {
+                     while(splitBlockMap.containsKey(splitBlockNew)) {
+                        splitBlockNew = splitBlockMap.get(splitBlockNew);
+                     }
                      phiRValue.setPredecessor(splitBlockNew);
                   }
                }

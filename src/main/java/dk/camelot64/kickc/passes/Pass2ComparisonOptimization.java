@@ -35,6 +35,7 @@ public class Pass2ComparisonOptimization extends Pass2SsaOptimization {
     */
    @Override
    public boolean step() {
+      boolean modified = false;
       for(var statement : getGraph().getAllStatements()) {
          if(statement instanceof StatementConditionalJump) {
             StatementConditionalJump conditionalJump = (StatementConditionalJump) statement;
@@ -59,7 +60,8 @@ public class Pass2ComparisonOptimization extends Pass2SsaOptimization {
                      getLog().append("Rewriting signed x > -1 to x >= 0 " + statement.toString(getProgram(), false));
                      conditionalJump.setOperator(Operators.GE);
                      conditionalJump.setrValue2(new ConstantInteger(0L, fixedType));
-                     return true;
+                     modified = true;
+                     continue;
                   }
 
                   // Rewrite signed comparison with -1: x <= -1 -> x < 0 (2 instructions)
@@ -67,7 +69,8 @@ public class Pass2ComparisonOptimization extends Pass2SsaOptimization {
                      getLog().append("Rewriting signed x <= -1 to x < 0 " + statement.toString(getProgram(), false));
                      conditionalJump.setOperator(Operators.LT);
                      conditionalJump.setrValue2(new ConstantInteger(0L, fixedType));
-                     return true;
+                     modified = true;
+                     continue;
                   }
 
                   if(Operators.GT.equals(operator)) {
@@ -76,7 +79,7 @@ public class Pass2ComparisonOptimization extends Pass2SsaOptimization {
                         getLog().append("Rewriting conditional comparison > to >= " + statement.toString(getProgram(), false));
                         conditionalJump.setOperator(Operators.GE);
                         conditionalJump.setrValue2(new ConstantInteger(longValue + 1L, fixedType));
-                        return true;
+                        modified = true;
                      }
                   }
 
@@ -86,14 +89,14 @@ public class Pass2ComparisonOptimization extends Pass2SsaOptimization {
                         getLog().append("Rewriting conditional comparison <= to < " + statement.toString(getProgram(), false));
                         conditionalJump.setOperator(Operators.LT);
                         conditionalJump.setrValue2(new ConstantInteger(longValue + 1L, fixedType));
-                        return true;
+                        modified = true;
                      }
                   }
                }
             }
          }
       }
-      return false;
+      return modified;
    }
 
 }

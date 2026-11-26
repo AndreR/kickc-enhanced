@@ -6,6 +6,7 @@ import dk.camelot64.kickc.model.values.ScopeRef;
 import dk.camelot64.kickc.passes.calcs.PassNCalcCallGraph;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The call graph for the entire control flow graph.
@@ -17,17 +18,20 @@ public class CallGraph {
    private Map<ScopeRef, CallBlock> callBlocksByScope;
    private Map<ScopeRef, Collection<ScopeRef>> callerProcsCache;
    private Map<ScopeRef, Collection<ScopeRef>> recursiveCallerProcsCache;
+   private Map<ScopeRef, Collection<ScopeRef>> recursiveCallsCache;
 
    public CallGraph() {
       this.callBlocks = new ArrayList<>();
       this.callBlocksByScope = new LinkedHashMap<>();
-      this.callerProcsCache = new HashMap<>();
-      this.recursiveCallerProcsCache = new HashMap<>();
+      this.callerProcsCache = new ConcurrentHashMap<>();
+      this.recursiveCallerProcsCache = new ConcurrentHashMap<>();
+      this.recursiveCallsCache = new ConcurrentHashMap<>();
    }
 
    private void clearCaches() {
       if(callerProcsCache != null) callerProcsCache.clear();
       if(recursiveCallerProcsCache != null) recursiveCallerProcsCache.clear();
+      if(recursiveCallsCache != null) recursiveCallsCache.clear();
    }
 
    /**
@@ -97,14 +101,23 @@ public class CallGraph {
     * @return All scopes called in the closure of calls
     */
    public Collection<ScopeRef> getRecursiveCalls(ScopeRef scopeRef) {
-      ArrayList<ScopeRef> closure = new ArrayList<>();
+      if(scopeRef == null) {
+         return Collections.emptySet();
+      }
+      Collection<ScopeRef> cached = recursiveCallsCache.get(scopeRef);
+      if(cached != null) {
+         return cached;
+      }
+      Set<ScopeRef> closure = new LinkedHashSet<>();
       CallBlock callBlock = getCallBlock(scopeRef);
       if(callBlock!=null) {
          for(CallBlock.Call call : callBlock.getCalls()) {
             addRecursiveCalls(call.getProcedure(), closure);
          }
       }
-      return closure;
+      Collection<ScopeRef> result = Collections.unmodifiableSet(closure);
+      Collection<ScopeRef> prev = recursiveCallsCache.putIfAbsent(scopeRef, result);
+      return prev != null ? prev : result;
    }
 
    /**
@@ -113,12 +126,11 @@ public class CallGraph {
     * @param scopeRef The scope (procedure/root) to examine
     * @param found The scopes already found
     */
-   private void addRecursiveCalls(ScopeRef scopeRef, Collection<ScopeRef> found) {
-      if(found.contains(scopeRef)) {
+   private void addRecursiveCalls(ScopeRef scopeRef, Set<ScopeRef> found) {
+      if(!found.add(scopeRef)) {
          // Recursion detected - stop here
          return;
       }
-      found.add(scopeRef);
       CallBlock callBlock = getCallBlock(scopeRef);
       if(callBlock!=null) {
          for(CallBlock.Call call : callBlock.getCalls()) {
@@ -164,12 +176,11 @@ public class CallGraph {
       final LinkedList<CallBlock.Call> callers = new LinkedList<>();
       Deque<ScopeRef> todo = new LinkedList<>();
       todo.add(procedureRef);
-      Collection<ScopeRef> visited = new LinkedList<>();
+      Set<ScopeRef> visited = new HashSet<>();
       while(!todo.isEmpty()) {
          final ScopeRef procRef = todo.pop();
-         if(visited.contains(procRef))
+         if(!visited.add(procRef))
             continue;
-         visited.add(procRef);
          if(procRef instanceof ProcedureRef) {
             final Collection<CallBlock.Call> procCallers = getCallers((ProcedureRef) procRef);
             callers.addAll(procCallers);
@@ -188,11 +199,14 @@ public class CallGraph {
        * @return All calls
        */
    public Collection<ScopeRef> getCallerProcs(ScopeRef label) {
+      if(label == null) {
+         return Collections.emptyList();
+      }
       Collection<ScopeRef> cached = callerProcsCache.get(label);
       if(cached != null) {
          return cached;
       }
-      Collection<ScopeRef> callers = new ArrayList<>();
+      List<ScopeRef> callers = new ArrayList<>();
       for(CallBlock callBlock : callBlocks) {
          for(CallBlock.Call call : callBlock.getCalls()) {
             if(call.getProcedure()!=null)
@@ -201,8 +215,9 @@ public class CallGraph {
                }
          }
       }
-      callerProcsCache.put(label, callers);
-      return callers;
+      Collection<ScopeRef> result = Collections.unmodifiableList(callers);
+      Collection<ScopeRef> prev = callerProcsCache.putIfAbsent(label, result);
+      return prev != null ? prev : result;
    }
 
    /**
@@ -212,14 +227,18 @@ public class CallGraph {
     * @return All scopes calling the passed scope (potentially through other callers)
     */
    public Collection<ScopeRef> getRecursiveCallerProcs(ScopeRef scopeRef) {
+      if(scopeRef == null) {
+         return Collections.emptySet();
+      }
       Collection<ScopeRef> cached = recursiveCallerProcsCache.get(scopeRef);
       if(cached != null) {
          return cached;
       }
       Set<ScopeRef> closure = new LinkedHashSet<>();
       addRecursiveCallerProcs(scopeRef, closure);
-      recursiveCallerProcsCache.put(scopeRef, closure);
-      return closure;
+      Collection<ScopeRef> result = Collections.unmodifiableSet(closure);
+      Collection<ScopeRef> prev = recursiveCallerProcsCache.putIfAbsent(scopeRef, result);
+      return prev != null ? prev : result;
    }
 
    /**

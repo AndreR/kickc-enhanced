@@ -79,7 +79,9 @@ public class Pass2ConstantIdentification extends Pass2SsaOptimization {
          }
          scope.add(constVar);
          constAliases.put(constRef, constVar.getRef());
-         getLog().append("Constant " + constVar.toString(getProgram()) + " = " + constVar.getInitValue());
+         if(getLog().isEnabled()) {
+            getLog().append("Constant " + constVar.toString(getProgram()) + " = " + constVar.getInitValue());
+         }
       }
       // Remove assignments to constants in the code
       removeAssignments(getGraph(), constants.keySet());
@@ -282,6 +284,10 @@ public class Pass2ConstantIdentification extends Pass2SsaOptimization {
     * @return true if the address-of operator is used on the variable
     */
    public static Set<ProcedureRef> getAllAddressOfProcedures(Program program) {
+      Set<ProcedureRef> cached = program.getAddressOfProceduresCache();
+      if(cached != null) {
+         return cached;
+      }
       final Set<ProcedureRef> addressOfProcedures = new HashSet<>();
       // Examine all program values in expressions
       ProgramValueIterator.execute(program, (programValue, currentStmt, stmtIt, currentBlock) -> {
@@ -301,7 +307,9 @@ public class Pass2ConstantIdentification extends Pass2SsaOptimization {
          }
       }
 
-      return addressOfProcedures;
+      Set<ProcedureRef> result = Collections.unmodifiableSet(addressOfProcedures);
+      program.setAddressOfProceduresCache(result);
+      return result;
    }
 
    public static boolean isAddressOfUsed(ProcedureRef procedureRef, Program program) {

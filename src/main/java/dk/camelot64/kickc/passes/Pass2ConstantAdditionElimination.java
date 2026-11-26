@@ -48,7 +48,7 @@ public class Pass2ConstantAdditionElimination extends Pass2SsaOptimization {
       final boolean[] optimized = {false};
 
       this.variableReferenceInfos = getProgram().getVariableReferenceInfos();
-      this.varAssignmentsIndex = new VarAssignments.Index(getGraph());
+      this.varAssignmentsIndex = null;
 
       ProgramValueIterator.execute(getProgram(), (programValue, currentStmt, stmtIt, currentBlock) -> {
          if(programValue.get() instanceof PointerDereferenceIndexed) {
@@ -83,7 +83,7 @@ public class Pass2ConstantAdditionElimination extends Pass2SsaOptimization {
          ConstantValue idxConstant = (ConstantValue) pointerDereferenceIndexed.getIndex();
          ConstantValue newPtr = new ConstantBinary(ptrConstant, Operators.PLUS, idxConstant);
          value.set(new PointerDereferenceSimple(newPtr));
-         getLog().append("Consolidated array index constant in " + value.get().toString());
+         if(getLog().isEnabled()) getLog().append("Consolidated array index constant in " + value.get().toString());
          return true;
       }
       if(pointerDereferenceIndexed.getPointer() instanceof ConstantValue && pointerDereferenceIndexed.getIndex() instanceof VariableRef) {
@@ -93,14 +93,14 @@ public class Pass2ConstantAdditionElimination extends Pass2SsaOptimization {
             ConstantValue ptrConstant = (ConstantValue) pointerDereferenceIndexed.getPointer();
             ConstantValue newPtr = new ConstantBinary(ptrConstant, Operators.PLUS, consolidated);
             pointerDereferenceIndexed.setPointer(newPtr);
-            getLog().append("Consolidated array index constant in assignment " + value.get().toString());
+            if(getLog().isEnabled()) getLog().append("Consolidated array index constant in assignment " + value.get().toString());
             return true;
          }
       }
       if(pointerDereferenceIndexed.getIndex() instanceof ConstantInteger ) {
          if(((ConstantInteger)pointerDereferenceIndexed.getIndex()).getValue()==0L) {
             value.set(new PointerDereferenceSimple(pointerDereferenceIndexed.getPointer()));
-            getLog().append("Simplified zero-index dereference" + value.get().toString());
+            if(getLog().isEnabled()) getLog().append("Simplified zero-index dereference" + value.get().toString());
             return true;
          }
       }
@@ -115,7 +115,7 @@ public class Pass2ConstantAdditionElimination extends Pass2SsaOptimization {
          assignment.setrValue1(null);
          assignment.setOperator(Operators.DEREF);
          assignment.setrValue2(newPtr);
-         getLog().append("Consolidated referenced array index constant in assignment " + assignment.getlValue());
+         if(getLog().isEnabled()) getLog().append("Consolidated referenced array index constant in assignment " + assignment.getlValue());
          return true;
       }
       if(assignment.getrValue1() instanceof ConstantValue && assignment.getrValue2() instanceof VariableRef) {
@@ -125,7 +125,7 @@ public class Pass2ConstantAdditionElimination extends Pass2SsaOptimization {
             ConstantValue ptrConstant = (ConstantValue) assignment.getrValue1();
             ConstantValue newPtr = new ConstantBinary(ptrConstant, Operators.PLUS, consolidated);
             assignment.setrValue1(newPtr);
-            getLog().append("Consolidated referenced array index constant in assignment " + assignment.getlValue());
+            if(getLog().isEnabled()) getLog().append("Consolidated referenced array index constant in assignment " + assignment.getlValue());
             return true;
          }
       }
@@ -139,14 +139,14 @@ public class Pass2ConstantAdditionElimination extends Pass2SsaOptimization {
          if(consolidated != null) {
             ConstantValue const1 = (ConstantValue) assignment.getrValue1();
             assignment.setrValue1(new ConstantBinary(const1, Operators.PLUS, consolidated));
-            getLog().append("Consolidated constant in assignment " + assignment.getlValue());
+            if(getLog().isEnabled()) getLog().append("Consolidated constant in assignment " + assignment.getlValue());
             return true;
          } else {
             // Check if the constant is zero
             try {
                ConstantLiteral constantLiteral = ((ConstantValue) assignment.getrValue1()).calculateLiteral(getProgramScope());
                if(constantLiteral.getValue().equals(0L)) {
-                  getLog().append("Removed zero-constant in assignment " + assignment.getlValue());
+                  if(getLog().isEnabled()) getLog().append("Removed zero-constant in assignment " + assignment.getlValue());
                   assignment.setrValue1(null);
                   assignment.setOperator(null);
                }
@@ -162,14 +162,14 @@ public class Pass2ConstantAdditionElimination extends Pass2SsaOptimization {
             ConstantValue newNumber = new ConstantBinary(consolidated, Operators.PLUS, const2);
             assignment.setrValue2(newNumber);
             // Handling of negative consolidated numbers?
-            getLog().append("Consolidated constant in assignment " + assignment.getlValue());
+            if(getLog().isEnabled()) getLog().append("Consolidated constant in assignment " + assignment.getlValue());
             return true;
          } else {
             // Check if the constant is zero
             try {
                ConstantLiteral constantLiteral = ((ConstantValue) assignment.getrValue2()).calculateLiteral(getProgramScope());
                if(constantLiteral.getValue().equals(0L)) {
-                  getLog().append("Removed zero-constant in assignment " + assignment.getlValue());
+                  if(getLog().isEnabled()) getLog().append("Removed zero-constant in assignment " + assignment.getlValue());
                   assignment.setrValue2(assignment.getrValue1());
                   assignment.setOperator(null);
                   assignment.setrValue1(null);
@@ -196,7 +196,10 @@ public class Pass2ConstantAdditionElimination extends Pass2SsaOptimization {
       final Variable var = getProgramScope().getVar(variable);
       if(var.isKindLoadStore())
          return null;
-      final List<VarAssignments.VarAssignment> varAssignments = (varAssignmentsIndex != null) ? varAssignmentsIndex.get(variable, getProgramScope()) : VarAssignments.get(variable, getGraph(), getProgramScope());
+      if(varAssignmentsIndex == null) {
+         varAssignmentsIndex = new VarAssignments.Index(getGraph());
+      }
+      final List<VarAssignments.VarAssignment> varAssignments = varAssignmentsIndex.get(variable, getProgramScope());
       if(varAssignments.size()!=1)
          return null;
       final VarAssignments.VarAssignment varAssignment = varAssignments.get(0);
