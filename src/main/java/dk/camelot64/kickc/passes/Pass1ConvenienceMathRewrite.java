@@ -14,6 +14,7 @@ import dk.camelot64.kickc.model.statements.StatementReturn;
 import dk.camelot64.kickc.model.symbols.Label;
 import dk.camelot64.kickc.model.symbols.Procedure;
 import dk.camelot64.kickc.model.symbols.Scope;
+import dk.camelot64.kickc.model.symbols.Symbol;
 import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.types.SymbolType;
 import dk.camelot64.kickc.model.types.SymbolTypeInference;
@@ -79,6 +80,7 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
             new SymbolTypeProcedure(type, Collections.singletonList(type)),
             getProgramScope(), Scope.SEGMENT_CODE_DEFAULT, Scope.SEGMENT_DATA_DEFAULT,
             Procedure.CallingConvention.PHI_CALL, Bank.COMMON);
+      procedure.setDeclaredConvenience(true);
 
       Variable param = new Variable("val", Variable.Kind.PHI_MASTER, type, procedure,
             Variable.MemoryArea.MAIN_MEMORY, Scope.SEGMENT_DATA_DEFAULT, null);
@@ -119,10 +121,32 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
       return procedure;
    }
 
+   private boolean isConvenienceEnabledForBlock(Graph.Block block, boolean globalConvenience) {
+      if(globalConvenience) {
+         return true;
+      }
+      if(block.getScope() == null) {
+         return false;
+      }
+      Symbol scopeSym = getProgramScope().getSymbol(block.getScope());
+      Procedure proc = scopeSym != null ? scopeSym.getContainingProcedure() : null;
+      return proc != null && proc.isDeclaredConvenience();
+   }
+
    @Override
    public boolean step() {
-      if(!getProgram().isEnableConvenience()) {
-         return false;
+      boolean globalConvenience = getProgram().isEnableConvenience();
+      if(!globalConvenience) {
+         boolean anyDeclaredConvenience = false;
+         for(Procedure proc : getProgramScope().getAllProcedures(true)) {
+            if(proc.isDeclaredConvenience()) {
+               anyDeclaredConvenience = true;
+               break;
+            }
+         }
+         if(!anyDeclaredConvenience) {
+            return false;
+         }
       }
 
       // Step 1: Whole-program frequency counting of constant operations
@@ -131,7 +155,7 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
 
       for(var block : getGraph().getAllBlocks()) {
          String scopeStr = block.getScope() != null ? block.getScope().toString() : "";
-         if(isLibraryMathProcedure(scopeStr)) {
+         if(isLibraryMathProcedure(scopeStr) || !isConvenienceEnabledForBlock(block, globalConvenience)) {
             continue;
          }
          for(Statement statement : block.getStatements()) {
@@ -152,7 +176,7 @@ public class Pass1ConvenienceMathRewrite extends Pass2SsaOptimization {
       boolean modified = false;
       for(var block : getGraph().getAllBlocks()) {
          String scopeStr = block.getScope() != null ? block.getScope().toString() : "";
-         if(isLibraryMathProcedure(scopeStr)) {
+         if(isLibraryMathProcedure(scopeStr) || !isConvenienceEnabledForBlock(block, globalConvenience)) {
             continue;
          }
          final ListIterator<Statement> stmtIt = block.getStatements().listIterator();

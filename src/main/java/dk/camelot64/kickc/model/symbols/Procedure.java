@@ -61,6 +61,8 @@ public class Procedure extends Scope {
    private boolean declaredConstexpr = false;
    /** True if the procedure is marked __bytecode (or declared under #pragma bytecode(on)). */
    private boolean declaredBytecode = false;
+   /** True if the procedure is marked __attribute__((convenience)), __convenience, or declared under #pragma convenience(on/push, on). */
+   private boolean declaredConvenience = false;
 
    /** The names of all legal intrinsic procedures. */
    final public static List<String> INTRINSIC_PROCEDURES = Arrays.asList(
@@ -312,6 +314,14 @@ public class Procedure extends Scope {
 
    public void setDeclaredBytecode(boolean declaredBytecode) {
       this.declaredBytecode = declaredBytecode;
+   }
+
+   public boolean isDeclaredConvenience() {
+      return declaredConvenience;
+   }
+
+   public void setDeclaredConvenience(boolean declaredConvenience) {
+      this.declaredConvenience = declaredConvenience;
    }
 
    /**

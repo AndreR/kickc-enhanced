@@ -53,6 +53,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       this.currentEncoding = defaultEncoding;
       this.pragmaConstructorFors = new ArrayList<>();
       this.currentInterruptType = defaultInterruptType;
+      this.currentConvenienceMode = program.isEnableConvenience();
       scopeStack.push(program.getScope());
    }
 
@@ -348,15 +349,34 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             }
          }
          case CParser.PRAGMA_CONVENIENCE -> {
-            if(ctx.pragmaParam().isEmpty()) {
+            List<KickCParser.PragmaParamContext> params = ctx.pragmaParam();
+            if(params.isEmpty()) {
+               this.currentConvenienceMode = true;
                this.program.setEnableConvenience(true);
-            } else {
-               String p = pragmaParamName(ctx.pragmaParam(0)).toLowerCase();
-               if(p.equals("on") || p.equals("enable") || p.equals("true") || p.equals("1")) {
-                  this.program.setEnableConvenience(true);
-               } else if(p.equals("off") || p.equals("disable") || p.equals("false") || p.equals("0")) {
-                  this.program.setEnableConvenience(false);
+            } else if(params.size() == 1) {
+               String p0 = pragmaParamText(params.get(0)).toLowerCase(Locale.ENGLISH);
+               if("push".equals(p0)) {
+                  this.convenienceStack.push(this.currentConvenienceMode);
+               } else if("pop".equals(p0)) {
+                  if(this.convenienceStack.isEmpty()) {
+                     throw new CompileError("#pragma convenience(pop) without matching push", new StatementSource(ctx));
+                  }
+                  this.currentConvenienceMode = this.convenienceStack.pop();
+               } else {
+                  boolean enabled = parseConvenienceToggle(params.get(0), ctx);
+                  this.currentConvenienceMode = enabled;
+                  this.program.setEnableConvenience(enabled);
                }
+            } else if(params.size() == 2) {
+               String p0 = pragmaParamText(params.get(0)).toLowerCase(Locale.ENGLISH);
+               if(!"push".equals(p0)) {
+                  throw new CompileError("#pragma convenience expects (push, on|off) for 2 arguments", new StatementSource(ctx));
+               }
+               boolean enabled = parseConvenienceToggle(params.get(1), ctx);
+               this.convenienceStack.push(this.currentConvenienceMode);
+               this.currentConvenienceMode = enabled;
+            } else {
+               throw new CompileError("#pragma convenience expects at most 2 parameters!", new StatementSource(ctx));
             }
          }
          case CParser.PRAGMA_BANK -> {
@@ -749,6 +769,32 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    /** Whether #pragma bytecode(on) is currently active for subsequent procedure declarations. */
    private boolean currentBytecodeMode = false;
 
+   /** Scoped convenience state stack for #pragma convenience(push/pop). */
+   private final Deque<Boolean> convenienceStack = new ArrayDeque<>();
+
+   /** Whether convenience mode is currently active for subsequent procedure declarations. */
+   private boolean currentConvenienceMode;
+
+   private static String pragmaParamText(KickCParser.PragmaParamContext param) {
+      if(param instanceof KickCParser.PragmaParamNumberContext numCtx) {
+         return numCtx.NUMBER().getText();
+      }
+      return pragmaParamName(param);
+   }
+
+   private static boolean parseConvenienceToggle(KickCParser.PragmaParamContext param, KickCParser.PragmaContext ctx) {
+      if(param instanceof KickCParser.PragmaParamNumberContext) {
+         return pragmaParamNumber(param).intValue() != 0;
+      }
+      String val = pragmaParamName(param).toLowerCase(Locale.ENGLISH);
+      if("on".equals(val) || "enable".equals(val) || "true".equals(val) || "1".equals(val)) {
+         return true;
+      } else if("off".equals(val) || "disable".equals(val) || "false".equals(val) || "0".equals(val)) {
+         return false;
+      }
+      throw new CompileError("Expected on/off for #pragma convenience, found '" + val + "'", new StatementSource(ctx));
+   }
+
    /** The current code segment. */
    private String currentSegmentCode = Scope.SEGMENT_CODE_DEFAULT;
 
@@ -859,6 +905,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       if(currentBytecodeMode) {
          procedure.setDeclaredBytecode(true);
       }
+      if(currentConvenienceMode) {
+         procedure.setDeclaredConvenience(true);
+      }
       addDirectives(procedure, procDirectives);
       // Check if the declaration matches any existing declaration!
       final Symbol existingSymbol = program.getScope().getSymbol(procedure.getRef());
@@ -887,6 +936,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          // Make sure comments, directives and source are from the definition
          if(currentBytecodeMode) {
             procedure.setDeclaredBytecode(true);
+         }
+         if(currentConvenienceMode) {
+            procedure.setDeclaredConvenience(true);
          }
          addDirectives(procedure, procDirectives);
          procedure.setComments(ensureUnusedComments(getCommentsSymbol(ctx)));
@@ -1759,6 +1811,8 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             procedure.setDeclaredConstexpr(true);
          } else if(directive instanceof Directive.Bytecode) {
             procedure.setDeclaredBytecode(true);
+         } else if(directive instanceof Directive.Convenience) {
+            procedure.setDeclaredConvenience(true);
          } else if(directive instanceof Directive.NamedRegister namedReg) {
             Registers.Register reg = Registers.getRegister(namedReg.name);
             if(reg == null) {
@@ -1847,6 +1901,20 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    @Override
    public Directive visitDirectiveBytecode(KickCParser.DirectiveBytecodeContext ctx) {
       return new Directive.Bytecode();
+   }
+
+   @Override
+   public Directive visitDirectiveAttribute(KickCParser.DirectiveAttributeContext ctx) {
+      String attrName = ctx.NAME().getText();
+      if("convenience".equals(attrName) || "__convenience__".equals(attrName)) {
+         return new Directive.Convenience();
+      }
+      throw new CompileError("Unsupported attribute '" + attrName + "'", new StatementSource(ctx));
+   }
+
+   @Override
+   public Directive visitDirectiveConvenience(KickCParser.DirectiveConvenienceContext ctx) {
+      return new Directive.Convenience();
    }
 
    @Override

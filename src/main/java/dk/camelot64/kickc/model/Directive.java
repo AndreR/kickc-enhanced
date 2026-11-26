@@ -55,6 +55,11 @@ public class Directive {
       public Bytecode() { super("__bytecode"); }
    }
 
+   /** Procedure marked __attribute__((convenience)) or __convenience for scoped convenience math rewriting. */
+   static public class Convenience extends Directive {
+      public Convenience() { super("__convenience"); }
+   }
+
    /** Loop declared countdown. */
    static public class Countdown extends Directive {
       public Countdown() { super("__countdown"); }

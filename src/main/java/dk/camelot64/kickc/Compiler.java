@@ -585,6 +585,7 @@ public class Compiler {
          return false;
       });
       constantOptimizations.add(new Pass2NopCastInlining(program));
+      constantOptimizations.add(new Pass2ConstantArithmeticSynthesizer(program));
       constantOptimizations.add(new Pass2MultiplyToShiftRewriting(program));
       constantOptimizations.add(new Pass2ModuloToAndRewriting(program));
       constantOptimizations.add(new Pass2ConstantInlining(program));

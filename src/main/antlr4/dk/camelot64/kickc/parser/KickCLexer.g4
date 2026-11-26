@@ -87,6 +87,8 @@ FORM_SSA: '__ssa' ;
 FORM_MA: '__ma' ;
 INTRINSIC: '__intrinsic' ;
 BYTECODE: '__bytecode' ;
+ATTRIBUTE: '__attribute__' ;
+CONVENIENCE: '__convenience' ;
 CALLINGCONVENTION: '__stackcall' | '__phicall' | '__varcall' | '__intrinsiccall';
 IF: 'if' ;
 ELSE: 'else' ;

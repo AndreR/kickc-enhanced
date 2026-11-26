@@ -19,6 +19,8 @@
 - **Register-Mapped Multi-Return Structs & Structured Binding (#76):** Added `auto [a, b] = expr;` structured binding syntax and `A/X` (2-byte) / `A/X/Y` (3-byte) register-mapped struct return allocation (`Pass4RegisterUpliftPotentialInitialize` + `Pass5MultiReturnStructOptimization`).
 - **Compile-Time Function Execution (#77):** Added `constexpr` function support with an embedded SSA/CFG CTFE interpreter (`Pass2ConstexprEvaluator`) supporting arithmetic, loops, recursion, and `const` array lookups with zero 6502 code emitted for compile-time-only helpers.
 - **Selective 6502 Bytecode VM (#62):** Added `__bytecode` / `#pragma bytecode(on|off)` / `-bc` (`Pass4BytecodeGenerator`) emitting compact 1-byte stack bytecode streams and an on-demand 6502 interpreter (`__bc_vm_exec`, zero overhead when unused).
+- **Scoped Convenience Control (#67):** Added `#pragma convenience(push, on|off)` / `#pragma convenience(pop)` and `__attribute__((convenience))` / `__convenience` for per-procedure convenience math activation with zero overhead when disabled.
+- **Constant-Specialized Arithmetic Synthesizer (#69):** Added `Pass2ConstantArithmeticSynthesizer` for optimal NAF/shift-add constant multiplication (8/16-bit) and bit-exact 0..255-verified reciprocal division and modulo (`x / C`, `x % C`) without runtime helper calls.
 
 ### Tooling & Diagnostics
 

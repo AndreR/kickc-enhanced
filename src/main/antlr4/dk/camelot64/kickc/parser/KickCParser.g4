@@ -187,6 +187,8 @@ directive
     | INTERRUPT ( PAR_BEGIN NAME PAR_END )? #directiveInterrupt
     | LOCAL_RESERVE PAR_BEGIN pragmaParam ( COMMA pragmaParam )* PAR_END  #directiveReserveZp
     | CALLINGCONVENTION #directiveCallingConvention
+    | ATTRIBUTE PAR_BEGIN PAR_BEGIN NAME PAR_END PAR_END #directiveAttribute
+    | CONVENIENCE #directiveConvenience
     ;
 
 stmtSeq
