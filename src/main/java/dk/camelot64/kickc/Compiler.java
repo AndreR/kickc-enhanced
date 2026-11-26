@@ -482,6 +482,7 @@ public class Compiler {
       optimizations.add(new Pass2ConstantStringConsolidation(program));
       optimizations.add(new Pass2RangeResolving(program));
       optimizations.add(new Pass2RangeNarrowing(program));
+      optimizations.add(new Pass2IfToLutOptimization(program));
       optimizations.add(new Pass2ComparisonOptimization(program));
       optimizations.add(new Pass2InlineDerefIdx(program));
       optimizations.add(new Pass2DeInlineWordDerefIdx(program));
@@ -493,6 +494,7 @@ public class Compiler {
       optimizations.add(new PassNEliminateUnusedVars(program, true));   // Notice sequence is important
       optimizations.add(new PassNEliminateEmptyProcedure(program));
       optimizations.add(new PassNEliminateEmptyStart(program));
+      optimizations.add(new PassNTransitiveDeadDataElimination(program));
       optimizations.add(new PassNStatementIndices(program));
       optimizations.add(() -> {
          if(runLoopAnalysis == null || runLoopAnalysis[0]) {
@@ -995,6 +997,7 @@ public class Compiler {
       pass5Optimizations.add(new Pass5TailCallOptimization(program));
       pass5Optimizations.add(new Pass5RelabelLongLabels(program));
       pass5Optimizations.add(new Pass5DuplicateBlockElimination(program));
+      pass5Optimizations.add(new Pass5TailMergingOptimization(program));
       pass5Optimizations.add(new Pass5RedundantLabelElimination(program));
       pass5Optimizations.add(new Pass5UnusedLabelElimination(program));
       pass5Optimizations.add(new Pass5DoubleJumpElimination(program));

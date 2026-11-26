@@ -361,7 +361,7 @@ public class Initializers {
 
       boolean allConst = true;
       List<RValue> constantifiedList = new ArrayList<>();
-      LinkedHashMap<SymbolVariableRef, ConstantValue> constMemberMap = new LinkedHashMap<>();
+      Map<SymbolVariableRef, ConstantValue> constByRef = new HashMap<>();
       for(Variable storageMember : storageMembers) {
          RValue constantifiedMemberValue;
          if(hasBitfields && storageMember.getLocalName().startsWith("__bf_")) {
@@ -391,12 +391,20 @@ public class Initializers {
          }
          constantifiedList.add(constantifiedMemberValue);
          if(constantifiedMemberValue instanceof ConstantValue cv) {
-            constMemberMap.put(storageMember.getRef(), cv);
+            constByRef.put(storageMember.getRef(), cv);
          } else {
             allConst = false;
          }
       }
       if(allConst) {
+         LinkedHashMap<SymbolVariableRef, ConstantValue> constMemberMap = new LinkedHashMap<>();
+         for(Variable layoutMember : structDefinition.getLayoutMembers(program.getScope())) {
+            if(layoutMember.isBitField()) continue;
+            ConstantValue cv = constByRef.get(layoutMember.getRef());
+            if(cv != null) {
+               constMemberMap.put(layoutMember.getRef(), cv);
+            }
+         }
          return new ConstantStructValue(structType, constMemberMap);
       } else {
          return new CastValue(structType, new ValueList(constantifiedList));

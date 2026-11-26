@@ -362,6 +362,29 @@ public class Pass4CodeGeneration {
         else return false;
     }
 
+    private boolean isUnusedInlinableScalarConst(Variable constantVar) {
+        if (constantVar == null || !constantVar.isKindConstant() || hasData(constantVar)) {
+            return false;
+        }
+        if (constantVar.isExport() || constantVar.isVolatile()) {
+            return false;
+        }
+        if (constantVar.getMemoryAddress() != null || (constantVar.getRegister() != null && constantVar.getRegister().isAddressHardcoded())) {
+            return false;
+        }
+        if (constantVar.getScope() instanceof EnumDefinition || constantVar.getScope() instanceof StructDefinition) {
+            return false;
+        }
+        SymbolType type = constantVar.getType();
+        if (!(SymbolType.isInteger(type) || SymbolType.BOOLEAN.equals(type))) {
+            return false;
+        }
+        if (constantVar.getInitValue() instanceof ConstantSymbolPointer) {
+            return false;
+        }
+        return program.getVariableReferenceInfos().isUnused(constantVar.getConstantRef());
+    }
+
     /**
      * Determines whether to use a .label instead of .const for a constant.
      * This can be necessary because KickAssembler does not allow constant references between scopes.
@@ -372,6 +395,9 @@ public class Pass4CodeGeneration {
      * @return true if a .label should be used in the generated ASM
      */
     private boolean useLabelForConst(ScopeRef scopeRef, Variable constantVar) {
+        if (isUnusedInlinableScalarConst(constantVar)) {
+            return false;
+        }
         boolean useLabel = false;
         Collection<Integer> constRefStatements = program.getVariableReferenceInfos().getConstRefStatements(constantVar.getConstantRef());
         if (constRefStatements != null) {
@@ -440,6 +466,9 @@ public class Pass4CodeGeneration {
         // First add all constants without data that can become constants in KickAsm
         for (Variable constantVar : scopeConstants) {
             if (!hasData(constantVar)) {
+                if (isUnusedInlinableScalarConst(constantVar)) {
+                    continue;
+                }
                 String asmName = constantVar.getAsmName() == null ? constantVar.getLocalName() : constantVar.getAsmName();
                 if (asmName != null && !added.contains(asmName)) {
                     if (isIntTypeInScope(constantVar)) {
@@ -465,6 +494,9 @@ public class Pass4CodeGeneration {
         // Add constants without data that must be labels in KickAsm
         for (Variable constantVar : scopeConstants) {
             if (!hasData(constantVar)) {
+                if (isUnusedInlinableScalarConst(constantVar)) {
+                    continue;
+                }
                 String asmName = constantVar.getAsmName() == null ? constantVar.getLocalName() : constantVar.getAsmName();
                 if (asmName != null && !added.contains(asmName)) {
                     if (constantVar.getType() instanceof SymbolTypePointer) {

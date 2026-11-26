@@ -123,6 +123,10 @@ public class CParser {
      */
     public static final String PRAGMA_STRUCT_MODEL = "struct_model";
     /**
+     * #pragma struct_pack(reorder|default) controls field reordering for subsequent struct definitions.
+     */
+    public static final String PRAGMA_STRUCT_PACK = "struct_pack";
+    /**
      * #pragma resource("filename") specifies that a specific file is a resource that is needed for assembly.
      * The resource-file is copied to the output directory when compiling.
      */

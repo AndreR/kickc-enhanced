@@ -155,6 +155,7 @@ pragmaParam
     : NUMBER #pragmaParamNumber
     | NUMBER RANGE NUMBER #pragmaParamRange
     | NAME #pragmaParamName
+    | DEFAULT #pragmaParamDefault
     | STRING #pragmaParamString
     | CALLINGCONVENTION #pragmaParamCallingConvention
     ;

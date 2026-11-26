@@ -263,9 +263,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             if(modelName.equalsIgnoreCase("classic"))
                program.getTargetPlatform().getVariableBuilderConfig().setStructModelClassic(true);
             else if(modelName.equalsIgnoreCase("unwind"))
-               program.getTargetPlatform().getVariableBuilderConfig().setStructModelClassic(true);
+               program.getTargetPlatform().getVariableBuilderConfig().setStructModelClassic(false);
             else
                throw new CompileError("Unknown struct model " + modelName, new StatementSource(ctx));
+         }
+         case CParser.PRAGMA_STRUCT_PACK -> {
+            final String packMode = pragmaParamName(pragmaParamSingle(ctx));
+            if(packMode.equalsIgnoreCase("reorder"))
+               this.currentStructPackReorder = true;
+            else if(packMode.equalsIgnoreCase("default"))
+               this.currentStructPackReorder = false;
+            else
+               throw new CompileError("Unknown struct pack mode " + packMode, new StatementSource(ctx));
          }
          case CParser.PRAGMA_LINKSCRIPT -> {
             final String linkScriptName = pragmaParamString(pragmaParamSingle(ctx));
@@ -446,6 +455,8 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
     * @return The name
     */
    private static String pragmaParamName(KickCParser.PragmaParamContext paramCtx) {
+      if(paramCtx instanceof KickCParser.PragmaParamDefaultContext)
+         return "default";
       if(!(paramCtx instanceof KickCParser.PragmaParamNameContext))
          throw new CompileError("Expected a NAME parameter. Found '" + paramCtx.getText() + "'.", new StatementSource(paramCtx.getParent()));
       return ((KickCParser.PragmaParamNameContext) paramCtx).NAME().getText();
@@ -689,6 +700,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    /** The current default interrupt type. */
    private String currentInterruptType;
+
+   /** Whether subsequent struct definitions reorder fields by byte size for tighter packing. */
+   private boolean currentStructPackReorder = false;
 
    @Override
    public Object visitDeclFunction(KickCParser.DeclFunctionContext ctx) {
@@ -2850,6 +2864,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          structDefName = program.getScope().allocateIntermediateVariableName();
       }
       StructDefinition structDefinition = program.getScope().addStructDefinition(structDefName, isUnion);
+      if(!isUnion && currentStructPackReorder) {
+         structDefinition.setPackReorder(true);
+      }
       scopeStack.push(structDefinition);
       BitfieldPackState prevBitfieldPackState = currentBitfieldPackState;
       currentBitfieldPackState = new BitfieldPackState();
