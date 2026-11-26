@@ -882,28 +882,28 @@ public class Compiler {
             program.getRegisterUpliftProgram();
          }
 
+         // Attempt uplifting registers through a lot of combinations
+         CompilerProgress.status("Pass 4 (Register Allocation): Uplifting combinations...");
+         tStep = System.currentTimeMillis();
+         Pass4RegisterUpliftCombinations.CachedBlockScores cache = new Pass4RegisterUpliftCombinations(program).performUplift(upliftCombinations);
+         if(getLog().isVerboseUplift()) {
+            System.out.println(String.format("   [PASS4] Uplift Combinations:          %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
+         }
+
+         // Attempt uplifting registers one at a time to catch remaining potential not realized by combination search
+         CompilerProgress.status("Pass 4 (Register Allocation): Uplifting remains...");
+         tStep = System.currentTimeMillis();
+         new Pass4RegisterUpliftRemains(program).performUplift(upliftCombinations, cache);
+         if(getLog().isVerboseUplift()) {
+            System.out.println(String.format("   [PASS4] Uplift Remains:               %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
+         }
+
          if(upliftLocalSearch) {
-            CompilerProgress.status("Pass 4 (Register Allocation): Local search uplift...");
+            CompilerProgress.status("Pass 4 (Register Allocation): Local search refinement...");
             tStep = System.currentTimeMillis();
-            new Pass4RegisterUpliftLocalSearch(program).performUplift();
+            new Pass4RegisterUpliftLocalSearch(program).performRefinement();
             if(getLog().isVerboseUplift()) {
                System.out.println(String.format("   [PASS4] Uplift LocalSearch:           %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
-            }
-         } else {
-            // Attempt uplifting registers through a lot of combinations
-            CompilerProgress.status("Pass 4 (Register Allocation): Uplifting combinations...");
-            tStep = System.currentTimeMillis();
-            Pass4RegisterUpliftCombinations.CachedBlockScores cache = new Pass4RegisterUpliftCombinations(program).performUplift(upliftCombinations);
-            if(getLog().isVerboseUplift()) {
-               System.out.println(String.format("   [PASS4] Uplift Combinations:          %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
-            }
-
-            // Attempt uplifting registers one at a time to catch remaining potential not realized by combination search
-            CompilerProgress.status("Pass 4 (Register Allocation): Uplifting remains...");
-            tStep = System.currentTimeMillis();
-            new Pass4RegisterUpliftRemains(program).performUplift(upliftCombinations, cache);
-            if(getLog().isVerboseUplift()) {
-               System.out.println(String.format("   [PASS4] Uplift Remains:               %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
             }
          }
       }

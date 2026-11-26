@@ -21,9 +21,21 @@ public class Pass4RegisterUpliftLocalSearch extends Pass2Base {
    }
 
    public void performUplift() {
+      runLocalSearch(false);
+   }
+
+   /**
+    * Hybrid refinement pass invoked after combination/remains uplift.
+    * Initializes the baseline from the current register allocation and runs Phase 3 (1-opt & budgeted 2-opt) directly.
+    */
+   public void performRefinement() {
+      runLocalSearch(true);
+   }
+
+   private void runLocalSearch(boolean refinementOnly) {
       Program program = getProgram();
 
-      // Pre-initialize lazy analyses on the main thread before parallel Phase 1 evaluation
+      // Pre-initialize lazy analyses on the main thread before evaluation
       LiveRangeInterference interference = program.getLiveRangeInterference();
       program.getPhiTransitions();
       program.getSymbolInfos();
@@ -38,7 +50,7 @@ public class Pass4RegisterUpliftLocalSearch extends Pass2Base {
       Pass4DirectTrialEvaluator.FastClobberIndex clobberIndex = Pass4DirectTrialEvaluator.getOrBuildClobberIndex(program);
       clobberIndex.refreshFromVariables();
 
-      // Initialize the All-ZP baseline once
+      // Initialize/refresh baseline on the current allocation state
       Map<Graph.Block, Integer> blockScores = new HashMap<>();
       Map<Graph.Block, Integer> blockBytes = new HashMap<>();
       Pass4DirectTrialEvaluator.computeBlockScores(
@@ -57,8 +69,11 @@ public class Pass4RegisterUpliftLocalSearch extends Pass2Base {
       List<LiveRangeEquivalenceClass> eligibleEcs = new ArrayList<>();
       for(LiveRangeEquivalenceClass ec : ecSet.getEquivalenceClasses()) {
          List<Registers.Register> pots = registerPotentials.getPotentialRegisters(ec);
-         Registers.Register reg = ec.getRegister();
-         if(pots != null && pots.size() > 1 && reg != null && reg.isMem() && reg.getBytes() == 1 && !reg.isAddressHardcoded()) {
+         if(pots == null || pots.size() <= 1) {
+            continue;
+         }
+         Registers.Register memReg = findDefaultMemRegister(ec.getRegister(), pots);
+         if(memReg != null && memReg.getBytes() == 1 && !memReg.isAddressHardcoded()) {
             eligibleEcs.add(ec);
          }
       }
@@ -72,7 +87,11 @@ public class Pass4RegisterUpliftLocalSearch extends Pass2Base {
       int ecCount = eligibleEcs.size();
       if(ecCount == 0) {
          if(getLog().isVerboseUplift()) {
-            System.out.printf("      [LocalSearch Uplift] E=0, attempts=0, phase2Commits=0, phase3Commits=0%n");
+            if(refinementOnly) {
+               System.out.printf("      [PASS4] Local-search refinement: E=0, attempts=0, phase3Commits=0%n");
+            } else {
+               System.out.printf("      [LocalSearch Uplift] E=0, attempts=0, phase2Commits=0, phase3Commits=0%n");
+            }
          }
          return;
       }
@@ -83,8 +102,8 @@ public class Pass4RegisterUpliftLocalSearch extends Pass2Base {
       int maxPot = 0;
       for(int i = 0; i < ecCount; i++) {
          LiveRangeEquivalenceClass ec = eligibleEcs.get(i);
-         defaultMemReg[i] = ec.getRegister();
          List<Registers.Register> pots = registerPotentials.getPotentialRegisters(ec);
+         defaultMemReg[i] = findDefaultMemRegister(ec.getRegister(), pots);
          ecPotentials.add(pots);
          ecToIdx.put(ec, i);
          if(pots.size() > maxPot) {
@@ -94,80 +113,125 @@ public class Pass4RegisterUpliftLocalSearch extends Pass2Base {
 
       AtomicLong attempts = new AtomicLong(0);
       Set<String> unknownFragments = Collections.synchronizedSet(new LinkedHashSet<>());
-
-      // Phase 1: Parallel standalone delta evaluation per (ec, R)
-      Pass4DirectTrialEvaluator.DeltaEvalResult[][] standaloneDeltas = new Pass4DirectTrialEvaluator.DeltaEvalResult[ecCount][maxPot];
-      IntStream.range(0, ecCount).parallel().forEach(ecIdx -> {
-         LiveRangeEquivalenceClass ec = eligibleEcs.get(ecIdx);
-         List<Registers.Register> pots = ecPotentials.get(ecIdx);
-         for(int p = 0; p < pots.size(); p++) {
-            Registers.Register reg = pots.get(p);
-            if(!reg.isMem()) {
-               attempts.incrementAndGet();
-               standaloneDeltas[ecIdx][p] = Pass4DirectTrialEvaluator.evaluateDelta(
-                     program, clobberIndex, stmtMultipliers, unknownFragments, ec, reg, null, null);
-            }
-         }
-      });
-
-      // Phase 2: Deterministic cost-delta greedy coloring
-      int[] bestStandaloneScore = new int[ecCount];
-      int[] bestStandaloneBytes = new int[ecCount];
-      for(int ecIdx = 0; ecIdx < ecCount; ecIdx++) {
-         Pass4DirectTrialEvaluator.DeltaEvalResult best = null;
-         for(int p = 0; p < ecPotentials.get(ecIdx).size(); p++) {
-            Pass4DirectTrialEvaluator.DeltaEvalResult res = standaloneDeltas[ecIdx][p];
-            if(res != null && isBetterDelta(res, best)) {
-               best = res;
-            }
-         }
-         bestStandaloneScore[ecIdx] = best != null ? best.scoreDelta : 0;
-         bestStandaloneBytes[ecIdx] = best != null ? best.bytesDelta : 0;
-      }
-
-      Integer[] phase2Order = new Integer[ecCount];
-      for(int i = 0; i < ecCount; i++) {
-         phase2Order[i] = i;
-      }
-      Arrays.sort(phase2Order, (a, b) -> {
-         int cmp = Integer.compare(bestStandaloneScore[a], bestStandaloneScore[b]);
-         if(cmp != 0) return cmp;
-         cmp = Integer.compare(bestStandaloneBytes[a], bestStandaloneBytes[b]);
-         if(cmp != 0) return cmp;
-         cmp = Double.compare(weights.getTotalWeight(eligibleEcs.get(b)), weights.getTotalWeight(eligibleEcs.get(a)));
-         if(cmp != 0) return cmp;
-         return getFirstVarName(eligibleEcs.get(a)).compareTo(getFirstVarName(eligibleEcs.get(b)));
-      });
-
+      Pass4DirectTrialEvaluator.DeltaEvalResult[][] standaloneDeltas = null;
       int phase2Commits = 0;
-      for(int ord = 0; ord < ecCount; ord++) {
-         int ecIdx = phase2Order[ord];
-         LiveRangeEquivalenceClass ec = eligibleEcs.get(ecIdx);
-         List<Registers.Register> pots = ecPotentials.get(ecIdx);
-         Registers.Register bestReg = null;
-         Pass4DirectTrialEvaluator.DeltaEvalResult bestRes = null;
-         for(int p = 0; p < pots.size(); p++) {
-            Registers.Register reg = pots.get(p);
-            if(reg.isMem() || interference.interferesWithRegister(ec, reg)) {
-               continue;
+
+      if(!refinementOnly) {
+         // Phase 1: Parallel standalone delta evaluation per (ec, R)
+         Pass4DirectTrialEvaluator.DeltaEvalResult[][] p1Deltas = new Pass4DirectTrialEvaluator.DeltaEvalResult[ecCount][maxPot];
+         IntStream.range(0, ecCount).parallel().forEach(ecIdx -> {
+            LiveRangeEquivalenceClass ec = eligibleEcs.get(ecIdx);
+            List<Registers.Register> pots = ecPotentials.get(ecIdx);
+            for(int p = 0; p < pots.size(); p++) {
+               Registers.Register reg = pots.get(p);
+               if(!reg.isMem()) {
+                  attempts.incrementAndGet();
+                  p1Deltas[ecIdx][p] = Pass4DirectTrialEvaluator.evaluateDelta(
+                        program, clobberIndex, stmtMultipliers, unknownFragments, ec, reg, null, null);
+               }
             }
-            attempts.incrementAndGet();
-            Pass4DirectTrialEvaluator.DeltaEvalResult res = Pass4DirectTrialEvaluator.evaluateDelta(
-                  program, clobberIndex, stmtMultipliers, unknownFragments, ec, reg, null, null);
-            if(isBetterDelta(res, bestRes)) {
-               bestRes = res;
-               bestReg = reg;
+         });
+         standaloneDeltas = p1Deltas;
+
+         // Phase 2: Deterministic cost-delta greedy coloring
+         int[] bestStandaloneScore = new int[ecCount];
+         int[] bestStandaloneBytes = new int[ecCount];
+         for(int ecIdx = 0; ecIdx < ecCount; ecIdx++) {
+            Pass4DirectTrialEvaluator.DeltaEvalResult best = null;
+            for(int p = 0; p < ecPotentials.get(ecIdx).size(); p++) {
+               Pass4DirectTrialEvaluator.DeltaEvalResult res = standaloneDeltas[ecIdx][p];
+               if(res != null && isBetterDelta(res, best)) {
+                  best = res;
+               }
             }
+            bestStandaloneScore[ecIdx] = best != null ? best.scoreDelta : 0;
+            bestStandaloneBytes[ecIdx] = best != null ? best.bytesDelta : 0;
          }
-         if(bestReg != null) {
-            Pass4DirectTrialEvaluator.commitMove(program, clobberIndex, stmtMultipliers, ec, bestReg, null, null);
-            phase2Commits++;
+
+         Integer[] phase2Order = new Integer[ecCount];
+         for(int i = 0; i < ecCount; i++) {
+            phase2Order[i] = i;
+         }
+         Arrays.sort(phase2Order, (a, b) -> {
+            int cmp = Integer.compare(bestStandaloneScore[a], bestStandaloneScore[b]);
+            if(cmp != 0) return cmp;
+            cmp = Integer.compare(bestStandaloneBytes[a], bestStandaloneBytes[b]);
+            if(cmp != 0) return cmp;
+            cmp = Double.compare(weights.getTotalWeight(eligibleEcs.get(b)), weights.getTotalWeight(eligibleEcs.get(a)));
+            if(cmp != 0) return cmp;
+            return getFirstVarName(eligibleEcs.get(a)).compareTo(getFirstVarName(eligibleEcs.get(b)));
+         });
+
+         for(int ord = 0; ord < ecCount; ord++) {
+            int ecIdx = phase2Order[ord];
+            LiveRangeEquivalenceClass ec = eligibleEcs.get(ecIdx);
+            List<Registers.Register> pots = ecPotentials.get(ecIdx);
+            Registers.Register bestReg = null;
+            Pass4DirectTrialEvaluator.DeltaEvalResult bestRes = null;
+            for(int p = 0; p < pots.size(); p++) {
+               Registers.Register reg = pots.get(p);
+               if(reg.isMem() || interference.interferesWithRegister(ec, reg)) {
+                  continue;
+               }
+               attempts.incrementAndGet();
+               Pass4DirectTrialEvaluator.DeltaEvalResult res = Pass4DirectTrialEvaluator.evaluateDelta(
+                     program, clobberIndex, stmtMultipliers, unknownFragments, ec, reg, null, null);
+               if(isBetterDelta(res, bestRes)) {
+                  bestRes = res;
+                  bestReg = reg;
+               }
+            }
+            if(bestReg != null) {
+               Pass4DirectTrialEvaluator.commitMove(program, clobberIndex, stmtMultipliers, ec, bestReg, null, null);
+               phase2Commits++;
+            }
          }
       }
 
       // Phase 3: Deterministic 1-opt & budgeted 2-opt
+      int phase3Commits = runPhase3(
+            program, interference, weights, clobberIndex, stmtMultipliers,
+            eligibleEcs, defaultMemReg, ecPotentials, ecToIdx, standaloneDeltas,
+            attempts, unknownFragments);
+
+      if(!unknownFragments.isEmpty()) {
+         getLog().append("MISSING FRAGMENTS");
+         List<String> sortedUnknown = new ArrayList<>(unknownFragments);
+         Collections.sort(sortedUnknown);
+         for(String unknownFragment : sortedUnknown) {
+            getLog().append("  " + unknownFragment);
+         }
+      }
+      if(getLog().isVerboseUplift()) {
+         if(refinementOnly) {
+            System.out.printf(
+                  "      [PASS4] Local-search refinement: E=%d, attempts=%d, phase3Commits=%d%n",
+                  ecCount, attempts.get(), phase3Commits);
+         } else {
+            System.out.printf(
+                  "      [LocalSearch Uplift] E=%d, attempts=%d, phase2Commits=%d, phase3Commits=%d%n",
+                  ecCount, attempts.get(), phase2Commits, phase3Commits);
+         }
+      }
+   }
+
+   private static int runPhase3(
+         Program program,
+         LiveRangeInterference interference,
+         VariableRegisterWeights weights,
+         Pass4DirectTrialEvaluator.FastClobberIndex clobberIndex,
+         double[] stmtMultipliers,
+         List<LiveRangeEquivalenceClass> eligibleEcs,
+         Registers.Register[] defaultMemReg,
+         List<List<Registers.Register>> ecPotentials,
+         Map<LiveRangeEquivalenceClass, Integer> ecToIdx,
+         Pass4DirectTrialEvaluator.DeltaEvalResult[][] standaloneDeltas,
+         AtomicLong attempts,
+         Set<String> unknownFragments) {
+      int ecCount = eligibleEcs.size();
       int maxCommitsPerPass = Math.max(32, ecCount * 2);
       int phase3Commits = 0;
+
       for(int pass = 0; pass < MAX_PASSES; pass++) {
          int passCommits = 0;
 
@@ -249,17 +313,19 @@ public class Pass4RegisterUpliftLocalSearch extends Pass2Base {
             }
 
             neighborIndices.sort((idx1, idx2) -> {
-               Pass4DirectTrialEvaluator.DeltaEvalResult d1 = findStandaloneDelta(ecPotentials.get(idx1), standaloneDeltas[idx1], regA);
-               Pass4DirectTrialEvaluator.DeltaEvalResult d2 = findStandaloneDelta(ecPotentials.get(idx2), standaloneDeltas[idx2], regA);
-               int s1 = (d1 != null && d1.feasible) ? d1.scoreDelta : Integer.MAX_VALUE;
-               int s2 = (d2 != null && d2.feasible) ? d2.scoreDelta : Integer.MAX_VALUE;
-               int cmp = Integer.compare(s1, s2);
-               if(cmp != 0) return cmp;
-               int b1 = (d1 != null && d1.feasible) ? d1.bytesDelta : Integer.MAX_VALUE;
-               int b2 = (d2 != null && d2.feasible) ? d2.bytesDelta : Integer.MAX_VALUE;
-               cmp = Integer.compare(b1, b2);
-               if(cmp != 0) return cmp;
-               cmp = Double.compare(weights.getTotalWeight(eligibleEcs.get(idx2)), weights.getTotalWeight(eligibleEcs.get(idx1)));
+               if(standaloneDeltas != null) {
+                  Pass4DirectTrialEvaluator.DeltaEvalResult d1 = findStandaloneDelta(ecPotentials.get(idx1), standaloneDeltas[idx1], regA);
+                  Pass4DirectTrialEvaluator.DeltaEvalResult d2 = findStandaloneDelta(ecPotentials.get(idx2), standaloneDeltas[idx2], regA);
+                  int s1 = (d1 != null && d1.feasible) ? d1.scoreDelta : Integer.MAX_VALUE;
+                  int s2 = (d2 != null && d2.feasible) ? d2.scoreDelta : Integer.MAX_VALUE;
+                  int cmp = Integer.compare(s1, s2);
+                  if(cmp != 0) return cmp;
+                  int b1 = (d1 != null && d1.feasible) ? d1.bytesDelta : Integer.MAX_VALUE;
+                  int b2 = (d2 != null && d2.feasible) ? d2.bytesDelta : Integer.MAX_VALUE;
+                  cmp = Integer.compare(b1, b2);
+                  if(cmp != 0) return cmp;
+               }
+               int cmp = Double.compare(weights.getTotalWeight(eligibleEcs.get(idx2)), weights.getTotalWeight(eligibleEcs.get(idx1)));
                if(cmp != 0) return cmp;
                return getFirstVarName(eligibleEcs.get(idx1)).compareTo(getFirstVarName(eligibleEcs.get(idx2)));
             });
@@ -315,19 +381,20 @@ public class Pass4RegisterUpliftLocalSearch extends Pass2Base {
          }
       }
 
-      if(!unknownFragments.isEmpty()) {
-         getLog().append("MISSING FRAGMENTS");
-         List<String> sortedUnknown = new ArrayList<>(unknownFragments);
-         Collections.sort(sortedUnknown);
-         for(String unknownFragment : sortedUnknown) {
-            getLog().append("  " + unknownFragment);
+      return phase3Commits;
+   }
+
+   private static Registers.Register findDefaultMemRegister(Registers.Register currentReg, List<Registers.Register> pots) {
+      if(currentReg != null && currentReg.isMem()) {
+         return currentReg;
+      }
+      for(int i = 0; i < pots.size(); i++) {
+         Registers.Register reg = pots.get(i);
+         if(reg != null && reg.isMem()) {
+            return reg;
          }
       }
-      if(getLog().isVerboseUplift()) {
-         System.out.printf(
-               "      [LocalSearch Uplift] E=%d, attempts=%d, phase2Commits=%d, phase3Commits=%d%n",
-               ecCount, attempts.get(), phase2Commits, phase3Commits);
-      }
+      return null;
    }
 
    private static String getFirstVarName(LiveRangeEquivalenceClass ec) {
