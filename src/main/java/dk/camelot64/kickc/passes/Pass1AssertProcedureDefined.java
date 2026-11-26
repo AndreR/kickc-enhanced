@@ -22,6 +22,9 @@ public class Pass1AssertProcedureDefined extends Pass1Base {
                throw new CompileError("Error! Undefined intrinsic function: " + procedure.getFullName());
             continue;
          }
+         if(procedure.getFixedAddress() != null) {
+            continue;
+         }
          final Label procedureLabel = procedure.getLabel();
          final ProcedureCompilation procedureCompilation = getProgram().getProcedureCompilation(procedure.getRef());
          if(procedureCompilation == null)

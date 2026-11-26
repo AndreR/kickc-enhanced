@@ -88,6 +88,16 @@ public class CParser {
      * #pragma loop_align(threshold) specifies maximum byte size of tight loops for zero-waste page boundary alignment.
      */
     public static final String PRAGMA_LOOP_ALIGN = "loop_align";
+
+    /**
+     * #pragma unroll(factor) or #pragma unroll(full) requests selective unrolling of the immediately following loop.
+     */
+    public static final String PRAGMA_UNROLL = "unroll";
+
+    /**
+     * #pragma nounroll prevents unrolling of the immediately following loop.
+     */
+    public static final String PRAGMA_NOUNROLL = "nounroll";
     /**
      * #pragma convenience(on|off) enables or disables modern C convenience features and automatic math synthesis.
      */

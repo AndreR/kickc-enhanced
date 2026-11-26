@@ -2,9 +2,11 @@ package dk.camelot64.kickc.model.symbols;
 
 import dk.camelot64.kickc.model.Comment;
 import dk.camelot64.kickc.model.Program;
+import dk.camelot64.kickc.model.Registers;
 import dk.camelot64.kickc.model.statements.StatementSource;
 import dk.camelot64.kickc.model.types.SymbolType;
 import dk.camelot64.kickc.model.types.SymbolTypeProcedure;
+import dk.camelot64.kickc.model.values.ConstantValue;
 import dk.camelot64.kickc.model.values.ProcedureRef;
 import dk.camelot64.kickc.passes.Pass1ByteXIntrinsicRewrite;
 import dk.camelot64.kickc.passes.Pass1PrintfIntrinsicRewrite;
@@ -51,6 +53,10 @@ public class Procedure extends Scope {
     * Used to decide whether to produce near, close or far call code when generating calls.
     */
    private Bank bank;
+   /** Fixed hardware/external address for address-bound foreign procedures (e.g. = $FFBA), or null if compiled normally. */
+   private ConstantValue fixedAddress = null;
+   /** Explicit return register pinning (e.g. __reg(A)), or null if using default calling convention. */
+   private Registers.Register returnRegister = null;
 
    /** The names of all legal intrinsic procedures. */
    final public static List<String> INTRINSIC_PROCEDURES = Arrays.asList(
@@ -270,6 +276,22 @@ public class Procedure extends Scope {
 
    public void setInterruptType(String interruptType) {
       this.interruptType = interruptType;
+   }
+
+   public ConstantValue getFixedAddress() {
+      return fixedAddress;
+   }
+
+   public void setFixedAddress(ConstantValue fixedAddress) {
+      this.fixedAddress = fixedAddress;
+   }
+
+   public Registers.Register getReturnRegister() {
+      return returnRegister;
+   }
+
+   public void setReturnRegister(Registers.Register returnRegister) {
+      this.returnRegister = returnRegister;
    }
 
    /**

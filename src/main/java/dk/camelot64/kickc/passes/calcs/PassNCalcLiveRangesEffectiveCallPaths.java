@@ -139,9 +139,10 @@ public class PassNCalcLiveRangesEffectiveCallPaths extends PassNCalcBase<LiveRan
    static Pass2AliasElimination.Aliases getCallAliases(CallGraph.CallBlock.Call call, StatementInfos statementInfos, Graph graph, ProgramScope programScope) {
       final ProcedureRef procedureRef = call.getProcedure();
       Procedure procedure = programScope.getProcedure(procedureRef);
-      if(procedure.isDeclaredIntrinsic()) return new Pass2AliasElimination.Aliases();
+      if(procedure.isDeclaredIntrinsic() || procedure.getFixedAddress() != null) return new Pass2AliasElimination.Aliases();
       final Graph.Block callBlock = statementInfos.getBlock(call.getCallStatementIdx());
       Graph.Block procedureBlock = graph.getBlock(procedure.getLabel().getRef());
+      if(procedureBlock == null) return new Pass2AliasElimination.Aliases();
       StatementPhiBlock procedurePhiBlock = null;
       if(procedureBlock.hasPhiBlock()) {
          procedurePhiBlock = procedureBlock.getPhiBlock();

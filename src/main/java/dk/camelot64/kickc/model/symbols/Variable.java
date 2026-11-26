@@ -98,6 +98,10 @@ public class Variable implements Symbol {
    private Integer bitFieldOffset;
    /** Name of the underlying storage member inside the struct (e.g. "__bf_0"). */
    private String bitFieldContainerName;
+   /** Bit-addressable MMIO base address (from __bit(addr, bitIndex)), or null if not bit-addressable. */
+   private ConstantValue bitAddress = null;
+   /** Bit index (0..7) for a bit-addressable MMIO variable, or null if not bit-addressable. */
+   private Integer bitIndex = null;
 
    /** Specifies that the variable must be aligned in memory. Only allowed for arrays & strings. [Only Variables in memory and arrays] */
    private Integer memoryAlignment;
@@ -635,6 +639,26 @@ public class Variable implements Symbol {
 
    public void setMemoryAddress(ConstantValue memoryAddress) {
       this.memoryAddress = memoryAddress;
+   }
+
+   public ConstantValue getBitAddress() {
+      return bitAddress;
+   }
+
+   public void setBitAddress(ConstantValue bitAddress) {
+      this.bitAddress = bitAddress;
+   }
+
+   public Integer getBitIndex() {
+      return bitIndex;
+   }
+
+   public void setBitIndex(Integer bitIndex) {
+      this.bitIndex = bitIndex;
+   }
+
+   public boolean isBitAddressable() {
+      return bitAddress != null && bitIndex != null;
    }
 
    public void setStructUnwind(boolean structUnwind) {

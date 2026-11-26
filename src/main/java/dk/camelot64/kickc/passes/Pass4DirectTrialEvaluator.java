@@ -846,7 +846,7 @@ public final class Pass4DirectTrialEvaluator {
                }
                if(statement instanceof StatementCall call) {
                   Procedure toProcedure = program.getScope().getProcedure(call.getProcedure());
-                  if(!toProcedure.isDeclaredIntrinsic() && Procedure.CallingConvention.PHI_CALL.equals(toProcedure.getCallingConvention())) {
+                  if(!toProcedure.isDeclaredIntrinsic() && toProcedure.getFixedAddress() == null && Procedure.CallingConvention.PHI_CALL.equals(toProcedure.getCallingConvention())) {
                      Graph.Block callSuccessor = graph.getCallSuccessor(block);
                      if(callSuccessor != null && callSuccessor.hasPhiBlock()) {
                         PhiTransitions.PhiTransition transition = allPhiTransitions.get(callSuccessor.getLabel()).getTransition(block);
@@ -954,7 +954,7 @@ public final class Pass4DirectTrialEvaluator {
             try {
                if(statement instanceof StatementCall call) {
                   Procedure toProcedure = program.getScope().getProcedure(call.getProcedure());
-                  if(!toProcedure.isDeclaredIntrinsic() && Procedure.CallingConvention.PHI_CALL.equals(toProcedure.getCallingConvention())) {
+                  if(!toProcedure.isDeclaredIntrinsic() && toProcedure.getFixedAddress() == null && Procedure.CallingConvention.PHI_CALL.equals(toProcedure.getCallingConvention())) {
                      Graph.Block callSuccessor = graph.getCallSuccessor(block);
                      if(callSuccessor != null && callSuccessor.hasPhiBlock()) {
                         PhiTransitions.PhiTransition transition = allPhiTransitions.get(callSuccessor.getLabel()).getTransition(block);
@@ -1257,7 +1257,9 @@ public final class Pass4DirectTrialEvaluator {
       } else if(statement instanceof StatementCall call) {
          Procedure toProcedure = program.getScope().getProcedure(call.getProcedure());
          Procedure fromProcedure = program.getProcedure(block);
-         if(toProcedure.isDeclaredIntrinsic()) {
+         if(toProcedure != null && toProcedure.getFixedAddress() != null) {
+            evaluateFixedAddressCall(program, call, toProcedure, acc, clobberIndex, localAllocs);
+         } else if(toProcedure.isDeclaredIntrinsic()) {
             if(Pass1ByteXIntrinsicRewrite.INTRINSIC_MAKELONG4.equals(toProcedure.getFullName())) {
                AsmFragmentTemplate template = resolveTemplate(program, AsmFragmentInstanceSpecBuilder.makelong4(call, program));
                acc.clobberMask = toClobberMask(template.getClobber());
@@ -1298,6 +1300,12 @@ public final class Pass4DirectTrialEvaluator {
          ProcedureRef procedureRef = call.getProcedure();
          if(procedureRef != null) {
             Procedure toProcedure = program.getScope().getProcedure(procedureRef);
+            if(toProcedure != null && toProcedure.getFixedAddress() != null) {
+               acc.clobberMask = MASK_ALL;
+               acc.cycles = 6.0;
+               acc.bytes = 3;
+               return;
+            }
             Procedure fromProcedure = program.getProcedure(block);
             Bank.CallingDistance callingDistance = Bank.CallingDistance.forCall(fromProcedure.getBank(), toProcedure.getBank());
             if(!Bank.CallingDistance.NEAR.equals(callingDistance)) {
@@ -1365,6 +1373,118 @@ public final class Pass4DirectTrialEvaluator {
          acc.cycles = 0.0;
          acc.bytes = 0;
       }
+   }
+
+   private static Registers.Register getEffectiveAllocation(
+         Program program,
+         VariableRef varRef,
+         FastClobberIndex clobberIndex,
+         Registers.Register[] localAllocs) {
+      if(localAllocs != null && clobberIndex != null) {
+         Integer varId = clobberIndex.varIdMap.get(varRef);
+         if(varId != null) {
+            Registers.Register reg = localAllocs[varId];
+            if(reg != null) {
+               return reg;
+            }
+         }
+      }
+      Variable var = program.getScope().getVariable(varRef);
+      return var != null ? var.getAllocation() : null;
+   }
+
+   private static void evaluateFixedAddressCall(
+         Program program,
+         StatementCall call,
+         Procedure toProcedure,
+         EvalAcc acc,
+         FastClobberIndex clobberIndex,
+         Registers.Register[] localAllocs) {
+      double cycles = 6.0;
+      int bytes = 3;
+
+      List<Variable> paramDefs = toProcedure.getParameters();
+      List<RValue> paramVals = call.getParameters();
+      if(paramVals != null) {
+         int n = Math.min(paramDefs.size(), paramVals.size());
+         for(int i = 0; i < n; i++) {
+            Registers.Register targetReg = paramDefs.get(i).getRegister();
+            Registers.RegisterType targetType = (targetReg != null) ? targetReg.getType() : Registers.RegisterType.REG_A;
+            RValue paramVal = paramVals.get(i);
+            while(paramVal instanceof CastValue cv && cv.getToType() != null && cv.getToType().getSizeBytes() == 1) {
+               if(cv.getValue() instanceof ConstantValue || cv.getValue() instanceof VariableRef) {
+                  paramVal = cv.getValue();
+               } else {
+                  break;
+               }
+            }
+            if(paramVal instanceof VariableRef varRef) {
+               Registers.Register alloc = getEffectiveAllocation(program, varRef, clobberIndex, localAllocs);
+               if(alloc instanceof Registers.RegisterConstant) {
+                  bytes += 2;
+                  cycles += 2.0;
+               } else if(alloc instanceof Registers.RegisterZpMem) {
+                  bytes += 2;
+                  cycles += 3.0;
+               } else if(alloc instanceof Registers.RegisterMainMem) {
+                  bytes += 3;
+                  cycles += 4.0;
+               } else if(alloc != null && !alloc.isMem() && alloc.isHardware()) {
+                  Registers.RegisterType srcType = alloc.getType();
+                  if(srcType != targetType) {
+                     if(srcType == Registers.RegisterType.REG_A || targetType == Registers.RegisterType.REG_A) {
+                        bytes += 1;
+                        cycles += 2.0;
+                     } else {
+                        bytes += 2;
+                        cycles += 4.0;
+                     }
+                  }
+               }
+            } else {
+               bytes += 2;
+               cycles += 2.0;
+            }
+         }
+      }
+
+      LValue lValue = call.getlValue();
+      if(lValue instanceof VariableRef lVarRef) {
+         Registers.RegisterType retType = null;
+         if(toProcedure.isCarryReturn()) {
+            bytes += 3;
+            cycles += 4.0;
+            retType = Registers.RegisterType.REG_A;
+         } else if(!SymbolType.VOID.equals(toProcedure.getReturnType())) {
+            Registers.Register rr = toProcedure.getReturnRegister();
+            retType = (rr != null && !rr.isMem()) ? rr.getType() : Registers.RegisterType.REG_A;
+         }
+         if(retType != null) {
+            Registers.Register dstAlloc = getEffectiveAllocation(program, lVarRef, clobberIndex, localAllocs);
+            if(dstAlloc instanceof Registers.RegisterZpMem) {
+               bytes += (retType == Registers.RegisterType.REG_Z) ? 3 : 2;
+               cycles += (retType == Registers.RegisterType.REG_Z) ? 5.0 : 3.0;
+            } else if(dstAlloc instanceof Registers.RegisterMainMem) {
+               bytes += (retType == Registers.RegisterType.REG_Z) ? 4 : 3;
+               cycles += (retType == Registers.RegisterType.REG_Z) ? 6.0 : 4.0;
+            } else if(dstAlloc != null && !dstAlloc.isMem() && dstAlloc.isHardware()) {
+               Registers.RegisterType dstType = dstAlloc.getType();
+               if(dstType != retType) {
+                  if(dstType == Registers.RegisterType.REG_A || retType == Registers.RegisterType.REG_A) {
+                     bytes += 1;
+                     cycles += 2.0;
+                  } else {
+                     bytes += 2;
+                     cycles += 4.0;
+                  }
+               }
+            }
+         }
+      }
+
+      acc.clobberMask = MASK_ALL;
+      acc.cycles = cycles;
+      acc.bytes = bytes;
    }
 
    private static AsmFragmentTemplate resolveTemplate(Program program, AsmFragmentInstanceSpec spec) {

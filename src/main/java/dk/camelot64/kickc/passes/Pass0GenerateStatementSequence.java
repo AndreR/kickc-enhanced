@@ -393,12 +393,48 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             this.pragmaConstructorFors.add(ctx);
             return null;
          }
+         case CParser.PRAGMA_NOUNROLL -> {
+            if(!ctx.pragmaParam().isEmpty()) {
+               throw new CompileError("#pragma nounroll expects no parameters!", new StatementSource(ctx));
+            }
+            this.pendingUnrollFactor = 0;
+         }
+         case CParser.PRAGMA_UNROLL -> {
+            if(ctx.pragmaParam().isEmpty()) {
+               this.pendingUnrollFactor = -1;
+            } else if(ctx.pragmaParam().size() == 1) {
+               KickCParser.PragmaParamContext param = ctx.pragmaParam(0);
+               if(param instanceof KickCParser.PragmaParamNumberContext) {
+                  int n = pragmaParamNumber(param).intValue();
+                  this.pendingUnrollFactor = (n <= 0) ? 0 : n;
+               } else {
+                  String val = pragmaParamName(param).toLowerCase(Locale.ENGLISH);
+                  if("full".equals(val)) {
+                     this.pendingUnrollFactor = -1;
+                  } else {
+                     try {
+                        int n = Integer.parseInt(val);
+                        this.pendingUnrollFactor = (n <= 0) ? 0 : n;
+                     } catch(NumberFormatException e) {
+                        throw new CompileError("Expected integer or 'full' for #pragma unroll, found '" + val + "'", new StatementSource(ctx));
+                     }
+                  }
+               }
+            } else {
+               throw new CompileError("#pragma unroll expects at most 1 parameter!", new StatementSource(ctx));
+            }
+         }
          default -> {
             program.getLog().append("Warning! Unknown #pragma " + pragmaName);
             System.out.println("Warning: Unknown pragma '" + pragmaName + "'");
          }
       }
       return null;
+   }
+
+   @Override
+   public Object visitStmtPragma(KickCParser.StmtPragmaContext ctx) {
+      return visitPragma(ctx.pragma());
    }
 
    /**
@@ -706,11 +742,16 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public Object visitDeclFunction(KickCParser.DeclFunctionContext ctx) {
+      pendingUnrollFactor = null;
+      pendingLoopLabel = null;
       this.visit(ctx.declType());
       this.visit(ctx.declarator());
+      List<Directive> trailingDirectives = (ctx.directive() != null && !ctx.directive().isEmpty())
+            ? getDirectives(ctx.directive())
+            : Collections.emptyList();
 
       // Declare & define the procedure
-      Procedure procedure = declareProcedure(true, ctx, StatementSource.procedureDecl(ctx));
+      Procedure procedure = declareProcedure(true, ctx, StatementSource.procedureDecl(ctx), trailingDirectives);
 
       varDecl.exitType();
 
@@ -754,7 +795,29 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
     * @param statementSource The statements source (used when producing errors.
     * @return The declared procedure.
     */
+   private static List<Directive> mergeDirectives(List<Directive> base, List<Directive> extra) {
+      if((extra == null || extra.isEmpty()) && base != null) {
+         return base;
+      }
+      List<Directive> merged = new ArrayList<>();
+      if(base != null) {
+         merged.addAll(base);
+      }
+      if(extra != null) {
+         for(Directive d : extra) {
+            if(!merged.contains(d)) {
+               merged.add(d);
+            }
+         }
+      }
+      return merged;
+   }
+
    private Procedure declareProcedure(boolean defineProcedure, ParserRuleContext ctx, StatementSource statementSource) {
+      return declareProcedure(defineProcedure, ctx, statementSource, Collections.emptyList());
+   }
+
+   private Procedure declareProcedure(boolean defineProcedure, ParserRuleContext ctx, StatementSource statementSource, List<Directive> extraDirectives) {
 
       boolean isLibrary = program.isLibraryFile(statementSource != null ? statementSource.getFileName() : null);
       String segCode = isLibrary ? Scope.SEGMENT_CODE_DEFAULT : currentSegmentCode;
@@ -765,9 +828,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       }
       Bank bank = isLibrary ? Bank.COMMON : currentBank;
 
+      List<Directive> procDirectives = mergeDirectives(varDecl.getDeclDirectives(), extraDirectives);
+
       Procedure procedure = new Procedure(varDecl.getVarName(), (SymbolTypeProcedure) varDecl.getEffectiveType(), program.getScope(), segCode, segData, currentCallingConvention, bank);
       procedure.setSegmentConstData(declaredSegData);
-      addDirectives(procedure, varDecl.getDeclDirectives());
+      addDirectives(procedure, procDirectives);
       // Check if the declaration matches any existing declaration!
       final Symbol existingSymbol = program.getScope().getSymbol(procedure.getRef());
       if(existingSymbol != null) {
@@ -793,7 +858,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
       if(defineProcedure) {
          // Make sure comments, directives and source are from the definition
-         addDirectives(procedure, varDecl.getDeclDirectives());
+         addDirectives(procedure, procDirectives);
          procedure.setComments(ensureUnusedComments(getCommentsSymbol(ctx)));
          procedure.setDefinitionSource(statementSource);
          // enter the procedure
@@ -831,7 +896,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          }
          // Add return variable
          if(!SymbolType.VOID.equals(procedure.getReturnType())) {
-            final VariableBuilder builder = new VariableBuilder("return", procedure, false, false, procedure.getReturnType(), varDecl.getDeclDirectives(), segData, program.getTargetPlatform().getVariableBuilderConfig());
+            final VariableBuilder builder = new VariableBuilder("return", procedure, false, false, procedure.getReturnType(), procDirectives, segData, program.getTargetPlatform().getVariableBuilderConfig());
             builder.build();
          }
          // exit the procedure
@@ -846,6 +911,10 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       this.visit(ctx.declType());
       this.visit(ctx.declarator());
       List<Directive> paramDirectives = varDecl.getDeclDirectives() != null ? new ArrayList<>(varDecl.getDeclDirectives()) : null;
+      if(ctx.directive() != null && !ctx.directive().isEmpty()) {
+         if(paramDirectives == null) paramDirectives = new ArrayList<>();
+         paramDirectives.addAll(getDirectives(ctx.directive()));
+      }
       ParameterDecl paramDecl = new ParameterDecl(varDecl.getVarName(), varDecl.getEffectiveType(), paramDirectives);
       varDecl.exitType();
       return paramDecl;
@@ -1426,19 +1495,68 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             return handleDeclVariableInitLut(ctx, (KickCParser.ExprCallContext) initializer, declSource);
          }
          final SymbolType effectiveType = varDecl.getEffectiveType();
+         List<Directive> trailingDirectives = (ctx.directive() != null && !ctx.directive().isEmpty())
+               ? getDirectives(ctx.directive())
+               : Collections.emptyList();
          if(effectiveType instanceof SymbolTypeProcedure) {
-            // Declare the procedure
-            boolean defineProcedure = varDecl.getDeclDirectives().stream().anyMatch(directive -> directive instanceof Directive.Intrinsic);
-            declareProcedure(defineProcedure, ctx, declSource);
+            // Declare the procedure (prototype, intrinsic, or address-bound foreign routine)
+            List<Directive> allProcDirectives = mergeDirectives(varDecl.getDeclDirectives(), trailingDirectives);
+            boolean isIntrinsic = allProcDirectives.stream().anyMatch(directive -> directive instanceof Directive.Intrinsic);
+            ConstantValue fixedAddress = null;
+            if(initializer != null) {
+               RValue initVal = (RValue) visit(initializer);
+               ConstantValue addrConst = getConstInitValue(initVal, initializer, declSource);
+               ConstantLiteral<?> addrLit;
+               try {
+                  addrLit = addrConst.calculateLiteral(program.getScope());
+               } catch(ConstantNotLiteral e) {
+                  throw new CompileError("Procedure fixed address must be a compile-time constant", declSource);
+               }
+               if(!(addrLit instanceof ConstantInteger) && !(addrLit instanceof ConstantPointer)) {
+                  throw new CompileError("Procedure fixed address must be a constant integer or pointer address", declSource);
+               }
+               fixedAddress = addrConst;
+            }
+            boolean defineProcedure = isIntrinsic || (fixedAddress != null);
+            Procedure procedure = declareProcedure(defineProcedure, ctx, declSource, trailingDirectives);
+            if(fixedAddress != null) {
+               procedure.setFixedAddress(fixedAddress);
+            }
             varDecl.exitVar();
          } else {
             final boolean isStructMember = varDecl.isStructMember();
-            final List<Directive> effectiveDirectives = varDecl.getDeclDirectives();
+            final List<Directive> effectiveDirectives = mergeDirectives(varDecl.getDeclDirectives(), trailingDirectives);
             final List<Comment> declComments = varDecl.getDeclComments();
             varDecl.exitVar();
             String segData = program.isLibraryFile(declSource != null ? declSource.getFileName() : null) ? Scope.SEGMENT_DATA_DEFAULT : currentSegmentData;
             VariableBuilder varBuilder = new VariableBuilder(varName, getCurrentScope(), false, false, effectiveType, effectiveDirectives, segData, program.getTargetPlatform().getVariableBuilderConfig());
             Variable variable = varBuilder.build();
+            Directive.BitAddress bitAddressDirective = null;
+            for(Directive d : effectiveDirectives) {
+               if(d instanceof Directive.BitAddress ba) {
+                  bitAddressDirective = ba;
+               }
+            }
+            if(bitAddressDirective != null) {
+               RValue addrRVal = (RValue) visit(bitAddressDirective.getAddressExpr());
+               ConstantValue addrConst = getConstInitValue(addrRVal, bitAddressDirective.getAddressExpr(), declSource);
+               ConstantLiteral<?> addrLit;
+               try {
+                  addrLit = addrConst.calculateLiteral(program.getScope());
+               } catch(ConstantNotLiteral e) {
+                  throw new CompileError("__bit address must be a compile-time constant", declSource);
+               }
+               if(!(addrLit instanceof ConstantInteger) && !(addrLit instanceof ConstantPointer)) {
+                  throw new CompileError("__bit address must be a constant integer or pointer address", declSource);
+               }
+               RValue bitIdxRVal = (RValue) visit(bitAddressDirective.getBitIndexExpr());
+               Long bitIdx = evaluateConstantInteger(bitIdxRVal);
+               if(bitIdx == null || bitIdx < 0 || bitIdx > 7) {
+                  throw new CompileError("__bit index must be a constant integer in range 0..7", declSource);
+               }
+               variable.setBitAddress(addrConst);
+               variable.setBitIndex(bitIdx.intValue());
+            }
             if(program.isSegmentRom(variable.getDataSegment())) {
                boolean isGlobalOrStatic = ScopeRef.ROOT.equals(variable.getScope().getRef()) || variable.isPermanent();
                if(!isGlobalOrStatic) {
@@ -1607,6 +1725,12 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             procedure.setAxConvention(true);
          } else if(directive instanceof Directive.Intrinsic) {
             procedure.setDeclaredIntrinsic(true);
+         } else if(directive instanceof Directive.NamedRegister namedReg) {
+            Registers.Register reg = Registers.getRegister(namedReg.name);
+            if(reg == null) {
+               throw new CompileError("Unknown register '" + namedReg.name + "' on procedure " + procedure.getFullName(), procedure.getDefinitionSource());
+            }
+            procedure.setReturnRegister(reg);
             //} else {
             //   throw new CompileError("Unsupported function directive " + directive.getName(), source);
          }
@@ -1717,6 +1841,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    }
 
    @Override
+   public Directive visitDirectiveBitAddress(KickCParser.DirectiveBitAddressContext ctx) {
+      return new Directive.BitAddress(ctx.expr(0), ctx.expr(1));
+   }
+
+   @Override
    public Directive visitDirectiveMemoryAreaZp(KickCParser.DirectiveMemoryAreaZpContext ctx) {
       return new Directive.MemZp();
    }
@@ -1794,6 +1923,13 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             && !(stmtContext instanceof KickCParser.StmtSwitchContext)) {
             pendingLoopLabel = null;
          }
+         if(!(stmtContext instanceof KickCParser.StmtPragmaContext)
+            && !(stmtContext instanceof KickCParser.StmtLabelContext)
+            && !(stmtContext instanceof KickCParser.StmtWhileContext)
+            && !(stmtContext instanceof KickCParser.StmtDoWhileContext)
+            && !(stmtContext instanceof KickCParser.StmtForContext)) {
+            pendingUnrollFactor = null;
+         }
          this.visit(stmtContext);
       }
       return null;
@@ -1806,6 +1942,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          scopeStack.push(blockScope);
          this.visit(ctx.stmtSeq());
          pendingLoopLabel = null;
+         pendingUnrollFactor = null;
          scopeStack.pop();
       }
       return null;
@@ -1926,14 +2063,36 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    private String pendingLoopLabel;
 
+   /** Pending selective loop unroll factor from #pragma unroll / #pragma nounroll (null=default, 0=nounroll, -1=full, N>0=count). */
+   private Integer pendingUnrollFactor = null;
+
+   /** Counter for unique structured-binding temporary struct variable names. */
+   private int structuredBindingTmpCounter = 0;
+
    private String consumePendingLoopLabel() {
       String label = pendingLoopLabel;
       pendingLoopLabel = null;
       return label;
    }
 
+   private Integer consumePendingUnrollFactor() {
+      Integer factor = pendingUnrollFactor;
+      pendingUnrollFactor = null;
+      return factor;
+   }
+
+   private static void applyUnrollFactor(StatementConditionalJump condJump, Integer unrollFactor) {
+      if(condJump != null && unrollFactor != null) {
+         condJump.setUnrollFactor(unrollFactor);
+         if(unrollFactor == -1) {
+            condJump.setDeclaredUnroll(true);
+         }
+      }
+   }
+
    @Override
    public Void visitStmtWhile(KickCParser.StmtWhileContext ctx) {
+      final Integer unrollFactor = consumePendingUnrollFactor();
       // Create the block scope early - to keep all statements of the loop inside it
       BlockScope blockScope = getCurrentScope().addBlockScope();
       scopeStack.push(blockScope);
@@ -1944,7 +2103,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       List<Comment> comments = ensureUnusedComments(getCommentsSymbol(ctx));
       StatementLabel beginJumpTarget = new StatementLabel(beginJumpLabel.getRef(), StatementSource.whileDo(ctx), comments);
       addStatement(beginJumpTarget);
-      boolean hasDirectives = ctx.directive() != null && !ctx.directive().isEmpty();
+      boolean hasDirectives = (ctx.directive() != null && !ctx.directive().isEmpty()) || (unrollFactor != null);
       StatementConditionalJump doJmpStmt = null;
       if(!hasDirectives) {
          addConditionBranch(ctx.commaExpr(), null, endJumpLabel.getRef(), StatementSource.whileDo(ctx), Comment.NO_COMMENTS);
@@ -1966,7 +2125,10 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       addStatement(endJumpTarget);
       // Add directives
       if(doJmpStmt != null) {
-         addDirectives(doJmpStmt, ctx.directive());
+         if(ctx.directive() != null && !ctx.directive().isEmpty()) {
+            addDirectives(doJmpStmt, ctx.directive());
+         }
+         applyUnrollFactor(doJmpStmt, unrollFactor);
       }
       addLoopBreakLabel(loopStack.pop(), ctx);
       scopeStack.pop();
@@ -2173,6 +2335,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public Void visitStmtDoWhile(KickCParser.StmtDoWhileContext ctx) {
+      final Integer unrollFactor = consumePendingUnrollFactor();
       // Create the block scope early - to keep all statements of the loop inside it
       BlockScope blockScope = getCurrentScope().addBlockScope();
       scopeStack.push(blockScope);
@@ -2183,14 +2346,17 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       addStatement(beginJumpTarget);
       addLoopBody(ctx.stmt());
       addLoopContinueLabel(loopStack.peek(), ctx);
-      boolean hasDirectives = ctx.directive() != null && !ctx.directive().isEmpty();
+      boolean hasDirectives = (ctx.directive() != null && !ctx.directive().isEmpty()) || (unrollFactor != null);
       if(!hasDirectives) {
          addConditionBranch(ctx.commaExpr(), beginJumpLabel.getRef(), null, StatementSource.doWhile(ctx), Comment.NO_COMMENTS);
       } else {
          RValue rValue = addCondition(ctx.commaExpr(), StatementSource.doWhile(ctx));
          StatementConditionalJump doJmpStmt = new StatementConditionalJump(rValue, beginJumpLabel.getRef(), StatementSource.doWhile(ctx), Comment.NO_COMMENTS);
          addStatement(doJmpStmt);
-         addDirectives(doJmpStmt, ctx.directive());
+         if(ctx.directive() != null && !ctx.directive().isEmpty()) {
+            addDirectives(doJmpStmt, ctx.directive());
+         }
+         applyUnrollFactor(doJmpStmt, unrollFactor);
       }
       addLoopBreakLabel(loopStack.pop(), ctx);
       scopeStack.pop();
@@ -2270,6 +2436,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public Object visitForClassic(KickCParser.ForClassicContext ctx) {
+      final Integer unrollFactor = consumePendingUnrollFactor();
       BlockScope blockScope = getCurrentScope().addBlockScope();
       scopeStack.push(blockScope);
       loopStack.push(new Loop(blockScope, false, consumePendingLoopLabel()));
@@ -2354,6 +2521,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          StatementConditionalJump doJmpStmt = new StatementConditionalJump(tmpVar.getRef(), doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
          addStatement(doJmpStmt);
          doJmpStmt.setDeclaredCountdown(true);
+         applyUnrollFactor(doJmpStmt, unrollFactor);
 
          StatementLabel endJumpTarget = new StatementLabel(endJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
          addStatement(endJumpTarget);
@@ -2382,7 +2550,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          }
 
          if(conditionCtx != null) {
-            boolean hasDirectives = stmtForCtx.directive() != null && !stmtForCtx.directive().isEmpty();
+            boolean hasDirectives = (stmtForCtx.directive() != null && !stmtForCtx.directive().isEmpty()) || (unrollFactor != null);
             if(!hasDirectives && containsLogicalAndOr(conditionCtx.commaExpr())) {
                addConditionBranch(conditionCtx.commaExpr(), doJumpLabel.getRef(), null, StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
             } else {
@@ -2392,6 +2560,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
                doJmpStmt.setDeclaredCountdown(true);
                if(stmtForCtx.directive() != null)
                   addDirectives(doJmpStmt, stmtForCtx.directive());
+               applyUnrollFactor(doJmpStmt, unrollFactor);
             }
          } else {
             StatementJump doJmpStmt = new StatementJump(doJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
@@ -2413,7 +2582,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       List<Comment> comments = getCommentsSymbol(stmtForCtx);
       StatementLabel repeatTarget = new StatementLabel(beginJumpLabel.getRef(), StatementSource.forClassic(ctx), comments);
       addStatement(repeatTarget);
-      boolean hasDirectives = stmtForCtx.directive() != null && !stmtForCtx.directive().isEmpty();
+      boolean hasDirectives = (stmtForCtx.directive() != null && !stmtForCtx.directive().isEmpty()) || (unrollFactor != null);
       Statement doJmpStmt = null;
       if(conditionCtx != null) {
          if(!hasDirectives) {
@@ -2442,8 +2611,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       addStatement(beginJmpStmt);
       StatementLabel endJumpTarget = new StatementLabel(endJumpLabel.getRef(), StatementSource.forClassic(ctx), Comment.NO_COMMENTS);
       addStatement(endJumpTarget);
-      if(doJmpStmt instanceof StatementConditionalJump)
-         addDirectives((StatementConditionalJump) doJmpStmt, stmtForCtx.directive());
+      if(doJmpStmt instanceof StatementConditionalJump condJump) {
+         if(stmtForCtx.directive() != null)
+            addDirectives(condJump, stmtForCtx.directive());
+         applyUnrollFactor(condJump, unrollFactor);
+      }
       addLoopBreakLabel(loopStack.pop(), ctx);
       scopeStack.pop();
       return null;
@@ -2480,6 +2652,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public Object visitForRange(KickCParser.ForRangeContext ctx) {
+      final Integer unrollFactor = consumePendingUnrollFactor();
       BlockScope blockScope = getCurrentScope().addBlockScope();
       scopeStack.push(blockScope);
       loopStack.push(new Loop(blockScope, false, consumePendingLoopLabel()));
@@ -2537,6 +2710,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       StatementConditionalJump doJmpStmt = new StatementConditionalJump(tmpVarRef, repeatLabel.getRef(), statementSource, Comment.NO_COMMENTS);
       addStatement(doJmpStmt);
       addDirectives(doJmpStmt, stmtForCtx.directive());
+      applyUnrollFactor(doJmpStmt, unrollFactor);
       addLoopBreakLabel(loopStack.pop(), ctx);
       scopeStack.pop();
       return null;
@@ -2580,15 +2754,98 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       addStatement(new StatementLabel(label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
       KickCParser.StmtContext childStmt = ctx.stmt();
       if(childStmt != null) {
-         boolean isLoopOrSwitch = (childStmt instanceof KickCParser.StmtWhileContext)
+         boolean isLoop = (childStmt instanceof KickCParser.StmtWhileContext)
                || (childStmt instanceof KickCParser.StmtDoWhileContext)
-               || (childStmt instanceof KickCParser.StmtForContext)
-               || (childStmt instanceof KickCParser.StmtSwitchContext);
+               || (childStmt instanceof KickCParser.StmtForContext);
+         boolean isLoopOrSwitch = isLoop || (childStmt instanceof KickCParser.StmtSwitchContext);
          pendingLoopLabel = isLoopOrSwitch ? labelName : null;
+         if(!isLoop) {
+            pendingUnrollFactor = null;
+         }
          this.visit(childStmt);
          pendingLoopLabel = null;
+         pendingUnrollFactor = null;
       } else {
          pendingLoopLabel = null;
+         pendingUnrollFactor = null;
+      }
+      return null;
+   }
+
+   @Override
+   public Object visitStmtStructuredBinding(KickCParser.StmtStructuredBindingContext ctx) {
+      StatementSource source = new StatementSource(ctx);
+      PrePostModifierHandler.addPreModifiers(this, ctx.expr(), source);
+      SymbolType inferredType = inferExprType(ctx.expr());
+      RValue initValue = (RValue) this.visit(ctx.expr());
+      if(inferredType == null && initValue != null) {
+         inferredType = SymbolTypeInference.inferType(program.getScope(), initValue);
+      }
+      if(!(inferredType instanceof SymbolTypeStruct structType)) {
+         throw new CompileError("Structured binding requires a struct value, found " + (inferredType != null ? inferredType.toCDecl() : "unknown"), source);
+      }
+      StructDefinition structDef = structType.getStructDefinition(program.getScope());
+      if(structDef == null) {
+         throw new CompileError("Unknown struct type in structured binding: " + structType.toCDecl(), source);
+      }
+      List<Variable> members = new ArrayList<>();
+      for(Variable member : structDef.getAllVars(false)) {
+         if(!member.getLocalName().startsWith("__bf_")) {
+            members.add(member);
+         }
+      }
+      List<TerminalNode> names = ctx.NAME();
+      if(names.size() != members.size()) {
+         throw new CompileError("Structured binding has " + names.size() + " identifier(s), expected " + members.size() + " for struct " + structDef.getLocalName(), source);
+      }
+
+      Scope targetScope = getCurrentScope();
+      if(targetScope == null || ScopeRef.ROOT.equals(targetScope.getRef())) {
+         targetScope = getInitProc();
+      }
+      String segData = program.isLibraryFile(source.getFileName()) ? Scope.SEGMENT_DATA_DEFAULT : currentSegmentData;
+      if(program.isSegmentRom(segData)) {
+         segData = Scope.SEGMENT_DATA_DEFAULT;
+      }
+
+      String tmpName;
+      do {
+         tmpName = "__sb_tmp_" + (structuredBindingTmpCounter++);
+      } while(targetScope.getLocalSymbol(tmpName) != null);
+      Variable tmpVar = new VariableBuilder(tmpName, targetScope, false, false, structType, Collections.emptyList(), segData, program.getTargetPlatform().getVariableBuilderConfig()).build();
+
+      initValue = Initializers.constantify(initValue, new Initializers.ValueTypeSpec(structType), program, source);
+      StatementLValue previousAssignment = null;
+      if(initValue instanceof VariableRef initVarRef && initVarRef.isIntermediate()) {
+         Statement previousStatement = getPreviousStatement();
+         if(previousStatement instanceof StatementLValue prevLVal && prevLVal.getlValue().equals(initVarRef)) {
+            previousAssignment = prevLVal;
+         }
+      }
+      if(previousAssignment != null) {
+         previousAssignment.setlValue(tmpVar.getVariableRef());
+         previousAssignment.setInitialAssignment(true);
+         previousAssignment.setSource(source);
+      } else {
+         addStatement(new StatementAssignment(tmpVar.getVariableRef(), initValue, true, source, Comment.NO_COMMENTS));
+      }
+      PrePostModifierHandler.addPostModifiers(this, ctx.expr(), source);
+
+      for(int i = 0; i < members.size(); i++) {
+         String varName = names.get(i).getText();
+         if(targetScope.getLocalSymbol(varName) != null) {
+            throw new CompileError("Redeclaration of variable '" + varName + "' in structured binding", source);
+         }
+         Variable member = members.get(i);
+         Variable boundVar = new VariableBuilder(varName, targetScope, false, false, member.getType(), Collections.emptyList(), segData, program.getTargetPlatform().getVariableBuilderConfig()).build();
+         RValue memberRVal;
+         if(member.isBitField()) {
+            StructMemberRef containerRef = new StructMemberRef(tmpVar.getRef(), member.getBitFieldContainerName());
+            memberRVal = desugarBitfieldRead(ctx, containerRef, member);
+         } else {
+            memberRVal = new StructMemberRef(tmpVar.getRef(), member.getLocalName());
+         }
+         addStatement(new StatementAssignment(boundVar.getVariableRef(), memberRVal, true, source, Comment.NO_COMMENTS));
       }
       return null;
    }

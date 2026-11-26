@@ -432,6 +432,19 @@ public class Unroller {
             Comment.NO_COMMENTS
       );
       newConditional.setDeclaredUnroll(origConditional.isDeclaredUnroll());
+      Integer origUnrollFactor = origConditional.getUnrollFactor();
+      if(origUnrollFactor != null) {
+         if(origUnrollFactor > 1) {
+            newConditional.setUnrollFactor(origUnrollFactor - 1);
+         } else if(origUnrollFactor == 1) {
+            // Sentinel -2 triggers a one-shot zero-trip check on the remaining tail loop after the final peel
+            newConditional.setUnrollFactor(-2);
+            newConditional.setDeclaredUnroll(false);
+         } else if(origUnrollFactor != -2) {
+            // Preserve -1 (full unroll) and 0 (nounroll) in the copied blocks
+            newConditional.setUnrollFactor(origUnrollFactor);
+         }
+      }
       // Then make sure the destination is correct in both the original and copy
       LabelRef origSuccessor = origConditional.getDestination();
       if(isInternal(origSuccessor)) {

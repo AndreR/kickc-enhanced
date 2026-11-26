@@ -131,6 +131,10 @@ public class Pass4CodeGeneration {
             : getGraph().getAllBlocks();
 
         for (Graph.Block block : targetBlocks) {
+            Procedure blockProcedure = program.getProcedure(block);
+            if (blockProcedure != null && blockProcedure.getFixedAddress() != null) {
+                continue;
+            }
             if (!block.getScope().equals(currentScope)) {
                 // The current block is in a different scope. End the old scope.
                 if(!trialMode) {
@@ -345,7 +349,7 @@ public class Pass4CodeGeneration {
      * @param comments The comments to add
      */
     private void generateComments(AsmProgram asm, List<Comment> comments) {
-        if (trialMode) return;
+        if (trialMode || comments == null) return;
         for (Comment comment : comments) {
             asm.addComment(comment.getComment(), comment.isBlock());
         }
@@ -1039,7 +1043,9 @@ public class Pass4CodeGeneration {
                 StatementCall call = (StatementCall) statement;
                 Procedure toProcedure = getScope().getProcedure(call.getProcedure());
                 Procedure fromProcedure = program.getProcedure(block); // We obtain from where the procedure is called, to validate the bank equality.
-                if (toProcedure.isDeclaredIntrinsic()) {
+                if (toProcedure.getFixedAddress() != null) {
+                    generateFixedAddressCall(asm, block, call, toProcedure);
+                } else if (toProcedure.isDeclaredIntrinsic()) {
                     if (Pass1ByteXIntrinsicRewrite.INTRINSIC_MAKELONG4.equals(toProcedure.getFullName())) {
                         AsmFragmentCodeGenerator.generateAsm(asm, AsmFragmentInstanceSpecBuilder.makelong4(call, program), program);
                     } else {
@@ -1077,16 +1083,22 @@ public class Pass4CodeGeneration {
                 if(procedureRef != null) {
                     ProgramScope scope = getScope();
                     Procedure toProcedure = scope.getProcedure(procedureRef);
-                    Procedure fromProcedure = program.getProcedure(block);
-                    final Bank.CallingDistance callingDistance = Bank.CallingDistance.forCall(fromProcedure.getBank(), toProcedure.getBank());
-                    if(Bank.CallingDistance.NEAR.equals(callingDistance)) {
-                        AsmFragmentCodeGenerator.generateAsm(asm, AsmFragmentInstanceSpecBuilder.call(call, indirectCallCount++, program), program);
-                    } else {
-                        throw new CompileError("Stack Call procedure not supported in banked mode " + toProcedure.toString(program));
-                    }
-                    RValue procedureRVal = call.getProcedureRVal();
-                    if (!(procedureRVal instanceof ProcedureRef)) {
+                    if (toProcedure != null && toProcedure.getFixedAddress() != null) {
+                        String addrAsm = AsmFormat.getAsmConstant(program, toProcedure.getFixedAddress(), 99, block.getScope());
+                        asm.addInstruction("jsr", CpuAddressingMode.ABS, addrAsm, false);
                         asm.getCurrentChunk().setClobberOverwrite(CpuClobber.CLOBBER_ALL);
+                    } else {
+                        Procedure fromProcedure = program.getProcedure(block);
+                        final Bank.CallingDistance callingDistance = Bank.CallingDistance.forCall(fromProcedure.getBank(), toProcedure.getBank());
+                        if(Bank.CallingDistance.NEAR.equals(callingDistance)) {
+                            AsmFragmentCodeGenerator.generateAsm(asm, AsmFragmentInstanceSpecBuilder.call(call, indirectCallCount++, program), program);
+                        } else {
+                            throw new CompileError("Stack Call procedure not supported in banked mode " + toProcedure.toString(program));
+                        }
+                        RValue procedureRVal = call.getProcedureRVal();
+                        if (!(procedureRVal instanceof ProcedureRef)) {
+                            asm.getCurrentChunk().setClobberOverwrite(CpuClobber.CLOBBER_ALL);
+                        }
                     }
                 } else {
                     RValue procedureRVal = call.getProcedureRVal();
@@ -1339,6 +1351,333 @@ public class Pass4CodeGeneration {
             }
         }
         return null;
+    }
+
+    private static final class FixedCallParamLoad {
+        final Registers.RegisterType target;
+        Registers.RegisterType loc;
+        boolean inScratch;
+        boolean inStack;
+        final CpuAddressingMode addrMode;
+        final String operand;
+        final boolean isZp;
+
+        FixedCallParamLoad(Registers.RegisterType target, Registers.RegisterType loc) {
+            this.target = target;
+            this.loc = loc;
+            this.addrMode = null;
+            this.operand = null;
+            this.isZp = false;
+        }
+
+        FixedCallParamLoad(Registers.RegisterType target, CpuAddressingMode addrMode, String operand, boolean isZp) {
+            this.target = target;
+            this.loc = null;
+            this.addrMode = addrMode;
+            this.operand = operand;
+            this.isZp = isZp;
+        }
+    }
+
+    /**
+     * Generates a direct JSR call to a fixed-address foreign procedure:
+     * loads pinned CPU register parameters cleanly, emits JSR $addr,
+     * marks conservative CPU clobber, and stores any pinned/carry return value.
+     */
+    private void generateFixedAddressCall(AsmProgram asm, Graph.Block block, StatementCall call, Procedure toProcedure) {
+        List<Variable> paramDefs = toProcedure.getParameters();
+        List<RValue> paramVals = call.getParameters() != null ? call.getParameters() : Collections.emptyList();
+        if (paramDefs.size() != paramVals.size()) {
+            throw new CompileError("Wrong number of parameters in call " + call.toString(program, false) + " expected " + toProcedure.toString(program), call.getSource());
+        }
+
+        List<FixedCallParamLoad> regLoads = new ArrayList<>();
+        List<FixedCallParamLoad> memLoads = new ArrayList<>();
+        Set<Registers.RegisterType> seenTargets = EnumSet.noneOf(Registers.RegisterType.class);
+
+        for (int i = 0; i < paramDefs.size(); i++) {
+            Variable paramDef = paramDefs.get(i);
+            Registers.Register targetReg = paramDef.getRegister();
+            if (targetReg == null || targetReg.isMem() || !isSupportedCpuByteReg(targetReg.getType())) {
+                throw new CompileError("Parameter '" + paramDef.getLocalName() + "' of fixed-address procedure " + toProcedure.getFullName() + " must specify __reg(A/X/Y).", call.getSource());
+            }
+            Registers.RegisterType targetType = targetReg.getType();
+            if (!seenTargets.add(targetType)) {
+                throw new CompileError("Duplicate register binding " + targetReg + " on fixed-address procedure " + toProcedure.getFullName(), call.getSource());
+            }
+
+            RValue paramVal = paramVals.get(i);
+            while (paramVal instanceof CastValue cv && cv.getToType() != null && cv.getToType().getSizeBytes() == 1) {
+                if (cv.getValue() instanceof ConstantValue cVal) {
+                    paramVal = new ConstantCastValue(cv.getToType(), cVal);
+                    break;
+                } else if (cv.getValue() instanceof VariableRef) {
+                    paramVal = cv.getValue();
+                } else {
+                    break;
+                }
+            }
+
+            if (paramVal instanceof VariableRef varRef) {
+                Variable argVar = getScope().getVariable(varRef);
+                Registers.Register alloc = argVar.getAllocation();
+                if (alloc instanceof Registers.RegisterConstant regConst) {
+                    String constAsm = AsmFormat.getAsmConstant(program, regConst.getConstantValue(), 99, block.getScope());
+                    memLoads.add(new FixedCallParamLoad(targetType, CpuAddressingMode.IMM, constAsm, false));
+                } else if (alloc instanceof Registers.RegisterZpMem) {
+                    String symAsm = AsmFormat.getAsmSymbolName(program, argVar, block.getScope());
+                    memLoads.add(new FixedCallParamLoad(targetType, CpuAddressingMode.ZP, symAsm, true));
+                } else if (alloc instanceof Registers.RegisterMainMem) {
+                    String symAsm = AsmFormat.getAsmSymbolName(program, argVar, block.getScope());
+                    memLoads.add(new FixedCallParamLoad(targetType, CpuAddressingMode.ABS, symAsm, false));
+                } else if (alloc != null && !alloc.isMem() && isSupportedCpuByteReg(alloc.getType())) {
+                    regLoads.add(new FixedCallParamLoad(targetType, alloc.getType()));
+                } else {
+                    throw new CompileError("Unsupported parameter allocation for fixed-address call: " + argVar.toString(program), call.getSource());
+                }
+            } else if (paramVal instanceof ConstantValue constVal) {
+                String constAsm = AsmFormat.getAsmConstant(program, constVal, 99, block.getScope());
+                memLoads.add(new FixedCallParamLoad(targetType, CpuAddressingMode.IMM, constAsm, false));
+            } else {
+                throw new CompileError("Unsupported parameter expression for fixed-address call: " + paramVal.toString(program), call.getSource());
+            }
+        }
+
+        emitCpuRegMoves(asm, regLoads);
+
+        // Load X/Y/Z before A so any subsequent loads cannot disturb A (and vice versa).
+        for (FixedCallParamLoad load : memLoads) {
+            if (load.target != Registers.RegisterType.REG_A) {
+                emitLoadCpuReg(asm, load.target, load.addrMode, load.operand, load.isZp);
+            }
+        }
+        for (FixedCallParamLoad load : memLoads) {
+            if (load.target == Registers.RegisterType.REG_A) {
+                emitLoadCpuReg(asm, load.target, load.addrMode, load.operand, load.isZp);
+            }
+        }
+
+        String addrAsm = AsmFormat.getAsmConstant(program, toProcedure.getFixedAddress(), 99, block.getScope());
+        asm.addInstruction("jsr", CpuAddressingMode.ABS, addrAsm, false);
+        asm.getCurrentChunk().setClobberOverwrite(CpuClobber.CLOBBER_ALL);
+
+        LValue lValue = call.getlValue();
+        if (lValue != null) {
+            if (toProcedure.isCarryReturn()) {
+                asm.addInstruction("lda", CpuAddressingMode.IMM, "0", false);
+                asm.addInstruction("rol", CpuAddressingMode.NON, null, false);
+                emitStoreCpuRegToLValue(asm, block, Registers.RegisterType.REG_A, lValue, call);
+            } else if (!SymbolType.VOID.equals(toProcedure.getReturnType())) {
+                Registers.Register retReg = toProcedure.getReturnRegister();
+                Registers.RegisterType retType = (retReg != null && !retReg.isMem() && isSupportedCpuByteReg(retReg.getType()))
+                        ? retReg.getType()
+                        : Registers.RegisterType.REG_A;
+                emitStoreCpuRegToLValue(asm, block, retType, lValue, call);
+            }
+        }
+    }
+
+    private static boolean isSupportedCpuByteReg(Registers.RegisterType type) {
+        return type == Registers.RegisterType.REG_A
+                || type == Registers.RegisterType.REG_X
+                || type == Registers.RegisterType.REG_Y
+                || type == Registers.RegisterType.REG_Z;
+    }
+
+    private static boolean needsRegAAsScratch(Registers.RegisterType src, Registers.RegisterType dst) {
+        return src != dst && src != Registers.RegisterType.REG_A && dst != Registers.RegisterType.REG_A;
+    }
+
+    private static boolean isLocOccupied(List<FixedCallParamLoad> regLoads, Registers.RegisterType reg, FixedCallParamLoad exclude) {
+        for (FixedCallParamLoad other : regLoads) {
+            if (other != exclude && other.loc == reg) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean anyPendingNeedsRegAScratch(List<FixedCallParamLoad> regLoads) {
+        for (FixedCallParamLoad other : regLoads) {
+            if (other.loc != null && other.loc != other.target && needsRegAAsScratch(other.loc, other.target)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void emitCpuRegMoves(AsmProgram asm, List<FixedCallParamLoad> regLoads) {
+        boolean scratchInUse = false;
+        int guard = 0;
+        while (true) {
+            boolean allDone = true;
+            for (FixedCallParamLoad m : regLoads) {
+                if (m.loc != m.target) {
+                    allDone = false;
+                    break;
+                }
+            }
+            if (allDone) {
+                return;
+            }
+            if (++guard > 32) {
+                throw new InternalError("Failed to schedule CPU register moves for fixed-address call.");
+            }
+
+            boolean progressed = false;
+            // 1. Try direct register-to-register move where target (and A if needed as scratch) is free
+            for (FixedCallParamLoad m : regLoads) {
+                if (m.loc == null || m.loc == m.target) continue;
+                if (isLocOccupied(regLoads, m.target, m)) continue;
+                if (needsRegAAsScratch(m.loc, m.target) && isLocOccupied(regLoads, Registers.RegisterType.REG_A, m)) continue;
+                emitCpuRegMove(asm, m.loc, m.target);
+                m.loc = m.target;
+                progressed = true;
+                break;
+            }
+            if (progressed) continue;
+
+            // 2. Try restoring from ZP scratch $fe
+            for (FixedCallParamLoad m : regLoads) {
+                if (!m.inScratch) continue;
+                if (isLocOccupied(regLoads, m.target, m)) continue;
+                if (m.target == Registers.RegisterType.REG_A && anyPendingNeedsRegAScratch(regLoads)) continue;
+                emitLoadCpuReg(asm, m.target, CpuAddressingMode.ZP, "$fe", true);
+                m.inScratch = false;
+                m.loc = m.target;
+                scratchInUse = false;
+                progressed = true;
+                break;
+            }
+            if (progressed) continue;
+
+            // 3. Try restoring from stack
+            for (FixedCallParamLoad m : regLoads) {
+                if (!m.inStack) continue;
+                if (isLocOccupied(regLoads, m.target, m)) continue;
+                if (m.target == Registers.RegisterType.REG_A && anyPendingNeedsRegAScratch(regLoads)) continue;
+                asm.addInstruction("pla", CpuAddressingMode.NON, null, false);
+                if (m.target != Registers.RegisterType.REG_A) {
+                    emitCpuRegMove(asm, Registers.RegisterType.REG_A, m.target);
+                }
+                m.inStack = false;
+                m.loc = m.target;
+                progressed = true;
+                break;
+            }
+            if (progressed) continue;
+
+            // 4. Break cycle or A-scratch conflict using $fe (preferring non-A source), or pha for A
+            if (!scratchInUse) {
+                FixedCallParamLoad victim = null;
+                for (FixedCallParamLoad m : regLoads) {
+                    if (m.loc != null && m.loc != m.target && m.loc != Registers.RegisterType.REG_A) {
+                        victim = m;
+                        break;
+                    }
+                }
+                if (victim == null) {
+                    for (FixedCallParamLoad m : regLoads) {
+                        if (m.loc != null && m.loc != m.target) {
+                            victim = m;
+                            break;
+                        }
+                    }
+                }
+                if (victim != null) {
+                    emitStoreCpuReg(asm, victim.loc, CpuAddressingMode.ZP, "$fe", true);
+                    victim.loc = null;
+                    victim.inScratch = true;
+                    scratchInUse = true;
+                    continue;
+                }
+            }
+
+            // If $fe is already in use and A blocks remaining X<->Y moves, push A onto stack
+            for (FixedCallParamLoad m : regLoads) {
+                if (m.loc == Registers.RegisterType.REG_A) {
+                    asm.addInstruction("pha", CpuAddressingMode.NON, null, false);
+                    m.loc = null;
+                    m.inStack = true;
+                    progressed = true;
+                    break;
+                }
+            }
+            if (!progressed) {
+                throw new InternalError("Deadlock while scheduling CPU register moves for fixed-address call.");
+            }
+        }
+    }
+
+    private static void emitCpuRegMove(AsmProgram asm, Registers.RegisterType src, Registers.RegisterType dst) {
+        if (src == dst) return;
+        if (src == Registers.RegisterType.REG_A) {
+            switch (dst) {
+                case REG_X -> asm.addInstruction("tax", CpuAddressingMode.NON, null, false);
+                case REG_Y -> asm.addInstruction("tay", CpuAddressingMode.NON, null, false);
+                case REG_Z -> asm.addInstruction("taz", CpuAddressingMode.NON, null, false);
+                default -> throw new InternalError("Unsupported register target " + dst);
+            }
+        } else if (dst == Registers.RegisterType.REG_A) {
+            switch (src) {
+                case REG_X -> asm.addInstruction("txa", CpuAddressingMode.NON, null, false);
+                case REG_Y -> asm.addInstruction("tya", CpuAddressingMode.NON, null, false);
+                case REG_Z -> asm.addInstruction("tza", CpuAddressingMode.NON, null, false);
+                default -> throw new InternalError("Unsupported register source " + src);
+            }
+        } else {
+            emitCpuRegMove(asm, src, Registers.RegisterType.REG_A);
+            emitCpuRegMove(asm, Registers.RegisterType.REG_A, dst);
+        }
+    }
+
+    private static void emitLoadCpuReg(AsmProgram asm, Registers.RegisterType reg, CpuAddressingMode mode, String operand, boolean isZp) {
+        switch (reg) {
+            case REG_A -> asm.addInstruction("lda", mode, operand, isZp);
+            case REG_X -> asm.addInstruction("ldx", mode, operand, isZp);
+            case REG_Y -> asm.addInstruction("ldy", mode, operand, isZp);
+            case REG_Z -> {
+                if (mode == CpuAddressingMode.ZP) {
+                    asm.addInstruction("lda", CpuAddressingMode.ZP, operand, true);
+                    asm.addInstruction("taz", CpuAddressingMode.NON, null, false);
+                } else {
+                    asm.addInstruction("ldz", mode, operand, isZp);
+                }
+            }
+            default -> throw new InternalError("Unsupported register target " + reg);
+        }
+    }
+
+    private static void emitStoreCpuReg(AsmProgram asm, Registers.RegisterType reg, CpuAddressingMode mode, String operand, boolean isZp) {
+        switch (reg) {
+            case REG_A -> asm.addInstruction("sta", mode, operand, isZp);
+            case REG_X -> asm.addInstruction("stx", mode, operand, isZp);
+            case REG_Y -> asm.addInstruction("sty", mode, operand, isZp);
+            case REG_Z -> {
+                asm.addInstruction("tza", CpuAddressingMode.NON, null, false);
+                asm.addInstruction("sta", mode, operand, isZp);
+            }
+            default -> throw new InternalError("Unsupported register source " + reg);
+        }
+    }
+
+    private void emitStoreCpuRegToLValue(AsmProgram asm, Graph.Block block, Registers.RegisterType srcReg, LValue lValue, StatementCall call) {
+        if (!(lValue instanceof VariableRef lVarRef)) {
+            throw new CompileError("Unsupported return destination for fixed-address call: " + lValue.toString(program), call.getSource());
+        }
+        Variable lVar = getScope().getVariable(lVarRef);
+        Registers.Register dstAlloc = lVar.getAllocation();
+        if (dstAlloc instanceof Registers.RegisterZpMem) {
+            String symAsm = AsmFormat.getAsmSymbolName(program, lVar, block.getScope());
+            emitStoreCpuReg(asm, srcReg, CpuAddressingMode.ZP, symAsm, true);
+        } else if (dstAlloc instanceof Registers.RegisterMainMem) {
+            String symAsm = AsmFormat.getAsmSymbolName(program, lVar, block.getScope());
+            emitStoreCpuReg(asm, srcReg, CpuAddressingMode.ABS, symAsm, false);
+        } else if (dstAlloc != null && !dstAlloc.isMem() && isSupportedCpuByteReg(dstAlloc.getType())) {
+            emitCpuRegMove(asm, srcReg, dstAlloc.getType());
+        } else {
+            throw new CompileError("Unsupported return allocation for fixed-address call: " + lVar.toString(program), call.getSource());
+        }
     }
 
 }

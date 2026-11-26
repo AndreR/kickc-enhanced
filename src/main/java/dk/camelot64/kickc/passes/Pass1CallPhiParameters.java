@@ -22,6 +22,11 @@ public class Pass1CallPhiParameters {
    }
 
    public void execute() {
+      for(Procedure procedure : getScope().getAllProcedures(true)) {
+         if(procedure.getFixedAddress() != null && Procedure.CallingConvention.PHI_CALL.equals(procedure.getCallingConvention())) {
+            procedure.setCallingConvention(Procedure.CallingConvention.INTRINSIC_CALL);
+         }
+      }
       for(ProcedureCompilation procedureCompilation : this.program.getProcedureCompilations()) {
          handleProcedure(procedureCompilation);
       }
@@ -30,6 +35,9 @@ public class Pass1CallPhiParameters {
    private void handleProcedure(ProcedureCompilation procedureCompilation) {
 
       final Graph graph = procedureCompilation.getGraph();
+      if(graph == null) {
+         return;
+      }
 
       final Deque<Graph.Block> todoBlocks = new ArrayDeque<>(graph.getAllBlocks());
       List<Graph.Block> doneBlocks = new ArrayList<>();
@@ -48,8 +56,8 @@ public class Pass1CallPhiParameters {
                // Generate parameter passing assignments
                ProcedureRef procedureRef = call.getProcedure();
                Procedure procedure = getScope().getProcedure(procedureRef);
-               // Handle PHI-calls
-               if(Procedure.CallingConvention.PHI_CALL.equals(procedure.getCallingConvention())) {
+               // Handle PHI-calls (fixed-address foreign procedures keep parameters/lValue on StatementCall for Pass 4)
+               if(procedure.getFixedAddress() == null && Procedure.CallingConvention.PHI_CALL.equals(procedure.getCallingConvention())) {
                   final ControlFlowBlock newBlock = handlePhiCall(call, procedure, stmtIt, block, splitBlockMap);
                   // The current block was split into two blocks - add the new block at the front of the todoBlocks
                   todoBlocks.addFirst(newBlock);
@@ -58,7 +66,7 @@ public class Pass1CallPhiParameters {
             if(statement instanceof StatementReturn) {
                Procedure procedure = program.getProcedure(block);
                // Handle PHI-calls
-               if(Procedure.CallingConvention.PHI_CALL.equals(procedure.getCallingConvention())) {
+               if(procedure != null && procedure.getFixedAddress() == null && Procedure.CallingConvention.PHI_CALL.equals(procedure.getCallingConvention())) {
                   // Add self-assignments for all variables modified in the procedure
                   Set<VariableRef> modifiedVars = program.getProcedureModifiedVars().getModifiedVars(procedure.getRef());
                   stmtIt.previous();

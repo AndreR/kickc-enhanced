@@ -5,6 +5,7 @@ import dk.camelot64.cpufamily6502.CpuClobber;
 import dk.camelot64.kickc.asm.AsmProgram;
 import dk.camelot64.kickc.model.*;
 import dk.camelot64.kickc.model.statements.*;
+import dk.camelot64.kickc.model.symbols.Procedure;
 import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.values.LabelRef;
 import dk.camelot64.kickc.model.values.RValue;
@@ -91,8 +92,19 @@ public class Pass4AssertNoCpuClobber extends Pass2Base {
             // Find the ICL statement
             int statementIdx = asmChunk.getStatementIdx();
             Statement statement = getProgram().getStatementInfos().getStatement(statementIdx);
-            // Find the registered clobbered by the ASM asmChunk
+            // Find the registers clobbered by the ASM asmChunk
             CpuClobber asmChunkClobber = asmChunk.getClobber();
+            if(statement instanceof StatementCall call && call.getProcedure() != null) {
+               Procedure calledProc = getProgram().getScope().getProcedure(call.getProcedure());
+               if(calledProc != null && calledProc.getFixedAddress() != null) {
+                  asmChunkClobber = CpuClobber.CLOBBER_ALL;
+               }
+            } else if(statement instanceof StatementCallExecute callExec && callExec.getProcedure() != null) {
+               Procedure calledProc = getProgram().getScope().getProcedure(callExec.getProcedure());
+               if(calledProc != null && calledProc.getFixedAddress() != null) {
+                  asmChunkClobber = CpuClobber.CLOBBER_ALL;
+               }
+            }
             Collection<Registers.Register> clobberRegisters = getClobberRegisters(asmChunkClobber);
             if(clobberRegisters.isEmpty()) {
                continue;

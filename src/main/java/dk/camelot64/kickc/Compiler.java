@@ -303,6 +303,7 @@ public class Compiler {
       new Pass1PrintfIntrinsicRewrite(program).execute();
       new Pass1ConvenienceMathRewrite(program).execute();
       new Pass1AssertReturn(program).execute();
+      new Pass1BitAddressLowering(program).execute();
       new Pass1AssertUsedVars(program).execute();
       new Pass1AssertNoModifyVars(program).execute();
       new Pass1AssertNoLocalAddressArray(program).execute();
@@ -494,7 +495,6 @@ public class Compiler {
       optimizations.add(new PassNEliminateUnusedVars(program, true));   // Notice sequence is important
       optimizations.add(new PassNEliminateEmptyProcedure(program));
       optimizations.add(new PassNEliminateEmptyStart(program));
-      optimizations.add(new PassNTransitiveDeadDataElimination(program));
       optimizations.add(new PassNStatementIndices(program));
       optimizations.add(() -> {
          if(runLoopAnalysis == null || runLoopAnalysis[0]) {
@@ -524,7 +524,9 @@ public class Compiler {
 
       boolean[] runLoopAnalysis = { true };
       List<PassStep> optimizations = getPass2Optimizations(runLoopAnalysis);
-      return pass2Execute(optimizations, runLoopAnalysis);
+      int rounds = pass2Execute(optimizations, runLoopAnalysis);
+      new PassNTransitiveDeadDataElimination(program).step();
+      return rounds;
    }
 
    private void pass2UnrollLoops() {
@@ -989,6 +991,7 @@ public class Compiler {
       pass5Optimizations.add(new Pass5PreIndexedAddressingOptimization(program));
       pass5Optimizations.add(new Pass5AxRegisterCallingConventionOptimization(program));
       pass5Optimizations.add(new Pass5ARegisterReturnOptimization(program));
+      pass5Optimizations.add(new Pass5MultiReturnStructOptimization(program));
       pass5Optimizations.add(new Pass5PointerToSmcOptimization(program));
       pass5Optimizations.add(new Pass5SmallMemcpyUnrollingOptimization(program));
       pass5Optimizations.add(new Pass5PointerReloadElimination(program));

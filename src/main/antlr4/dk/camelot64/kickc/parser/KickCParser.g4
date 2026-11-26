@@ -53,7 +53,7 @@ declaratorInitList
     ;
 
 declaratorInit
-    : declarator (COLON bitfieldExpr)? ('=' expr)? #declVariableInitExpr
+    : declarator directive* (COLON bitfieldExpr)? ('=' expr)? #declVariableInitExpr
     | declarator '=' kasmContent #declVariableInitKasm
     | COLON bitfieldExpr #declBitfieldUnnamed
     ;
@@ -135,20 +135,20 @@ staticAssert
     ;
 
 declFunction
-    : declType declarator CURLY_BEGIN stmtSeq? CURLY_END
+    : declType declarator directive* CURLY_BEGIN stmtSeq? CURLY_END
     ;
 
 parameterListDecl
     : parameterDecl (COMMA parameterDecl)* ;
 
 parameterDecl
-    : declType declarator #parameterDeclTypeDeclarator
+    : declType declarator directive* #parameterDeclTypeDeclarator
     | typeName #parameterDeclTypeName
     | PARAM_LIST #parameterDeclList
     ;
 
 pragma
-    : PRAGMA NAME PAR_BEGIN (pragmaParam (COMMA pragmaParam)* )? PAR_END
+    : PRAGMA NAME (PAR_BEGIN (pragmaParam (COMMA pragmaParam)* )? PAR_END)?
     ;
 
 pragmaParam
@@ -164,6 +164,7 @@ directive
     : CONST #directiveConst
     | ALIGN PAR_BEGIN NUMBER PAR_END #directiveAlign
     | REGISTER ( PAR_BEGIN ( NAME ) PAR_END)? #directiveRegister
+    | BIT_ADDRESS PAR_BEGIN expr COMMA expr PAR_END #directiveBitAddress
     | ADDRESS_ZEROPAGE #directiveMemoryAreaZp
     | ADDRESS_MAINMEM #directiveMemoryAreaMain
     | ADDRESS PAR_BEGIN ( expr ) PAR_END #directiveMemoryAreaAddress
@@ -205,6 +206,8 @@ stmt
     | ASM asmDirectives? CURLY_BEGIN asmLines ASM_CURLY_END #stmtAsm
     | kasmContent #stmtDeclKasm
     | staticAssert ';' #stmtStaticAssert
+    | pragma #stmtPragma
+    | AUTO BRACKET_BEGIN NAME (COMMA NAME)+ BRACKET_END ASSIGN expr SEMICOLON #stmtStructuredBinding
     | ';' #stmtEmpty
     | NAME COLON stmt? #stmtLabel
     | GOTO NAME ';' #stmtGoto
