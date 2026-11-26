@@ -120,6 +120,9 @@ public class KickC implements Callable<Integer> {
    @CommandLine.Option(names = {"-csz", "-codesize"}, description = "Diagnostics Option. Generate source-level code size profile reports (.csz and .csz.json).")
    private boolean generateCodeSizeProfile = false;
 
+   @CommandLine.Option(names = {"-bc", "-Obytecode"}, description = "Code Size Option. Compile eligible non-interrupt procedures to compact 6502 bytecode.")
+   private boolean enableBytecode = false;
+
    @CommandLine.Option(names = {"-Oliverangecallpath"}, description = "Optimization Option. Enables live ranges per call path optimization, which limits memory usage and code, but takes a lot of compile time.")
    private boolean optimizeLiveRangeCallPath = false;
 
@@ -329,6 +332,9 @@ public class KickC implements Callable<Integer> {
 
          if(optimizeDisableLongBranchFix)
             compiler.setDisableLongBranchFix(true);
+
+         if(enableBytecode)
+            compiler.setBytecodeMode(true);
 
          if(optimizeUpliftCombinations != null)
             compiler.setUpliftCombinations(optimizeUpliftCombinations);

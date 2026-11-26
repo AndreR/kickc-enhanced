@@ -162,6 +162,8 @@ pragmaParam
 
 directive
     : CONST #directiveConst
+    | CONSTEXPR #directiveConstexpr
+    | BYTECODE #directiveBytecode
     | ALIGN PAR_BEGIN NUMBER PAR_END #directiveAlign
     | REGISTER ( PAR_BEGIN ( NAME ) PAR_END)? #directiveRegister
     | BIT_ADDRESS PAR_BEGIN expr COMMA expr PAR_END #directiveBitAddress

@@ -57,6 +57,10 @@ public class Procedure extends Scope {
    private ConstantValue fixedAddress = null;
    /** Explicit return register pinning (e.g. __reg(A)), or null if using default calling convention. */
    private Registers.Register returnRegister = null;
+   /** True if the procedure is declared constexpr for compile-time evaluation. */
+   private boolean declaredConstexpr = false;
+   /** True if the procedure is marked __bytecode (or declared under #pragma bytecode(on)). */
+   private boolean declaredBytecode = false;
 
    /** The names of all legal intrinsic procedures. */
    final public static List<String> INTRINSIC_PROCEDURES = Arrays.asList(
@@ -292,6 +296,22 @@ public class Procedure extends Scope {
 
    public void setReturnRegister(Registers.Register returnRegister) {
       this.returnRegister = returnRegister;
+   }
+
+   public boolean isDeclaredConstexpr() {
+      return declaredConstexpr;
+   }
+
+   public void setDeclaredConstexpr(boolean declaredConstexpr) {
+      this.declaredConstexpr = declaredConstexpr;
+   }
+
+   public boolean isDeclaredBytecode() {
+      return declaredBytecode;
+   }
+
+   public void setDeclaredBytecode(boolean declaredBytecode) {
+      this.declaredBytecode = declaredBytecode;
    }
 
    /**

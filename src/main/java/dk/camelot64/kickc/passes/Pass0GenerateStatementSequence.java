@@ -424,6 +424,27 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
                throw new CompileError("#pragma unroll expects at most 1 parameter!", new StatementSource(ctx));
             }
          }
+         case CParser.PRAGMA_BYTECODE -> {
+            if(ctx.pragmaParam().isEmpty()) {
+               this.currentBytecodeMode = true;
+            } else if(ctx.pragmaParam().size() == 1) {
+               KickCParser.PragmaParamContext param = ctx.pragmaParam(0);
+               if(param instanceof KickCParser.PragmaParamNumberContext) {
+                  this.currentBytecodeMode = pragmaParamNumber(param).intValue() != 0;
+               } else {
+                  String val = pragmaParamName(param).toLowerCase(Locale.ENGLISH);
+                  if("on".equals(val) || "enable".equals(val) || "true".equals(val) || "1".equals(val)) {
+                     this.currentBytecodeMode = true;
+                  } else if("off".equals(val) || "disable".equals(val) || "false".equals(val) || "0".equals(val)) {
+                     this.currentBytecodeMode = false;
+                  } else {
+                     throw new CompileError("Expected on/off for #pragma bytecode, found '" + val + "'", new StatementSource(ctx));
+                  }
+               }
+            } else {
+               throw new CompileError("#pragma bytecode expects at most 1 parameter!", new StatementSource(ctx));
+            }
+         }
          default -> {
             program.getLog().append("Warning! Unknown #pragma " + pragmaName);
             System.out.println("Warning: Unknown pragma '" + pragmaName + "'");
@@ -725,6 +746,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    /** The current calling convention for procedures. */
    private Procedure.CallingConvention currentCallingConvention;
 
+   /** Whether #pragma bytecode(on) is currently active for subsequent procedure declarations. */
+   private boolean currentBytecodeMode = false;
+
    /** The current code segment. */
    private String currentSegmentCode = Scope.SEGMENT_CODE_DEFAULT;
 
@@ -832,6 +856,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
       Procedure procedure = new Procedure(varDecl.getVarName(), (SymbolTypeProcedure) varDecl.getEffectiveType(), program.getScope(), segCode, segData, currentCallingConvention, bank);
       procedure.setSegmentConstData(declaredSegData);
+      if(currentBytecodeMode) {
+         procedure.setDeclaredBytecode(true);
+      }
       addDirectives(procedure, procDirectives);
       // Check if the declaration matches any existing declaration!
       final Symbol existingSymbol = program.getScope().getSymbol(procedure.getRef());
@@ -858,6 +885,9 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
       if(defineProcedure) {
          // Make sure comments, directives and source are from the definition
+         if(currentBytecodeMode) {
+            procedure.setDeclaredBytecode(true);
+         }
          addDirectives(procedure, procDirectives);
          procedure.setComments(ensureUnusedComments(getCommentsSymbol(ctx)));
          procedure.setDefinitionSource(statementSource);
@@ -1725,6 +1755,10 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             procedure.setAxConvention(true);
          } else if(directive instanceof Directive.Intrinsic) {
             procedure.setDeclaredIntrinsic(true);
+         } else if(directive instanceof Directive.Constexpr) {
+            procedure.setDeclaredConstexpr(true);
+         } else if(directive instanceof Directive.Bytecode) {
+            procedure.setDeclaredBytecode(true);
          } else if(directive instanceof Directive.NamedRegister namedReg) {
             Registers.Register reg = Registers.getRegister(namedReg.name);
             if(reg == null) {
@@ -1803,6 +1837,16 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    @Override
    public Object visitDirectiveIntrinsic(KickCParser.DirectiveIntrinsicContext ctx) {
       return new Directive.Intrinsic();
+   }
+
+   @Override
+   public Directive visitDirectiveConstexpr(KickCParser.DirectiveConstexprContext ctx) {
+      return new Directive.Constexpr();
+   }
+
+   @Override
+   public Directive visitDirectiveBytecode(KickCParser.DirectiveBytecodeContext ctx) {
+      return new Directive.Bytecode();
    }
 
    @Override

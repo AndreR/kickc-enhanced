@@ -99,6 +99,10 @@ public class CParser {
      */
     public static final String PRAGMA_NOUNROLL = "nounroll";
     /**
+     * #pragma bytecode(on|off) toggles bytecode compilation mode for subsequent procedure definitions.
+     */
+    public static final String PRAGMA_BYTECODE = "bytecode";
+    /**
      * #pragma convenience(on|off) enables or disables modern C convenience features and automatic math synthesis.
      */
     public static final String PRAGMA_CONVENIENCE = "convenience";

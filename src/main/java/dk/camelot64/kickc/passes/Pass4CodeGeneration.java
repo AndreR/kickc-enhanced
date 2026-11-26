@@ -130,12 +130,16 @@ public class Pass4CodeGeneration {
             ? blocksToRegenerate
             : getGraph().getAllBlocks();
 
+        boolean emittedAnyBytecode = false;
+        ScopeRef activeBytecodeScope = null;
+
         for (Graph.Block block : targetBlocks) {
             Procedure blockProcedure = program.getProcedure(block);
             if (blockProcedure != null && blockProcedure.getFixedAddress() != null) {
                 continue;
             }
             if (!block.getScope().equals(currentScope)) {
+                activeBytecodeScope = null;
                 // The current block is in a different scope. End the old scope.
                 if(!trialMode) {
                     generateScopeEnding(asm, currentScope);
@@ -159,6 +163,21 @@ public class Pass4CodeGeneration {
                     asm.addScopeBegin(AsmFormat.asmFix(block.getLabel().getFullName()));
                     // Add all ZP labels for the scope
                     addConstantsAndLabels(asm, currentScope);
+                }
+            }
+
+            if (activeBytecodeScope != null && activeBytecodeScope.equals(block.getScope())) {
+                continue;
+            }
+
+            if (!trialMode && program.isProcedureEntry(block)) {
+                Procedure entryProcedure = program.getProcedure(block);
+                if (entryProcedure != null && entryProcedure.isDeclaredBytecode() && Pass4BytecodeGenerator.canCompileToBytecode(program, entryProcedure)) {
+                    if (Pass4BytecodeGenerator.emitBytecodeProcedure(program, entryProcedure, asm)) {
+                        emittedAnyBytecode = true;
+                        activeBytecodeScope = block.getScope();
+                        continue;
+                    }
                 }
             }
 
@@ -221,6 +240,12 @@ public class Pass4CodeGeneration {
         }
         if(!trialMode) {
             generateScopeEnding(asm, currentScope);
+
+            if (emittedAnyBytecode) {
+                setCurrentSegment(Scope.SEGMENT_CODE_DEFAULT, asm);
+                Pass4BytecodeGenerator.emitVmInterpreter(asm);
+                currentSegmentName = "";
+            }
 
             currentScope = ScopeRef.ROOT;
             asm.startChunk(currentScope, null, "File Data");

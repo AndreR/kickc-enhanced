@@ -77,6 +77,9 @@ public class Compiler {
     */
    private boolean enableLoopHeadConstant = false;
 
+   /** Global opt-in flag (-bc) to compile eligible non-interrupt procedures to compact 6502 bytecode. */
+   private boolean bytecodeMode = false;
+
    /** The initial calling convention to use when compiling (from command line parameter). */
    private Procedure.CallingConvention callingConvention;
 
@@ -94,6 +97,10 @@ public class Compiler {
 
    public void setUpliftLocalSearch(boolean upliftLocalSearch) {
       this.upliftLocalSearch = upliftLocalSearch;
+   }
+
+   public void setBytecodeMode(boolean bytecodeMode) {
+      this.bytecodeMode = bytecodeMode;
    }
 
    public void setDisableLongBranchFix(boolean disableLongBranchFix) {
@@ -354,6 +361,7 @@ public class Compiler {
          getLog().append("CONTROL FLOW GRAPH BEFORE INLINING");
          getLog().append(program.prettyControlFlowGraph());
       }
+      new Pass2ConstexprEvaluator(program).execute();
       new Pass1ProcedureInline(program).execute();
       new PassNStatementIndices(program).step();
       program.clearCallGraph();
@@ -480,6 +488,7 @@ public class Compiler {
       optimizations.add(new Pass2ConstantValues(program));
       optimizations.add(new Pass2ConstantCallPointerIdentification(program));
       optimizations.add(new Pass2ConstantIfs(program));
+      optimizations.add(new Pass2ConstexprEvaluator(program));
       optimizations.add(new Pass2ConstantStringConsolidation(program));
       optimizations.add(new Pass2RangeResolving(program));
       optimizations.add(new Pass2RangeNarrowing(program));

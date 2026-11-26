@@ -45,6 +45,16 @@ public class Directive {
       public Inline() { super("inline"); }
    }
 
+   /** Procedure or declaration marked constexpr for compile-time evaluation. */
+   static public class Constexpr extends Directive {
+      public Constexpr() { super("constexpr"); }
+   }
+
+   /** Procedure marked __bytecode for bytecode VM lowering. */
+   static public class Bytecode extends Directive {
+      public Bytecode() { super("__bytecode"); }
+   }
+
    /** Loop declared countdown. */
    static public class Countdown extends Directive {
       public Countdown() { super("__countdown"); }
