@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.11.0] - 2026-11-26
+
+### Code Size Optimizations & Static Analysis
+
+- **Value Range Propagation & 16→8 Bit Narrowing (#56):** Extended `Pass2RangeNarrowing` with bounded fixpoint interval analysis (`[min, max]` across SSA statements & PHIs) to automatically narrow provably bounded 16-bit expressions (`+`, `-`, `&`, `|`, `^`, `>>`) to 8-bit.
+- **Transitive Dead Data & Table Elimination (#59):** Added `PassNTransitiveDeadDataElimination` to perform whole-program reachability traversal from entry points and purge unreachable procedures and global data tables.
+- **Cross-Scope Scalar Constant Inlining (#63):** Extended `Pass2ConstantInlining` and `Pass4CodeGeneration` to inline non-address-taken named scalar `const` values across scopes as immediate operands without emitting redundant `.const`/`.label` storage.
+- **If-to-LUT Data-Flow Synthesizer (#64):** Added `Pass2IfToLutOptimization` to convert dense contiguous constant-assignment `if-else-if` chains into compact read-only lookup tables (with VRP bounds-check elision when proven in range).
+- **Pass-5 Tail-Merging & Shared Epilogues (#61):** Added `Pass5TailMergingOptimization` (integrated with `Pass5RoundContext`) for intra-scope suffix tail-merging and segment-safe cross-procedure epilogue sharing.
+
+### Language, Hardware & ABI Features
+
+- **Selective Loop Unroll Pragmas (#58):** Added `#pragma unroll(N)`, `#pragma unroll(full)`, `#pragma unroll`, and `#pragma nounroll` with automatic elimination of dead zero-trip residual loops after exact-count peeling.
+- **Automatic Struct Packing (#60):** Added opt-in `#pragma struct_pack(reorder)` / `#pragma struct_pack(default)` for deterministic 1B→2B→4B field grouping, and fixed `#pragma struct_model(unwind)` handling.
+- **Foreign & Kernal Register Pinning (#74):** Added `__reg(A/X/Y)` parameter/return pinning, fixed-address external prototypes (`= $addr`), `__carry` return extraction, cycle-safe register swap scheduling, and conservative `CLOBBER_ALL` protection across foreign calls.
+- **Bit-Addressable MMIO Variables (#75):** Added `__bit(addr, n)` declarations (`Pass1BitAddressLowering`) with zero RAM/ZP storage overhead, synthesizing `BIT`/`BMI`/`BPL` (bit 7), `BIT`/`BVS`/`BVC` (bit 6), and read-modify-write `ORA`/`AND`/`STA` instructions.
+- **Register-Mapped Multi-Return Structs & Structured Binding (#76):** Added `auto [a, b] = expr;` structured binding syntax and `A/X` (2-byte) / `A/X/Y` (3-byte) register-mapped struct return allocation (`Pass4RegisterUpliftPotentialInitialize` + `Pass5MultiReturnStructOptimization`).
+- **Compile-Time Function Execution (#77):** Added `constexpr` function support with an embedded SSA/CFG CTFE interpreter (`Pass2ConstexprEvaluator`) supporting arithmetic, loops, recursion, and `const` array lookups with zero 6502 code emitted for compile-time-only helpers.
+- **Selective 6502 Bytecode VM (#62):** Added `__bytecode` / `#pragma bytecode(on|off)` / `-bc` (`Pass4BytecodeGenerator`) emitting compact 1-byte stack bytecode streams and an on-demand 6502 interpreter (`__bc_vm_exec`, zero overhead when unused).
+
+### Tooling & Diagnostics
+
+- **Source-Level Code Size Profiler (#57):** Added `-csz` / `-codesize` (`CodeSizeProfiler`) generating human-readable `.csz` and structured `.csz.json` reports with segment summaries, Top-20 largest procedures, and line-by-line C source byte accounting.
+
+### Bug Fixes
+
+- Fixed transitive `X`/`A` liveness validation in `Pass5AxRegisterCallingConventionOptimization`.
+
 ## [0.10.2] - 2026-11-25
 
 ### Optimizer & Code Generation

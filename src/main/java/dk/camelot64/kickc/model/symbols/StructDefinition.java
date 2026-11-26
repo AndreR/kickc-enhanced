@@ -4,6 +4,10 @@ import dk.camelot64.kickc.model.Program;
 import dk.camelot64.kickc.model.types.SymbolType;
 import dk.camelot64.kickc.model.types.SymbolTypeStruct;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+
 /**
  * A struct definition containing a set of variables.
  * The struct definition can either represent a struct (member memory-layout is linearly consecutive ) or a union (member start at the same memory address)
@@ -11,6 +15,7 @@ import dk.camelot64.kickc.model.types.SymbolTypeStruct;
 public class StructDefinition extends Scope {
 
    private boolean isUnion;
+   private boolean packReorder = false;
 
    public StructDefinition(String name, boolean isUnion, Scope parentScope) {
       super(name, parentScope, SEGMENT_DATA_DEFAULT);
@@ -24,6 +29,54 @@ public class StructDefinition extends Scope {
 
    public boolean isUnion() {
       return isUnion;
+   }
+
+   public boolean isPackReorder() {
+      return packReorder;
+   }
+
+   public void setPackReorder(boolean packReorder) {
+      this.packReorder = packReorder;
+   }
+
+   /**
+    * Returns the struct members in memory-layout order.
+    * When {@link #isPackReorder()} is enabled (and the struct is not a union, has no bitfields, and has no explicit
+    * member offsets), fields are stably grouped by byte size (1-byte, 2-byte, 4-byte, then other sizes), preserving
+    * relative declaration order within each size group.
+    */
+   public List<Variable> getLayoutMembers(ProgramScope programScope) {
+      Collection<Variable> declared = getAllVars(false);
+      if(!packReorder || isUnion || hasBitfields()) {
+         return new ArrayList<>(declared);
+      }
+      for(Variable member : declared) {
+         if(member.getStructMemberOffset() != null) {
+            return new ArrayList<>(declared);
+         }
+      }
+      List<Variable> size1 = new ArrayList<>();
+      List<Variable> size2 = new ArrayList<>();
+      List<Variable> size4 = new ArrayList<>();
+      List<Variable> sizeOther = new ArrayList<>();
+      for(Variable member : declared) {
+         int sz = SymbolTypeStruct.getMemberSizeBytes(member.getType(), member.getArraySize(), programScope);
+         if(sz == 1) {
+            size1.add(member);
+         } else if(sz == 2) {
+            size2.add(member);
+         } else if(sz == 4) {
+            size4.add(member);
+         } else {
+            sizeOther.add(member);
+         }
+      }
+      List<Variable> reordered = new ArrayList<>(declared.size());
+      reordered.addAll(size1);
+      reordered.addAll(size2);
+      reordered.addAll(size4);
+      reordered.addAll(sizeOther);
+      return reordered;
    }
 
    public boolean hasBitfields() {
@@ -66,7 +119,7 @@ public class StructDefinition extends Scope {
       if(isUnion)
          return 0;
       long byteOffset = 0;
-      for(Variable structMember : getAllVars(false)) {
+      for(Variable structMember : getLayoutMembers(programScope)) {
          if(structMember.equals(member)) {
             break;
          } else {

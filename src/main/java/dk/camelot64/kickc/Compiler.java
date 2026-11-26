@@ -77,6 +77,9 @@ public class Compiler {
     */
    private boolean enableLoopHeadConstant = false;
 
+   /** Global opt-in flag (-bc) to compile eligible non-interrupt procedures to compact 6502 bytecode. */
+   private boolean bytecodeMode = false;
+
    /** The initial calling convention to use when compiling (from command line parameter). */
    private Procedure.CallingConvention callingConvention;
 
@@ -94,6 +97,10 @@ public class Compiler {
 
    public void setUpliftLocalSearch(boolean upliftLocalSearch) {
       this.upliftLocalSearch = upliftLocalSearch;
+   }
+
+   public void setBytecodeMode(boolean bytecodeMode) {
+      this.bytecodeMode = bytecodeMode;
    }
 
    public void setDisableLongBranchFix(boolean disableLongBranchFix) {
@@ -303,6 +310,7 @@ public class Compiler {
       new Pass1PrintfIntrinsicRewrite(program).execute();
       new Pass1ConvenienceMathRewrite(program).execute();
       new Pass1AssertReturn(program).execute();
+      new Pass1BitAddressLowering(program).execute();
       new Pass1AssertUsedVars(program).execute();
       new Pass1AssertNoModifyVars(program).execute();
       new Pass1AssertNoLocalAddressArray(program).execute();
@@ -353,6 +361,7 @@ public class Compiler {
          getLog().append("CONTROL FLOW GRAPH BEFORE INLINING");
          getLog().append(program.prettyControlFlowGraph());
       }
+      new Pass2ConstexprEvaluator(program).execute();
       new Pass1ProcedureInline(program).execute();
       new PassNStatementIndices(program).step();
       program.clearCallGraph();
@@ -479,9 +488,11 @@ public class Compiler {
       optimizations.add(new Pass2ConstantValues(program));
       optimizations.add(new Pass2ConstantCallPointerIdentification(program));
       optimizations.add(new Pass2ConstantIfs(program));
+      optimizations.add(new Pass2ConstexprEvaluator(program));
       optimizations.add(new Pass2ConstantStringConsolidation(program));
       optimizations.add(new Pass2RangeResolving(program));
       optimizations.add(new Pass2RangeNarrowing(program));
+      optimizations.add(new Pass2IfToLutOptimization(program));
       optimizations.add(new Pass2ComparisonOptimization(program));
       optimizations.add(new Pass2InlineDerefIdx(program));
       optimizations.add(new Pass2DeInlineWordDerefIdx(program));
@@ -522,7 +533,9 @@ public class Compiler {
 
       boolean[] runLoopAnalysis = { true };
       List<PassStep> optimizations = getPass2Optimizations(runLoopAnalysis);
-      return pass2Execute(optimizations, runLoopAnalysis);
+      int rounds = pass2Execute(optimizations, runLoopAnalysis);
+      new PassNTransitiveDeadDataElimination(program).step();
+      return rounds;
    }
 
    private void pass2UnrollLoops() {
@@ -987,6 +1000,7 @@ public class Compiler {
       pass5Optimizations.add(new Pass5PreIndexedAddressingOptimization(program));
       pass5Optimizations.add(new Pass5AxRegisterCallingConventionOptimization(program));
       pass5Optimizations.add(new Pass5ARegisterReturnOptimization(program));
+      pass5Optimizations.add(new Pass5MultiReturnStructOptimization(program));
       pass5Optimizations.add(new Pass5PointerToSmcOptimization(program));
       pass5Optimizations.add(new Pass5SmallMemcpyUnrollingOptimization(program));
       pass5Optimizations.add(new Pass5PointerReloadElimination(program));
@@ -995,6 +1009,7 @@ public class Compiler {
       pass5Optimizations.add(new Pass5TailCallOptimization(program));
       pass5Optimizations.add(new Pass5RelabelLongLabels(program));
       pass5Optimizations.add(new Pass5DuplicateBlockElimination(program));
+      pass5Optimizations.add(new Pass5TailMergingOptimization(program));
       pass5Optimizations.add(new Pass5RedundantLabelElimination(program));
       pass5Optimizations.add(new Pass5UnusedLabelElimination(program));
       pass5Optimizations.add(new Pass5DoubleJumpElimination(program));

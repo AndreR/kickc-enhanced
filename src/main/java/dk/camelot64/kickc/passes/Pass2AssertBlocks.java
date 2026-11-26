@@ -36,7 +36,7 @@ public class Pass2AssertBlocks extends Pass2SsaAssertion {
       }
    }
 
-   private static class BlockReferenceChecker extends GraphBaseVisitor<Void> {
+   private class BlockReferenceChecker extends GraphBaseVisitor<Void> {
 
       Set<LabelRef> seenBlocks;
       private Graph graph;
@@ -83,6 +83,8 @@ public class Pass2AssertBlocks extends Pass2SsaAssertion {
       public Void visitCall(StatementCall call) {
          ProcedureRef procedure = call.getProcedure();
          if(Procedure.INTRINSIC_PROCEDURES.contains(procedure.getFullName())) return null;
+         Procedure proc = getScope().getProcedure(procedure);
+         if(proc != null && proc.getFixedAddress() != null) return null;
          LabelRef procLabelRef = procedure.getLabelRef();
          assertBlock(procLabelRef);
          return super.visitCall(call);

@@ -29,10 +29,16 @@ public class Pass1GenerateControlFlowGraph extends Pass1Base {
          if(procedure.isDeclaredIntrinsic())
             continue;
          final ProcedureCompilation procedureCompilation = getProgram().getProcedureCompilation(procedure.getRef());
+         if(procedureCompilation == null)
+            continue;
          final StatementSequence sequence = procedureCompilation.getStatementSequence();
-         if(sequence.getStatements().size()==0)
+         if(sequence == null || sequence.getStatements().size()==0) {
+            if(procedure.getFixedAddress() != null && procedureCompilation.getGraph() == null) {
+               procedureCompilation.setGraph(new ControlFlowGraph(new ArrayList<>()));
+            }
             // Empty procedures should not produce any blocks
             continue;
+         }
 
          List<Graph.Block> blocks = new ArrayList<>();
          Map<LabelRef, Graph.Block> blockMap = new HashMap<>();

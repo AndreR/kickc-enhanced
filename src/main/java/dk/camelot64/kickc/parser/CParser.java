@@ -88,6 +88,20 @@ public class CParser {
      * #pragma loop_align(threshold) specifies maximum byte size of tight loops for zero-waste page boundary alignment.
      */
     public static final String PRAGMA_LOOP_ALIGN = "loop_align";
+
+    /**
+     * #pragma unroll(factor) or #pragma unroll(full) requests selective unrolling of the immediately following loop.
+     */
+    public static final String PRAGMA_UNROLL = "unroll";
+
+    /**
+     * #pragma nounroll prevents unrolling of the immediately following loop.
+     */
+    public static final String PRAGMA_NOUNROLL = "nounroll";
+    /**
+     * #pragma bytecode(on|off) toggles bytecode compilation mode for subsequent procedure definitions.
+     */
+    public static final String PRAGMA_BYTECODE = "bytecode";
     /**
      * #pragma convenience(on|off) enables or disables modern C convenience features and automatic math synthesis.
      */
@@ -122,6 +136,10 @@ public class CParser {
      * #pragma struct_model(...) sepcifies which struct model to use by default.
      */
     public static final String PRAGMA_STRUCT_MODEL = "struct_model";
+    /**
+     * #pragma struct_pack(reorder|default) controls field reordering for subsequent struct definitions.
+     */
+    public static final String PRAGMA_STRUCT_PACK = "struct_pack";
     /**
      * #pragma resource("filename") specifies that a specific file is a resource that is needed for assembly.
      * The resource-file is copied to the output directory when compiling.

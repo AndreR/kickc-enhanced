@@ -52,6 +52,8 @@ public class Pass2AssertSymbols extends Pass2SsaAssertion {
          if(tableSymbol instanceof TypeDefsScope) continue;
          if(tableSymbol.getType() instanceof SymbolTypeStruct) continue;
          if(Procedure.INTRINSIC_PROCEDURES.contains(tableSymbol.getFullName())) continue;
+         if(tableSymbol instanceof Procedure && ((Procedure) tableSymbol).getFixedAddress() != null) continue;
+         if(tableSymbol.getScope() instanceof Procedure && ((Procedure) tableSymbol.getScope()).getFixedAddress() != null) continue;
          String codeSymbolFullName = tableSymbol.getFullName();
          if(!codeSymbolFullNames.contains(codeSymbolFullName)) {
             throw new AssertionFailed("Compile process error. Symbol found in symbol table, but not in code. " + codeSymbolFullName);

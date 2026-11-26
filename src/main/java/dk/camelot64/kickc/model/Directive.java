@@ -1,5 +1,7 @@
 package dk.camelot64.kickc.model;
 
+import dk.camelot64.kickc.parser.KickCParser;
+
 import dk.camelot64.kickc.model.symbols.Procedure;
 import dk.camelot64.kickc.model.values.ConstantValue;
 
@@ -41,6 +43,16 @@ public class Directive {
    /** Function declared inline. */
    static public class Inline extends Directive {
       public Inline() { super("inline"); }
+   }
+
+   /** Procedure or declaration marked constexpr for compile-time evaluation. */
+   static public class Constexpr extends Directive {
+      public Constexpr() { super("constexpr"); }
+   }
+
+   /** Procedure marked __bytecode for bytecode VM lowering. */
+   static public class Bytecode extends Directive {
+      public Bytecode() { super("__bytecode"); }
    }
 
    /** Loop declared countdown. */
@@ -198,6 +210,26 @@ public class Directive {
       public ReserveZp(List<Integer> reservedZp) {
          super("__reserve_zp");
          this.reservedZp = reservedZp;
+      }
+   }
+
+   /** Bit-addressable MMIO variable directive: __bit(address, bitIndex) */
+   public static class BitAddress extends Directive {
+      public final KickCParser.ExprContext addressExpr;
+      public final KickCParser.ExprContext bitIndexExpr;
+
+      public BitAddress(KickCParser.ExprContext addressExpr, KickCParser.ExprContext bitIndexExpr) {
+         super("__bit");
+         this.addressExpr = addressExpr;
+         this.bitIndexExpr = bitIndexExpr;
+      }
+
+      public KickCParser.ExprContext getAddressExpr() {
+         return addressExpr;
+      }
+
+      public KickCParser.ExprContext getBitIndexExpr() {
+         return bitIndexExpr;
       }
    }
 

@@ -3,8 +3,12 @@ package dk.camelot64.kickc.passes;
 import dk.camelot64.kickc.model.*;
 import dk.camelot64.kickc.model.statements.Statement;
 import dk.camelot64.kickc.model.statements.StatementCalling;
+import dk.camelot64.kickc.model.symbols.Procedure;
+import dk.camelot64.kickc.model.symbols.Scope;
 import dk.camelot64.kickc.model.symbols.Variable;
+import dk.camelot64.kickc.model.types.SymbolTypeStruct;
 import dk.camelot64.kickc.model.values.ScopeRef;
+import dk.camelot64.kickc.model.values.SymbolVariableRef;
 import dk.camelot64.kickc.model.values.VariableRef;
 
 import java.util.ArrayList;
@@ -65,13 +69,14 @@ public class Pass4RegisterUpliftPotentialInitialize extends Pass2Base {
             boolean isByte2 = defaultRegister.isMem() && defaultRegister.getBytes() == 1;
             if(isByte2 && !varVolatile(equivalenceClass)) {
                Integer leafParamIdx = getLeafProcedureParameterIndex(equivalenceClass, nonLeafProcedures);
-               if(leafParamIdx != null) {
-                  if(leafParamIdx == 0) {
+               Integer preferredRegIdx = leafParamIdx != null ? leafParamIdx : getStructReturnMemberIndex(equivalenceClass);
+               if(preferredRegIdx != null) {
+                  if(preferredRegIdx == 0) {
                      potentials.add(Registers.getRegisterA());
                      potentials.add(Registers.getRegisterX());
                      potentials.add(defaultRegister);
                      potentials.add(Registers.getRegisterY());
-                  } else if(leafParamIdx == 1) {
+                  } else if(preferredRegIdx == 1) {
                      potentials.add(Registers.getRegisterX());
                      potentials.add(Registers.getRegisterA());
                      potentials.add(defaultRegister);
@@ -80,6 +85,9 @@ public class Pass4RegisterUpliftPotentialInitialize extends Pass2Base {
                      potentials.add(Registers.getRegisterY());
                      potentials.add(defaultRegister);
                      potentials.add(Registers.getRegisterX());
+                     if(preferredRegIdx == 2) {
+                        potentials.add(Registers.getRegisterA());
+                     }
                   }
                } else {
                   potentials.add(defaultRegister);
@@ -158,6 +166,60 @@ public class Pass4RegisterUpliftPotentialInitialize extends Pass2Base {
                   }
                }
             }
+         }
+      }
+      return null;
+   }
+
+   /**
+    * Identifies if an equivalence class corresponds to an unwound 1-byte member of a 2-byte or 3-byte
+    * struct return value for a non-recursive, non-interrupt, non-address-taken procedure.
+    * Returns the member index (0 -> prefer A, 1 -> prefer X, 2 -> prefer Y) or null if not applicable.
+    */
+   private Integer getStructReturnMemberIndex(LiveRangeEquivalenceClass equivalenceClass) {
+      StructVariableMemberUnwinding unwinding = getProgram().getStructVariableMemberUnwinding();
+      if(unwinding == null) return null;
+      CallGraph callGraph = getProgram().getCallGraph();
+      for(VariableRef varRef : equivalenceClass.getVariables()) {
+         Variable variable = getProgram().getScope().getVariable(varRef);
+         if(variable == null) continue;
+         Variable masterVar = variable.isKindPhiVersion() ? variable.getPhiMaster() : variable;
+         if(masterVar == null) continue;
+         Scope scope = masterVar.getScope();
+         if(!(scope instanceof Procedure procedure)) continue;
+         if(procedure.getInterruptType() != null || procedure.isDeclaredIntrinsic()) continue;
+         if(Procedure.CallingConvention.STACK_CALL.equals(procedure.getCallingConvention())) continue;
+         String procName = procedure.getLocalName();
+         if("main".equals(procName) || "__start".equals(procName)) continue;
+         if(callGraph != null && callGraph.getRecursiveCalls(procedure.getRef()).contains(procedure.getRef())) continue;
+         if(Pass2ConstantIdentification.isAddressOfUsed(procedure.getRef(), getProgram())) continue;
+
+         Variable procReturnVar = procedure.getLocalVariable("return");
+         if(procReturnVar == null || !procReturnVar.isStructUnwind()
+               || !(procReturnVar.getType() instanceof SymbolTypeStruct)) {
+            continue;
+         }
+         StructVariableMemberUnwinding.VariableUnwinding returnUnwinding = unwinding.getVariableUnwinding(procReturnVar.getRef());
+         if(returnUnwinding == null) continue;
+         List<String> memberNames = returnUnwinding.getMemberNames();
+         if(memberNames == null || (memberNames.size() != 2 && memberNames.size() != 3)) continue;
+
+         int matchedIdx = -1;
+         boolean allSingleByte = true;
+         for(int idx = 0; idx < memberNames.size(); idx++) {
+            SymbolVariableRef memberRef = returnUnwinding.getMemberUnwound(memberNames.get(idx));
+            Variable memberVar = memberRef != null ? getProgram().getScope().getVariable(memberRef) : null;
+            if(memberVar == null || memberVar.getType().getSizeBytes() != 1
+                  || memberVar.isVolatile() || memberVar.isKindLoadStore()) {
+               allSingleByte = false;
+               break;
+            }
+            if(masterVar.getRef().equals(memberRef)) {
+               matchedIdx = idx;
+            }
+         }
+         if(allSingleByte && matchedIdx >= 0) {
+            return matchedIdx;
          }
       }
       return null;

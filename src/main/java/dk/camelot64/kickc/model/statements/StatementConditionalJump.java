@@ -27,6 +27,8 @@ public class StatementConditionalJump extends StatementBase {
    private boolean wasUnrolled;
    /** This conditional is in a loop declared to be countdown. */
    private boolean declaredCountdown;
+   /** Selective loop unroll factor: null = default heuristic, 0 = nounroll, -1 = full unroll, N > 0 = unroll factor N. */
+   private Integer unrollFactor = null;
 
    public StatementConditionalJump(RValue condition, LabelRef destination,StatementSource source, List<Comment> comments) {
       super(source, comments);
@@ -104,6 +106,14 @@ public class StatementConditionalJump extends StatementBase {
 
    public void setDeclaredCountdown(boolean declaredCountdown) {
       this.declaredCountdown = declaredCountdown;
+   }
+
+   public Integer getUnrollFactor() {
+      return unrollFactor;
+   }
+
+   public void setUnrollFactor(Integer unrollFactor) {
+      this.unrollFactor = unrollFactor;
    }
 
    @Override

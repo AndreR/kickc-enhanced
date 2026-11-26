@@ -1,9 +1,12 @@
 package dk.camelot64.kickc.passes;
 
+import dk.camelot64.kickc.model.Graph;
 import dk.camelot64.kickc.model.Program;
 import dk.camelot64.kickc.model.iterator.ProgramValue;
 import dk.camelot64.kickc.model.iterator.ProgramValueIterator;
 import dk.camelot64.kickc.model.symbols.*;
+import dk.camelot64.kickc.model.types.SymbolType;
+import dk.camelot64.kickc.model.types.SymbolTypeIntegerFixed;
 import dk.camelot64.kickc.model.values.*;
 import dk.camelot64.kickc.passes.utils.AliasReplacer;
 
@@ -33,6 +36,7 @@ public class Pass2ConstantInlining extends Pass2SsaOptimization {
       inline.putAll(findAliasConstants());
       inline.putAll(findUnnamedConstants());
       inline.putAll(findConstVarVersions());
+      inline.putAll(findCrossScopeScalarConstants(inline));
 
       // Remove all string constants
       List<ConstantRef> refs = new ArrayList(inline.keySet());
@@ -195,6 +199,126 @@ public class Pass2ConstantInlining extends Pass2SsaOptimization {
          }
       }
       return aliases;
+   }
+
+   /**
+    * Find named scalar constants (integer/boolean) referenced across procedure/scope boundaries
+    * whose address is never taken and that are not referenced by inline KickAsm/ASM blocks.
+    *
+    * @param existingInline Constants already queued for inlining
+    * @return Map from constant reference to its literal value
+    */
+   private Map<ConstantRef, ConstantValue> findCrossScopeScalarConstants(Map<ConstantRef, ConstantValue> existingInline) {
+      ProgramScope programScope = getProgramScope();
+      Set<ConstantRef> protectedConsts = new HashSet<>();
+      Map<ConstantRef, Set<ScopeRef>> refScopes = new HashMap<>();
+
+      for(Graph.Block block : getGraph().getAllBlocks()) {
+         ScopeRef blockScope = block.getScope();
+         ProgramValueIterator.execute(block, (programValue, currentStmt, stmtIt, currentBlock) -> {
+            Value value = programValue.get();
+            if(value instanceof ConstantSymbolPointer csp) {
+               if(csp.getToSymbol() instanceof ConstantRef cr) {
+                  protectedConsts.add(cr);
+               }
+            } else if(value instanceof ConstantRef cr) {
+               if(programValue instanceof ProgramValue.KickAsmUses
+                     || programValue instanceof ProgramValue.ProgramValueConstantArrayKickAsmUses
+                     || programValue instanceof ProgramValue.ProgramValueAsmReferenced) {
+                  protectedConsts.add(cr);
+               }
+               refScopes.computeIfAbsent(cr, k -> new HashSet<>()).add(blockScope);
+            }
+         });
+      }
+
+      for(Variable var : programScope.getAllVars(true)) {
+         ScopeRef varScope = var.getScope() != null ? var.getScope().getRef() : ScopeRef.ROOT;
+         ProgramValueIterator.execute(var, (programValue, currentStmt, stmtIt, currentBlock) -> {
+            Value value = programValue.get();
+            if(value instanceof ConstantSymbolPointer csp) {
+               if(csp.getToSymbol() instanceof ConstantRef cr) {
+                  protectedConsts.add(cr);
+               }
+            } else if(value instanceof ConstantRef cr) {
+               if(programValue instanceof ProgramValue.KickAsmUses
+                     || programValue instanceof ProgramValue.ProgramValueConstantArrayKickAsmUses
+                     || programValue instanceof ProgramValue.ProgramValueAsmReferenced) {
+                  protectedConsts.add(cr);
+               }
+               refScopes.computeIfAbsent(cr, k -> new HashSet<>()).add(varScope);
+            }
+         });
+      }
+
+      Map<ConstantRef, ConstantValue> result = new LinkedHashMap<>();
+      for(Variable constant : programScope.getAllConstants(true)) {
+         ConstantRef ref = constant.getConstantRef();
+         if(existingInline.containsKey(ref) || protectedConsts.contains(ref)) {
+            continue;
+         }
+         String localName = ref.getLocalName();
+         if(localName.startsWith("SIZEOF_") || localName.startsWith("OFFSET_STRUCT_")) {
+            continue;
+         }
+         if(constant.isVolatile() || constant.isExport()) {
+            continue;
+         }
+         if(constant.getMemoryAddress() != null || (constant.getRegister() != null && constant.getRegister().isAddressHardcoded())) {
+            continue;
+         }
+         Scope scope = constant.getScope();
+         if(scope == null || scope instanceof EnumDefinition || scope instanceof StructDefinition) {
+            continue;
+         }
+         SymbolType type = constant.getType();
+         if(!(type instanceof SymbolTypeIntegerFixed || SymbolType.BOOLEAN.equals(type))) {
+            continue;
+         }
+         ConstantValue initVal = constant.getInitValue();
+         if(initVal == null
+               || initVal instanceof ConstantString
+               || initVal instanceof ConstantArray
+               || initVal instanceof ConstantStructValue
+               || initVal instanceof StructZero
+               || initVal instanceof ConstantSymbolPointer
+               || initVal instanceof ConstantPointer) {
+            continue;
+         }
+         ConstantLiteral literal;
+         try {
+            literal = initVal.calculateLiteral(programScope);
+         } catch(RuntimeException e) {
+            continue;
+         }
+         if(!(literal instanceof ConstantInteger || literal instanceof ConstantBool || literal instanceof ConstantChar)) {
+            continue;
+         }
+         ConstantValue replacement = literal;
+         if(literal instanceof ConstantInteger ci && type instanceof SymbolTypeIntegerFixed) {
+            SymbolType litType = ci.getType();
+            if(litType == null || SymbolType.NUMBER.equals(litType) || SymbolType.UNUMBER.equals(litType) || SymbolType.SNUMBER.equals(litType)) {
+               replacement = new ConstantInteger(ci.getInteger(), type.getQualified(false, false));
+            }
+         }
+         Set<ScopeRef> scopes = refScopes.get(ref);
+         if(scopes == null || scopes.isEmpty()) {
+            continue;
+         }
+         ScopeRef ownerScope = scope.getRef();
+         boolean crossScope = false;
+         for(ScopeRef s : scopes) {
+            if(!ownerScope.equals(s)) {
+               crossScope = true;
+               break;
+            }
+         }
+         if(!crossScope) {
+            continue;
+         }
+         result.put(ref, replacement);
+      }
+      return result;
    }
 
 }

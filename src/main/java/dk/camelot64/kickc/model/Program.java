@@ -277,6 +277,7 @@ public class Program {
    public String prettyControlFlowGraph() {
       StringBuilder graphPretty = new StringBuilder();
       for(ProcedureCompilation procedureCompilation : getProcedureCompilations()) {
+         if(procedureCompilation.getGraph() == null) continue;
          graphPretty.append(procedureCompilation.getGraph().toString(this));
       }
       return graphPretty.toString();
@@ -839,7 +840,7 @@ public class Program {
       StringBuilder sizeInfo = new StringBuilder();
       sizeInfo.append(getScope().getSizeInfo());
 
-      final List<Graph.Block> allBlocks = getProcedureCompilations().stream().map(ProcedureCompilation::getGraph).map(ControlFlowGraph::getAllBlocks).flatMap(Collection::stream).toList();
+      final List<Graph.Block> allBlocks = getProcedureCompilations().stream().map(ProcedureCompilation::getGraph).filter(Objects::nonNull).map(ControlFlowGraph::getAllBlocks).flatMap(Collection::stream).toList();
       sizeInfo.append("SIZE blocks ").append(allBlocks.size()).append("\n");
       int numStmt = allBlocks.stream().mapToInt(block -> block.getStatements().size()).sum();
       sizeInfo.append("SIZE statements ").append(numStmt).append("\n");

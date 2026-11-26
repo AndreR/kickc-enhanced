@@ -35,7 +35,7 @@ import java.util.stream.Collectors;
       descriptionHeading = "%nDescription:%n%n",
       parameterListHeading = "%nParameters:%n",
       optionListHeading = "%nOptions:%n",
-      version = "KickC Enhanced 0.10.2"
+      version = "KickC Enhanced 0.11.0"
 )
 public class KickC implements Callable<Integer> {
 
@@ -116,6 +116,12 @@ public class KickC implements Callable<Integer> {
 
    @CommandLine.Option(names = {"-fconvenience", "-fmodern-c", "-fconvenience-math"}, description = "Convenience-C Option. Enables automatic math synthesis, constant division handling and modern C convenience features.")
    private boolean enableConvenience = false;
+
+   @CommandLine.Option(names = {"-csz", "-codesize"}, description = "Diagnostics Option. Generate source-level code size profile reports (.csz and .csz.json).")
+   private boolean generateCodeSizeProfile = false;
+
+   @CommandLine.Option(names = {"-bc", "-Obytecode"}, description = "Code Size Option. Compile eligible non-interrupt procedures to compact 6502 bytecode.")
+   private boolean enableBytecode = false;
 
    @CommandLine.Option(names = {"-Oliverangecallpath"}, description = "Optimization Option. Enables live ranges per call path optimization, which limits memory usage and code, but takes a lot of compile time.")
    private boolean optimizeLiveRangeCallPath = false;
@@ -327,6 +333,9 @@ public class KickC implements Callable<Integer> {
          if(optimizeDisableLongBranchFix)
             compiler.setDisableLongBranchFix(true);
 
+         if(enableBytecode)
+            compiler.setBytecodeMode(true);
+
          if(optimizeUpliftCombinations != null)
             compiler.setUpliftCombinations(optimizeUpliftCombinations);
 
@@ -435,6 +444,13 @@ public class KickC implements Callable<Integer> {
          asmWriter.write(asmCodeString);
          asmWriter.close();
          asmOutputStream.close();
+
+         if(generateCodeSizeProfile) {
+            Path cszPath = program.getOutputFileManager().getOutputFile("csz");
+            Path jsonPath = program.getOutputFileManager().getOutputFile("csz.json");
+            dk.camelot64.kickc.asm.CodeSizeProfiler.generateReports(program, cszPath, jsonPath);
+            System.out.println("Writing code size profile " + cszPath + " and " + jsonPath);
+         }
 
          // Save the fragment synthesizer cache files
          program.getAsmFragmentMasterSynthesizer().finalize(compiler.getLog());
