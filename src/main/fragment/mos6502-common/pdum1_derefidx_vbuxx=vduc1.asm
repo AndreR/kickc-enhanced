@@ -10,8 +10,8 @@ iny
 lda #>{c1}
 sta ($fe),y
 iny
-lda #<({c1}>>16)
+lda #<{c1}>>16
 sta ($fe),y
 iny
-lda #>({c1}>>16)
+lda #>{c1}>>16
 sta ($fe),y

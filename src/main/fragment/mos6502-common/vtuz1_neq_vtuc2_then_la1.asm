@@ -1,5 +1,5 @@
 lda {z1}+2
-cmp #<({c2}>>$10)
+cmp #<{c2}>>$10
 bne {la1}
 lda {z1}+1
 cmp #>{c2}

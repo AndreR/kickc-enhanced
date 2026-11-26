@@ -1,7 +1,7 @@
-lda #<({c2}>>$18)
+lda #<{c2}>>$18
 bne {la1}
 lda {m1}+2
-cmp #<({c2}>>$10)
+cmp #<{c2}>>$10
 bne {la1}
 lda {m1}+1
 cmp #>{c2}

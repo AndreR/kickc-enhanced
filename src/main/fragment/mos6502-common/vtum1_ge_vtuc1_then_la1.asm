@@ -1,5 +1,5 @@
 lda {m1}+2
-cmp #<({c1}>>$10)
+cmp #<{c1}>>$10
 bcc !+
 bne {la1}
 lda {m1}+1
