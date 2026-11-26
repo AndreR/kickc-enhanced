@@ -217,6 +217,68 @@ public class LiveRangeInterference {
       return interference[idx1].get(idx2);
    }
 
+   public boolean interferesWithRegister(LiveRangeEquivalenceClass ec, Registers.Register register) {
+      if(ec == null || register == null) return false;
+      Integer idx = ecToIndex.get(ec);
+      if(idx == null) return false;
+      BitSet regSet = classesByRegister.get(register);
+      if(regSet == null || regSet.isEmpty()) return false;
+      return interference[idx].intersects(regSet);
+   }
+
+   public boolean interferesWithRegisterIgnoring(LiveRangeEquivalenceClass ec, Registers.Register register, LiveRangeEquivalenceClass ignoredEc) {
+      if(ec == null || register == null) return false;
+      Integer idx = ecToIndex.get(ec);
+      if(idx == null) return false;
+      BitSet regSet = classesByRegister.get(register);
+      if(regSet == null || regSet.isEmpty()) return false;
+      if(!interference[idx].intersects(regSet)) return false;
+      if(ignoredEc == null) return true;
+      Integer ignoredIdx = ecToIndex.get(ignoredEc);
+      if(ignoredIdx == null || !regSet.get(ignoredIdx) || !interference[idx].get(ignoredIdx)) {
+         return true;
+      }
+      for(int i = regSet.nextSetBit(0); i >= 0; i = regSet.nextSetBit(i + 1)) {
+         if(i != ignoredIdx && interference[idx].get(i)) {
+            return true;
+         }
+      }
+      return false;
+   }
+
+   public List<LiveRangeEquivalenceClass> getInterferingClasses(LiveRangeEquivalenceClass ec) {
+      if(ec == null) return Collections.emptyList();
+      Integer idx = ecToIndex.get(ec);
+      if(idx == null) return Collections.emptyList();
+      BitSet inf = interference[idx];
+      if(inf.isEmpty()) return Collections.emptyList();
+      List<LiveRangeEquivalenceClass> result = new ArrayList<>(inf.cardinality());
+      for(int i = inf.nextSetBit(0); i >= 0; i = inf.nextSetBit(i + 1)) {
+         if(i != idx) {
+            LiveRangeEquivalenceClass other = classes.get(i);
+            if(ecToIndex.containsKey(other)) {
+               result.add(other);
+            }
+         }
+      }
+      return result;
+   }
+
+   public void updateRegister(LiveRangeEquivalenceClass ec, Registers.Register oldReg, Registers.Register newReg) {
+      if(Objects.equals(oldReg, newReg)) return;
+      Integer idx = ecToIndex.get(ec);
+      if(idx == null) return;
+      if(oldReg != null) {
+         BitSet oldSet = classesByRegister.get(oldReg);
+         if(oldSet != null) {
+            oldSet.clear(idx);
+         }
+      }
+      if(newReg != null) {
+         classesByRegister.computeIfAbsent(newReg, k -> new BitSet(classes.size())).set(idx);
+      }
+   }
+
    public void updateRegister(LiveRangeEquivalenceClass ec, Registers.Register newReg) {
       Integer idx = ecToIndex.get(ec);
       if(idx == null) return;

@@ -30,6 +30,26 @@ public final class Pass4DirectTrialEvaluator {
    public record TrialEvalResult(boolean success, int score, int bytes) {
    }
 
+   public static final class DeltaEvalResult {
+      public static final DeltaEvalResult INFEASIBLE = new DeltaEvalResult(false, Integer.MAX_VALUE, Integer.MAX_VALUE, 0);
+
+      public final boolean feasible;
+      public final int scoreDelta;
+      public final int bytesDelta;
+      public final int cpuRegDelta;
+
+      public DeltaEvalResult(boolean feasible, int scoreDelta, int bytesDelta, int cpuRegDelta) {
+         this.feasible = feasible;
+         this.scoreDelta = scoreDelta;
+         this.bytesDelta = bytesDelta;
+         this.cpuRegDelta = cpuRegDelta;
+      }
+
+      public boolean isStrictlyBetter() {
+         return feasible && (scoreDelta < 0 || (scoreDelta == 0 && (bytesDelta < 0 || (bytesDelta == 0 && cpuRegDelta > 0))));
+      }
+   }
+
    private static final int MASK_A = 1;
    private static final int MASK_X = 2;
    private static final int MASK_Y = 4;
@@ -99,22 +119,45 @@ public final class Pass4DirectTrialEvaluator {
       private static final int[] EMPTY_INT_ARRAY = new int[0];
       private static final int[][] EMPTY_INT_2D_ARRAY = new int[0][];
       private static final PhiTransitionMeta[] EMPTY_PHI_META_ARRAY = new PhiTransitionMeta[0];
+      private static final PhiAliveEntry[] EMPTY_PHI_ALIVE_ARRAY = new PhiAliveEntry[0];
+
+      public static final class PhiAliveEntry {
+         public final PhiTransitionMeta meta;
+         public final int assignIdx;
+
+         PhiAliveEntry(PhiTransitionMeta meta, int assignIdx) {
+            this.meta = meta;
+            this.assignIdx = assignIdx;
+         }
+      }
 
       static final class LocalState {
          long version;
          final byte[] regMasks;
          final Registers.Register[] allocations;
          final boolean[] overridden;
+         final boolean[] seenStmt;
+         final int[] affectedStmtBuf;
+         final boolean[] seenPhi;
+         final PhiTransitionMeta[] affectedPhiBuf;
+         final EvalAcc evalAcc = new EvalAcc();
 
-         LocalState(long version, byte[] regMasks, Registers.Register[] allocations, int numVars) {
+         LocalState(long version, byte[] regMasks, Registers.Register[] allocations, int numVars, int numStmts, int totalPhiCount) {
             this.version = version;
             this.regMasks = regMasks;
             this.allocations = allocations;
             this.overridden = new boolean[numVars];
+            this.seenStmt = new boolean[numStmts];
+            this.affectedStmtBuf = new int[numStmts];
+            this.seenPhi = new boolean[totalPhiCount];
+            this.affectedPhiBuf = new PhiTransitionMeta[totalPhiCount];
          }
       }
 
       static final class PhiTransitionMeta {
+         final int phiId;
+         final PhiTransitions.PhiTransition transition;
+         final ScopeRef scope;
          final int[][] clobberVarIds;
          final int[] lVarIds;
          final String[] lTypePrefixes;
@@ -128,12 +171,18 @@ public final class Pass4DirectTrialEvaluator {
          volatile boolean baseValid;
 
          PhiTransitionMeta(
+               int phiId,
+               PhiTransitions.PhiTransition transition,
+               ScopeRef scope,
                int[][] clobberVarIds,
                int[] lVarIds,
                String[] lTypePrefixes,
                int[] rVarIds,
                String[] rTypePrefixes,
                int[] referencedVarIds) {
+            this.phiId = phiId;
+            this.transition = transition;
+            this.scope = scope;
             this.clobberVarIds = clobberVarIds;
             this.lVarIds = lVarIds;
             this.lTypePrefixes = lTypePrefixes;
@@ -147,14 +196,20 @@ public final class Pass4DirectTrialEvaluator {
       final Map<LabelRef, PhiTransitions> phiTransitionsRef;
       final int numVars;
       final int numStmts;
+      final int totalStmtCount;
+      final int totalPhiCount;
       final Map<VariableRef, Integer> varIdMap;
       final Variable[] varsById;
+      final Statement[] stmtsByIdx;
+      final Graph.Block[] blocksByStmtIdx;
       final byte[] baseCpuRegMask;
       final Registers.Register[] baseAllocations;
       final int[][] stmtAliveNonAssignedVarIds;
       final int[][] stmtReferencedVarIds;
       final int[][] varToStmtIds;
+      final int[][] varToAliveNonAssignedStmtIds;
       final PhiTransitionMeta[][] varToPhiMetas;
+      final PhiAliveEntry[][] varToAlivePhiAssigns;
       final int[] baseStmtClobberMask;
       final int[] baseStmtWeightedScore;
       final int[] baseStmtBytes;
@@ -166,6 +221,7 @@ public final class Pass4DirectTrialEvaluator {
       FastClobberIndex(Program program, Map<LabelRef, PhiTransitions> phiTransitions) {
          this.phiTransitionsRef = phiTransitions;
          SymbolInfos symbolInfos = program.getSymbolInfos();
+         StatementInfos stmtInfos = program.getStatementInfos();
          LiveRangeVariablesEffective liveRangeVars = program.getLiveRangeVariablesEffective();
          VariableReferenceInfos varRefInfos = program.getVariableReferenceInfos();
          Collection<Variable> allVars = program.getScope().getAllVariables(true);
@@ -189,15 +245,20 @@ public final class Pass4DirectTrialEvaluator {
             }
          }
          this.numStmts = maxStmtIdx >= 0 ? maxStmtIdx + 1 : 0;
+         this.totalStmtCount = this.numStmts;
+         this.stmtsByIdx = new Statement[this.numStmts];
+         this.blocksByStmtIdx = new Graph.Block[this.numStmts];
          this.stmtAliveNonAssignedVarIds = new int[this.numStmts][];
          this.stmtReferencedVarIds = new int[this.numStmts][];
 
          for(Statement stmt : allStatements) {
-            if(stmt instanceof StatementPhiBlock) {
-               continue;
-            }
             Integer idx = stmt.getIndex();
             if(idx == null || idx < 0) {
+               continue;
+            }
+            this.stmtsByIdx[idx] = stmt;
+            this.blocksByStmtIdx[idx] = stmtInfos.getBlock(idx);
+            if(stmt instanceof StatementPhiBlock) {
                continue;
             }
             Collection<VariableRef> aliveVars = liveRangeVars.getAliveEffective(stmt);
@@ -255,6 +316,7 @@ public final class Pass4DirectTrialEvaluator {
             }
          }
 
+         int nextPhiId = 0;
          this.phiTransitionMetas = new IdentityHashMap<>();
          for(PhiTransitions pts : phiTransitions.values()) {
             for(Graph.Block fromBlock : pts.getFromBlocks()) {
@@ -264,10 +326,16 @@ public final class Pass4DirectTrialEvaluator {
                }
                List<PhiTransitions.PhiTransition.PhiAssignment> assignments = transition.getAssignments();
                if(assignments.isEmpty()) {
-                  this.phiTransitionMetas.put(transition, new PhiTransitionMeta(EMPTY_INT_2D_ARRAY, EMPTY_INT_ARRAY, new String[0], EMPTY_INT_ARRAY, new String[0], EMPTY_INT_ARRAY));
+                  PhiTransitionMeta emptyMeta = new PhiTransitionMeta(
+                        nextPhiId++, transition, ScopeRef.ROOT,
+                        EMPTY_INT_2D_ARRAY, EMPTY_INT_ARRAY, new String[0], EMPTY_INT_ARRAY, new String[0], EMPTY_INT_ARRAY);
+                  emptyMeta.baseValid = true;
+                  this.phiTransitionMetas.put(transition, emptyMeta);
                   continue;
                }
                Statement phiBlock = assignments.get(0).getPhiBlock();
+               Graph.Block phiOwnerBlock = stmtInfos.getBlock(phiBlock);
+               ScopeRef phiScope = (phiOwnerBlock != null && phiOwnerBlock.getScope() != null) ? phiOwnerBlock.getScope() : ScopeRef.ROOT;
                Collection<VariableRef> baseAlive = liveRangeVars.getAliveEffective(phiBlock);
                List<StatementPhiBlock.PhiVariable> phiVars = (phiBlock instanceof StatementPhiBlock pb) ? pb.getPhiVariables() : null;
                Set<VariableRef> allPhiAssigned = null;
@@ -385,9 +453,12 @@ public final class Pass4DirectTrialEvaluator {
                      referencedVarIds[rk++] = rId;
                   }
                }
-               this.phiTransitionMetas.put(transition, new PhiTransitionMeta(perAssignment, lVarIds, lTypePrefixes, rVarIds, rTypePrefixes, referencedVarIds));
+               this.phiTransitionMetas.put(transition, new PhiTransitionMeta(
+                     nextPhiId++, transition, phiScope,
+                     perAssignment, lVarIds, lTypePrefixes, rVarIds, rTypePrefixes, referencedVarIds));
             }
          }
+         this.totalPhiCount = nextPhiId;
 
          this.varIdMap = idMap;
          this.numVars = varList.size();
@@ -425,6 +496,40 @@ public final class Pass4DirectTrialEvaluator {
             }
          }
 
+         int[] varAliveStmtCounts = new int[this.numVars];
+         for(int stmtIdx = 0; stmtIdx < this.numStmts; stmtIdx++) {
+            int[] alive = this.stmtAliveNonAssignedVarIds[stmtIdx];
+            if(alive == null || alive.length == 0) {
+               continue;
+            }
+            int[] refs = this.stmtReferencedVarIds[stmtIdx];
+            for(int j = 0; j < alive.length; j++) {
+               int v = alive[j];
+               if(!containsInt(refs, v)) {
+                  varAliveStmtCounts[v]++;
+               }
+            }
+         }
+         this.varToAliveNonAssignedStmtIds = new int[this.numVars][];
+         for(int v = 0; v < this.numVars; v++) {
+            int c = varAliveStmtCounts[v];
+            this.varToAliveNonAssignedStmtIds[v] = (c == 0) ? EMPTY_INT_ARRAY : new int[c];
+         }
+         int[] varAliveStmtPos = new int[this.numVars];
+         for(int stmtIdx = 0; stmtIdx < this.numStmts; stmtIdx++) {
+            int[] alive = this.stmtAliveNonAssignedVarIds[stmtIdx];
+            if(alive == null || alive.length == 0) {
+               continue;
+            }
+            int[] refs = this.stmtReferencedVarIds[stmtIdx];
+            for(int j = 0; j < alive.length; j++) {
+               int v = alive[j];
+               if(!containsInt(refs, v)) {
+                  this.varToAliveNonAssignedStmtIds[v][varAliveStmtPos[v]++] = stmtIdx;
+               }
+            }
+         }
+
          int[] varPhiCounts = new int[this.numVars];
          for(PhiTransitionMeta meta : this.phiTransitionMetas.values()) {
             int[] refs = meta.referencedVarIds;
@@ -446,10 +551,56 @@ public final class Pass4DirectTrialEvaluator {
             }
          }
 
+         int[] varAlivePhiCounts = new int[this.numVars];
+         for(PhiTransitionMeta meta : this.phiTransitionMetas.values()) {
+            int[] refs = meta.referencedVarIds;
+            int[][] clobbers = meta.clobberVarIds;
+            for(int assignIdx = 0; assignIdx < clobbers.length; assignIdx++) {
+               int[] alive = clobbers[assignIdx];
+               for(int j = 0; j < alive.length; j++) {
+                  int v = alive[j];
+                  if(!containsInt(refs, v)) {
+                     varAlivePhiCounts[v]++;
+                  }
+               }
+            }
+         }
+         this.varToAlivePhiAssigns = new PhiAliveEntry[this.numVars][];
+         for(int v = 0; v < this.numVars; v++) {
+            int c = varAlivePhiCounts[v];
+            this.varToAlivePhiAssigns[v] = (c == 0) ? EMPTY_PHI_ALIVE_ARRAY : new PhiAliveEntry[c];
+         }
+         int[] varAlivePhiPos = new int[this.numVars];
+         for(PhiTransitionMeta meta : this.phiTransitionMetas.values()) {
+            int[] refs = meta.referencedVarIds;
+            int[][] clobbers = meta.clobberVarIds;
+            for(int assignIdx = 0; assignIdx < clobbers.length; assignIdx++) {
+               int[] alive = clobbers[assignIdx];
+               for(int j = 0; j < alive.length; j++) {
+                  int v = alive[j];
+                  if(!containsInt(refs, v)) {
+                     this.varToAlivePhiAssigns[v][varAlivePhiPos[v]++] = new PhiAliveEntry(meta, assignIdx);
+                  }
+               }
+            }
+         }
+
          this.baseStmtClobberMask = new int[this.numStmts];
          this.baseStmtWeightedScore = new int[this.numStmts];
          this.baseStmtBytes = new int[this.numStmts];
          this.baseStmtValid = new boolean[this.numStmts];
+      }
+
+      private static boolean containsInt(int[] arr, int val) {
+         if(arr == null) {
+            return false;
+         }
+         for(int i = 0; i < arr.length; i++) {
+            if(arr[i] == val) {
+               return true;
+            }
+         }
+         return false;
       }
 
       private static Integer resolveVarId(
@@ -476,7 +627,7 @@ public final class Pass4DirectTrialEvaluator {
          long currentVersion = this.version;
          if(state == null || state.version != currentVersion) {
             if(state == null || state.regMasks.length != numVars) {
-               state = new LocalState(currentVersion, baseCpuRegMask.clone(), baseAllocations.clone(), numVars);
+               state = new LocalState(currentVersion, baseCpuRegMask.clone(), baseAllocations.clone(), numVars, numStmts, totalPhiCount);
                threadLocalState.set(state);
             } else {
                System.arraycopy(baseCpuRegMask, 0, state.regMasks, 0, numVars);
@@ -508,6 +659,23 @@ public final class Pass4DirectTrialEvaluator {
          PhiTransitionMeta[] phiMetas = varToPhiMetas[varId];
          for(int i = 0; i < phiMetas.length; i++) {
             phiMetas[i].baseValid = false;
+         }
+      }
+
+      public void updateRegister(LiveRangeEquivalenceClass ec, Registers.Register newReg) {
+         byte regMask = toRegMask(newReg);
+         boolean changed = false;
+         for(VariableRef varRef : ec.getVariables()) {
+            Integer id = varIdMap.get(varRef);
+            if(id != null && !Objects.equals(baseAllocations[id], newReg)) {
+               baseAllocations[id] = newReg;
+               baseCpuRegMask[id] = regMask;
+               invalidateForVar(id);
+               changed = true;
+            }
+         }
+         if(changed) {
+            version++;
          }
       }
 
@@ -1438,5 +1606,312 @@ public final class Pass4DirectTrialEvaluator {
          Registers.Register[] localAllocs) {
       Registers.Register lReg = getRegister(program, lValue, clobberIndex, localAllocs);
       return lReg != null && lReg.equals(getRegister(program, rValue, clobberIndex, localAllocs));
+   }
+
+   /**
+    * Statement-local incremental delta evaluator for 1-opt (ec2 == null) or 2-opt register moves.
+    * Evaluates only statements/PHIs referencing the moved equivalence classes (Step A) and performs
+    * O(1) clobber checks against non-referenced live statements/PHIs (Step B).
+    */
+   public static DeltaEvalResult evaluateDelta(
+         Program program,
+         FastClobberIndex clobberIndex,
+         double[] stmtMultipliers,
+         Collection<String> unknownFragments,
+         LiveRangeEquivalenceClass ec1,
+         Registers.Register newReg1,
+         LiveRangeEquivalenceClass ec2,
+         Registers.Register newReg2) {
+      int ec1Size = ec1 != null ? ec1.getVariables().size() : 0;
+      int ec2Size = ec2 != null ? ec2.getVariables().size() : 0;
+      int maxPatched = ec1Size + ec2Size;
+      if(maxPatched == 0) {
+         return new DeltaEvalResult(true, 0, 0, 0);
+      }
+
+      Map<VariableRef, Registers.Register> override = HashMap.newHashMap(maxPatched);
+      int[] patchedIds = new int[maxPatched];
+      byte[] patchedMasks = new byte[maxPatched];
+      Registers.Register[] patchedRegs = new Registers.Register[maxPatched];
+      int patchedCount = 0;
+
+      if(ec1 != null) {
+         byte mask1 = toRegMask(newReg1);
+         for(VariableRef varRef : ec1.getVariables()) {
+            override.put(varRef, newReg1);
+            Integer id = clobberIndex.varIdMap.get(varRef);
+            if(id != null) {
+               patchedIds[patchedCount] = id;
+               patchedMasks[patchedCount] = mask1;
+               patchedRegs[patchedCount] = newReg1;
+               patchedCount++;
+            }
+         }
+      }
+      if(ec2 != null) {
+         byte mask2 = toRegMask(newReg2);
+         for(VariableRef varRef : ec2.getVariables()) {
+            override.put(varRef, newReg2);
+            Integer id = clobberIndex.varIdMap.get(varRef);
+            if(id != null) {
+               patchedIds[patchedCount] = id;
+               patchedMasks[patchedCount] = mask2;
+               patchedRegs[patchedCount] = newReg2;
+               patchedCount++;
+            }
+         }
+      }
+
+      FastClobberIndex.LocalState localState = clobberIndex.acquireLocalState();
+      byte[] localRegMasks = localState.regMasks;
+      Registers.Register[] localAllocs = localState.allocations;
+      boolean[] localOverridden = localState.overridden;
+      boolean[] seenStmt = localState.seenStmt;
+      int[] affectedStmtBuf = localState.affectedStmtBuf;
+      boolean[] seenPhi = localState.seenPhi;
+      FastClobberIndex.PhiTransitionMeta[] affectedPhiBuf = localState.affectedPhiBuf;
+      int affectedStmtCount = 0;
+      int affectedPhiCount = 0;
+
+      for(int i = 0; i < patchedCount; i++) {
+         int id = patchedIds[i];
+         localRegMasks[id] = patchedMasks[i];
+         localAllocs[id] = patchedRegs[i];
+         localOverridden[id] = true;
+      }
+
+      Variable.setThreadAllocationOverride(override);
+      try {
+         for(int i = 0; i < patchedCount; i++) {
+            int varId = patchedIds[i];
+            int[] stmtIds = clobberIndex.varToStmtIds[varId];
+            for(int j = 0; j < stmtIds.length; j++) {
+               int stmtIdx = stmtIds[j];
+               if(!seenStmt[stmtIdx]) {
+                  seenStmt[stmtIdx] = true;
+                  affectedStmtBuf[affectedStmtCount++] = stmtIdx;
+               }
+            }
+            FastClobberIndex.PhiTransitionMeta[] phiMetas = clobberIndex.varToPhiMetas[varId];
+            for(int j = 0; j < phiMetas.length; j++) {
+               FastClobberIndex.PhiTransitionMeta meta = phiMetas[j];
+               if(!seenPhi[meta.phiId]) {
+                  seenPhi[meta.phiId] = true;
+                  affectedPhiBuf[affectedPhiCount++] = meta;
+               }
+            }
+         }
+
+         EvalAcc acc = localState.evalAcc;
+         boolean useLocalCache = !AsmFragmentTemplateUsages.TRACK_USAGES;
+         ConcurrentHashMap<String, AsmFragmentTemplate> templateCache = useLocalCache
+               ? program.getUpliftProgramCache().fragmentTemplates
+               : null;
+         int scoreDelta = 0;
+         int bytesDelta = 0;
+
+         // Step A: Re-evaluate referenced statements and PHIs
+         for(int i = 0; i < affectedStmtCount; i++) {
+            int stmtIdx = affectedStmtBuf[i];
+            if(!clobberIndex.baseStmtValid[stmtIdx]) {
+               return DeltaEvalResult.INFEASIBLE;
+            }
+            Statement stmt = clobberIndex.stmtsByIdx[stmtIdx];
+            Graph.Block block = clobberIndex.blocksByStmtIdx[stmtIdx];
+            evaluateStatementCost(program, block, stmt, acc, clobberIndex, localAllocs);
+            if(acc.clobberMask != 0 && hasStatementClobberProblem(program, stmt, acc.clobberMask, clobberIndex, localRegMasks)) {
+               return DeltaEvalResult.INFEASIBLE;
+            }
+            int newWeighted = acc.addChunkCost(stmtIdx, stmtMultipliers);
+            scoreDelta += newWeighted - clobberIndex.baseStmtWeightedScore[stmtIdx];
+            bytesDelta += acc.bytes - clobberIndex.baseStmtBytes[stmtIdx];
+         }
+
+         for(int i = 0; i < affectedPhiCount; i++) {
+            FastClobberIndex.PhiTransitionMeta meta = affectedPhiBuf[i];
+            if(!meta.baseValid) {
+               return DeltaEvalResult.INFEASIBLE;
+            }
+            acc.blockScore = 0;
+            acc.blockBytes = 0;
+            if(!evaluatePhiTransition(program, meta.transition, meta.scope, stmtMultipliers, acc, true, clobberIndex, localState, templateCache, false)) {
+               return DeltaEvalResult.INFEASIBLE;
+            }
+            scoreDelta += acc.blockScore - meta.baseWeightedScore;
+            bytesDelta += acc.blockBytes - meta.baseBytes;
+         }
+
+         // Step B: O(1) clobber checks against non-referenced live statements and PHIs
+         for(int i = 0; i < patchedCount; i++) {
+            byte regMask = patchedMasks[i];
+            if(regMask == 0) {
+               continue;
+            }
+            int varId = patchedIds[i];
+            int[] aliveStmts = clobberIndex.varToAliveNonAssignedStmtIds[varId];
+            for(int j = 0; j < aliveStmts.length; j++) {
+               int stmtIdx = aliveStmts[j];
+               if(!seenStmt[stmtIdx] && (clobberIndex.baseStmtClobberMask[stmtIdx] & regMask) != 0) {
+                  return DeltaEvalResult.INFEASIBLE;
+               }
+            }
+            FastClobberIndex.PhiAliveEntry[] alivePhis = clobberIndex.varToAlivePhiAssigns[varId];
+            for(int j = 0; j < alivePhis.length; j++) {
+               FastClobberIndex.PhiAliveEntry entry = alivePhis[j];
+               if(!seenPhi[entry.meta.phiId] && (entry.meta.baseAssignClobberMasks[entry.assignIdx] & regMask) != 0) {
+                  return DeltaEvalResult.INFEASIBLE;
+               }
+            }
+         }
+
+         int cpuRegDelta = 0;
+         if(ec1 != null) {
+            int oldCpu1 = (ec1.getRegister() != null && !ec1.getRegister().isMem()) ? 1 : 0;
+            int newCpu1 = (newReg1 != null && !newReg1.isMem()) ? 1 : 0;
+            cpuRegDelta += newCpu1 - oldCpu1;
+         }
+         if(ec2 != null) {
+            int oldCpu2 = (ec2.getRegister() != null && !ec2.getRegister().isMem()) ? 1 : 0;
+            int newCpu2 = (newReg2 != null && !newReg2.isMem()) ? 1 : 0;
+            cpuRegDelta += newCpu2 - oldCpu2;
+         }
+
+         return new DeltaEvalResult(true, scoreDelta, bytesDelta, cpuRegDelta);
+      } catch(AsmFragmentTemplateSynthesizer.UnknownFragmentException e) {
+         if(unknownFragments != null) {
+            unknownFragments.add(e.getFragmentSignature());
+         }
+         return DeltaEvalResult.INFEASIBLE;
+      } finally {
+         Variable.setThreadAllocationOverride(null);
+         byte[] baseMasks = clobberIndex.baseCpuRegMask;
+         Registers.Register[] baseAllocs = clobberIndex.baseAllocations;
+         for(int i = 0; i < patchedCount; i++) {
+            int id = patchedIds[i];
+            localRegMasks[id] = baseMasks[id];
+            localAllocs[id] = baseAllocs[id];
+            localOverridden[id] = false;
+         }
+         for(int i = 0; i < affectedStmtCount; i++) {
+            seenStmt[affectedStmtBuf[i]] = false;
+         }
+         for(int i = 0; i < affectedPhiCount; i++) {
+            seenPhi[affectedPhiBuf[i].phiId] = false;
+         }
+      }
+   }
+
+   private static void applyEcRegisterCommit(
+         SymbolInfos symbolInfos,
+         LiveRangeInterference interference,
+         FastClobberIndex clobberIndex,
+         LiveRangeEquivalenceClass ec,
+         Registers.Register newReg) {
+      if(ec == null) {
+         return;
+      }
+      Registers.Register oldReg = ec.getRegister();
+      ec.setRegister(newReg);
+      for(VariableRef varRef : ec.getVariables()) {
+         symbolInfos.getVariable(varRef).setAllocation(newReg);
+      }
+      if(interference != null) {
+         interference.updateRegister(ec, oldReg, newReg);
+      }
+      clobberIndex.updateRegister(ec, newReg);
+   }
+
+   private static long collectAffectedForEc(
+         FastClobberIndex clobberIndex,
+         LiveRangeEquivalenceClass ec,
+         boolean[] seenStmt,
+         int[] affectedStmtBuf,
+         int affectedStmtCount,
+         boolean[] seenPhi,
+         FastClobberIndex.PhiTransitionMeta[] affectedPhiBuf,
+         int affectedPhiCount) {
+      if(ec != null) {
+         for(VariableRef varRef : ec.getVariables()) {
+            Integer idObj = clobberIndex.varIdMap.get(varRef);
+            if(idObj == null) continue;
+            int varId = idObj;
+            for(int stmtIdx : clobberIndex.varToStmtIds[varId]) {
+               if(!seenStmt[stmtIdx]) {
+                  seenStmt[stmtIdx] = true;
+                  affectedStmtBuf[affectedStmtCount++] = stmtIdx;
+               }
+            }
+            for(FastClobberIndex.PhiTransitionMeta meta : clobberIndex.varToPhiMetas[varId]) {
+               if(!seenPhi[meta.phiId]) {
+                  seenPhi[meta.phiId] = true;
+                  affectedPhiBuf[affectedPhiCount++] = meta;
+               }
+            }
+         }
+      }
+      return (((long) affectedStmtCount) << 32) | (affectedPhiCount & 0xffffffffL);
+   }
+
+   /**
+    * Commits a 1-opt or 2-opt register move and incrementally updates the affected baseline statements and PHIs.
+    */
+   public static void commitMove(
+         Program program,
+         FastClobberIndex clobberIndex,
+         double[] stmtMultipliers,
+         LiveRangeEquivalenceClass ec1,
+         Registers.Register newReg1,
+         LiveRangeEquivalenceClass ec2,
+         Registers.Register newReg2) {
+      LiveRangeInterference interference = program.getLiveRangeInterference();
+      SymbolInfos symbolInfos = program.getSymbolInfos();
+
+      applyEcRegisterCommit(symbolInfos, interference, clobberIndex, ec1, newReg1);
+      applyEcRegisterCommit(symbolInfos, interference, clobberIndex, ec2, newReg2);
+
+      FastClobberIndex.LocalState localState = clobberIndex.acquireLocalState();
+      boolean[] seenStmt = localState.seenStmt;
+      int[] affectedStmtBuf = localState.affectedStmtBuf;
+      boolean[] seenPhi = localState.seenPhi;
+      FastClobberIndex.PhiTransitionMeta[] affectedPhiBuf = localState.affectedPhiBuf;
+      int affectedStmtCount = 0;
+      int affectedPhiCount = 0;
+
+      try {
+         long counts = collectAffectedForEc(clobberIndex, ec1, seenStmt, affectedStmtBuf, affectedStmtCount, seenPhi, affectedPhiBuf, affectedPhiCount);
+         affectedStmtCount = (int) (counts >>> 32);
+         affectedPhiCount = (int) counts;
+         counts = collectAffectedForEc(clobberIndex, ec2, seenStmt, affectedStmtBuf, affectedStmtCount, seenPhi, affectedPhiBuf, affectedPhiCount);
+         affectedStmtCount = (int) (counts >>> 32);
+         affectedPhiCount = (int) counts;
+
+         EvalAcc acc = localState.evalAcc;
+         boolean useLocalCache = !AsmFragmentTemplateUsages.TRACK_USAGES;
+         ConcurrentHashMap<String, AsmFragmentTemplate> templateCache = useLocalCache
+               ? program.getUpliftProgramCache().fragmentTemplates
+               : null;
+
+         for(int i = 0; i < affectedStmtCount; i++) {
+            int stmtIdx = affectedStmtBuf[i];
+            Statement stmt = clobberIndex.stmtsByIdx[stmtIdx];
+            Graph.Block block = clobberIndex.blocksByStmtIdx[stmtIdx];
+            evaluateStatementCost(program, block, stmt, acc, null, null);
+            int weighted = acc.addChunkCost(stmtIdx, stmtMultipliers);
+            clobberIndex.recordBaselineStmt(stmtIdx, acc.clobberMask, weighted, acc.bytes);
+         }
+
+         for(int i = 0; i < affectedPhiCount; i++) {
+            FastClobberIndex.PhiTransitionMeta meta = affectedPhiBuf[i];
+            meta.baseValid = false;
+            evaluatePhiTransition(program, meta.transition, meta.scope, stmtMultipliers, acc, false, clobberIndex, null, templateCache, true);
+         }
+      } finally {
+         for(int i = 0; i < affectedStmtCount; i++) {
+            seenStmt[affectedStmtBuf[i]] = false;
+         }
+         for(int i = 0; i < affectedPhiCount; i++) {
+            seenPhi[affectedPhiBuf[i].phiId] = false;
+         }
+      }
    }
 }
