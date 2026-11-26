@@ -744,13 +744,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
       boolean isLibrary = program.isLibraryFile(statementSource != null ? statementSource.getFileName() : null);
       String segCode = isLibrary ? Scope.SEGMENT_CODE_DEFAULT : currentSegmentCode;
-      String segData = isLibrary ? Scope.SEGMENT_DATA_DEFAULT : currentSegmentData;
+      String declaredSegData = isLibrary ? Scope.SEGMENT_DATA_DEFAULT : currentSegmentData;
+      String segData = declaredSegData;
       if(program.isSegmentRom(segData)) {
          segData = Scope.SEGMENT_DATA_DEFAULT;
       }
       Bank bank = isLibrary ? Bank.COMMON : currentBank;
 
       Procedure procedure = new Procedure(varDecl.getVarName(), (SymbolTypeProcedure) varDecl.getEffectiveType(), program.getScope(), segCode, segData, currentCallingConvention, bank);
+      procedure.setSegmentConstData(declaredSegData);
       addDirectives(procedure, varDecl.getDeclDirectives());
       // Check if the declaration matches any existing declaration!
       final Symbol existingSymbol = program.getScope().getSymbol(procedure.getRef());
@@ -802,12 +804,13 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             if(parameter.name == null)
                throw new CompileError("Illegal unnamed parameter.", statementSource);
 
-            VariableBuilder varBuilder = new VariableBuilder(parameter.name, getCurrentScope(), true, false, parameter.type, null, segData, program.getTargetPlatform().getVariableBuilderConfig());
+            VariableBuilder varBuilder = new VariableBuilder(parameter.name, getCurrentScope(), true, false, parameter.type, parameter.directives, segData, program.getTargetPlatform().getVariableBuilderConfig());
             final Variable paramVar = varBuilder.build();
             parameterList.add(paramVar);
          }
          procedure.setParameters(parameterList);
          procedure.setSegmentData(segData);
+         procedure.setSegmentConstData(declaredSegData);
          procedure.setSegmentCode(segCode);
          if(procedure.getBank().isCommon() || isLibrary) {
             procedure.setBank(bank);
@@ -828,7 +831,8 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    public Object visitParameterDeclTypeDeclarator(KickCParser.ParameterDeclTypeDeclaratorContext ctx) {
       this.visit(ctx.declType());
       this.visit(ctx.declarator());
-      ParameterDecl paramDecl = new ParameterDecl(varDecl.getVarName(), varDecl.getEffectiveType());
+      List<Directive> paramDirectives = varDecl.getDeclDirectives() != null ? new ArrayList<>(varDecl.getDeclDirectives()) : null;
+      ParameterDecl paramDecl = new ParameterDecl(varDecl.getVarName(), varDecl.getEffectiveType(), paramDirectives);
       varDecl.exitType();
       return paramDecl;
    }
@@ -836,12 +840,12 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    @Override
    public Object visitParameterDeclTypeName(KickCParser.ParameterDeclTypeNameContext ctx) {
       SymbolType paramType = (SymbolType) this.visit(ctx.typeName());
-      return new ParameterDecl(null, paramType);
+      return new ParameterDecl(null, paramType, null);
    }
 
    @Override
    public Object visitParameterDeclList(KickCParser.ParameterDeclListContext ctx) {
-      return new ParameterDecl(null, SymbolType.PARAM_LIST);
+      return new ParameterDecl(null, SymbolType.PARAM_LIST, null);
    }
 
    @Override
@@ -1074,10 +1078,12 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    static class ParameterDecl {
       final public String name;
       final public SymbolType type;
+      final public List<Directive> directives;
 
-      public ParameterDecl(String name, SymbolType type) {
+      public ParameterDecl(String name, SymbolType type, List<Directive> directives) {
          this.name = name;
          this.type = type;
+         this.directives = directives;
       }
    }
 
@@ -2179,20 +2185,13 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public Object visitStmtSwitch(KickCParser.StmtSwitchContext ctx) {
-      Loop containingLoop = null;
-      if(!loopStack.isEmpty()) {
-         containingLoop = loopStack.peek();
-      }
-      // Create a block scope - to keep all statements of the loop inside it
+      // Create a block scope - to keep all statements of the switch inside it
       BlockScope blockScope = getCurrentScope().addBlockScope();
       scopeStack.push(blockScope);
       if(ctx.ifInit() != null) {
          this.visit(ctx.ifInit());
       }
       Loop switchLoop = new Loop(blockScope, true, consumePendingLoopLabel());
-      if(containingLoop != null) {
-         switchLoop.setContinueLabel(containingLoop.getOrCreateContinueLabel());
-      }
       loopStack.push(switchLoop);
       List<Comment> comments = ensureUnusedComments(getCommentsSymbol(ctx));
       // TODO: Add comments to next stmt
@@ -2630,10 +2629,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             Loop loop = loopStack.get(i);
             if(name.equals(loop.name)) {
                if(loop.isSwitch) {
-                  Label cont = loop.getContinueLabel();
-                  if(cont == null) {
-                     throw new CompileError("Cannot continue a switch statement! ", new StatementSource(ctx));
-                  }
+                  throw new CompileError("Cannot continue a switch statement! ", new StatementSource(ctx));
                }
                targetLoop = loop;
                break;
@@ -2643,17 +2639,18 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             throw new CompileError("Named continue label '" + name + "' does not match any enclosing loop! ", new StatementSource(ctx));
          }
       } else {
-         targetLoop = loopStack.peek();
-      }
-      Label continueLabel;
-      if(targetLoop.isSwitch) {
-         continueLabel = targetLoop.getContinueLabel();
-         if(continueLabel == null) {
+         for(int i = loopStack.size() - 1; i >= 0; i--) {
+            Loop loop = loopStack.get(i);
+            if(!loop.isSwitch) {
+               targetLoop = loop;
+               break;
+            }
+         }
+         if(targetLoop == null) {
             throw new CompileError("Continue not inside a loop! ", new StatementSource(ctx));
          }
-      } else {
-         continueLabel = targetLoop.getOrCreateContinueLabel();
       }
+      Label continueLabel = targetLoop.getOrCreateContinueLabel();
       Statement continueJmpStmt = new StatementJump(continueLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS);
       addStatement(continueJmpStmt);
       pendingLoopLabel = null;

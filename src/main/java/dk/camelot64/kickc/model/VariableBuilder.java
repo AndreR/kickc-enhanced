@@ -82,6 +82,7 @@ public class VariableBuilder {
          ((Registers.RegisterMainMem) variable.getRegister()).setVariableRef(variable.getVariableRef());
       }
       variable.setMemoryArea(this.getMemoryArea());
+      variable.setExplicitZp(this.isExplicitZp());
       variable.setMemoryAlignment(this.getAlignment());
       variable.setMemoryAddress(this.getAddress());
       variable.setDeclarationOnly(this.isDeclarationOnly());
@@ -423,6 +424,13 @@ public class VariableBuilder {
          return Variable.Kind.PHI_MASTER;
       else
          return Variable.Kind.LOAD_STORE;
+   }
+
+   /**
+    * True if the variable was explicitly declared with the __zp directive (and is not a compile-time constant).
+    */
+   public boolean isExplicitZp() {
+      return !isConstant() && hasDirective(Directive.MemZp.class);
    }
 
    /**
