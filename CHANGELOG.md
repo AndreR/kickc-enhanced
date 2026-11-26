@@ -26,8 +26,21 @@
 
 - **Source-Level Code Size & Static Cycle Profiler (#57):** Added `-csz` / `-codesize` (`CodeSizeProfiler`) generating human-readable `.csz` and structured `.csz.json` reports with segment summaries, Top-20 procedures and C source lines by bytes and static 6502 cycles, and line-by-line byte/cycle accounting.
 
+### Compiler Performance & Register Allocation
+
+- **Core IR & Passes 1–3:** Added O(1) `ControlFlowGraph.BlockIndex`, `Program.procedureCompilationMap`, `Variable.cachedRef`, `VariableReferenceInfos` caching, selective `ProgramScope` cache removal, lazy `VarAssignments.Index`, `BitSet` backward liveness (`PassNCalcLiveRangeVariables`), and guarded verbose logging / redundant SSA and loop-analysis gating.
+- **Pass 4 & Fragment Cache:** Added `Pass4DirectTrialEvaluator` with `FastClobberIndex` (avoiding `AsmProgram` reconstruction and ANTLR reparsing during register uplift trial scoring via thread-local register patching), fast ZP+ZP coalescing, buffered fragment cache I/O, and fast initial Pass 4 check.
+- **Pass 5:** Added `Pass5RoundContext` dirty-scope gating and shared per-round line/alias caches across Pass 5 optimizations, O(1) tombstone deletion, `BlockSignature` bucketing in `Pass5DuplicateBlockElimination`, and analytical branch safety with `AsmLoopAlign` interval padding in `Pass5FixLongBranches`.
+- **Opt-In Local-Search Register Allocator (`-Olocalsearch`):** Added `Pass4RegisterUpliftLocalSearch` running as a Phase-3 statement-local cost-delta 1-opt/2-opt refinement pass on top of `UpliftCombinations` and `UpliftRemains`.
+
+### Fragments
+
+- Added 256 `mos6502-common` assembly fragments and fixed immediate shift syntax and double-brace template typos.
+- Fixed codegen bugs in `tools/scan_undoc_fragments.py` (`alr #$01; ror`, `SAX` `$fe` scratch operand, `AXS` `clc`/`sec` handling, `N >= 3` threshold for `txa; axs #N`, and `_stackpullpadding_` indentation).
+
 ### Bug Fixes
 
+- Preserved ROM inline strings, explicit zero-page retention, and zero-page spill pointer guards in frontend/Pass 4, and fixed nested `switch`/ternary PHI handling.
 - Fixed transitive `X`/`A` liveness validation in `Pass5AxRegisterCallingConventionOptimization`.
 
 ## [0.10.2] - 2026-11-25
@@ -69,12 +82,6 @@
 - Fixed multi-designator and bitfield initializers (including anonymous structs inside unions), shift width bounds, and C23/preprocessor edge cases.
 - Fixed constant folding before child narrowing, signed-cast edge cases, `DWORD` limits, and `-fconvenience` division/modulo handling.
 - Resolved multi-core data races, isolated static compiler state, enabled lock-free fragment cache access, and precompiled regex patterns.
-
-### Compiler Performance & Register Allocation
-
-- **Core IR & Passes 1–3:** Added O(1) `ControlFlowGraph.BlockIndex`, `Program.procedureCompilationMap`, `Variable.cachedRef`, `VariableReferenceInfos` caching, selective `ProgramScope` cache removal, lazy `VarAssignments.Index`, `BitSet` backward liveness (`PassNCalcLiveRangeVariables`), and guarded verbose logging/redundant loop-analysis gating.
-- **Pass 4 & Fragments:** Added `Pass4DirectTrialEvaluator` with `FastClobberIndex` (zero-`AsmProgram`/zero-ANTLR trial scoring and thread-local register patching), fast ZP+ZP coalescing, buffered fragment cache I/O, and opt-in `-Olocalsearch` Phase-3 1-opt/2-opt local-search refinement (`Pass4RegisterUpliftLocalSearch`).
-- **Pass 5:** Added `Pass5RoundContext` dirty-scope gating and shared per-round line/alias caches across Pass 5 optimizations, widespread O(1) tombstone deletion, `BlockSignature` bucketing in `Pass5DuplicateBlockElimination`, and analytical branch safety with `AsmLoopAlign` interval padding in `Pass5FixLongBranches`.
 
 ### Bug Fixes
 
