@@ -17,6 +17,7 @@ import org.antlr.v4.runtime.TokenSource;
 import java.io.File;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -394,14 +395,20 @@ public class Compiler {
       new PassNAddTypeConversionAssignment(program, true).execute();
 
 
-      getLog().append("\nCONTROL FLOW GRAPH SSA");
-      getLog().append(program.prettyControlFlowGraph());
+      if(getLog().isEnabled()) {
+         getLog().append("\nCONTROL FLOW GRAPH SSA");
+         getLog().append(program.prettyControlFlowGraph());
 
-      getLog().append("SYMBOL TABLE SSA");
-      getLog().append(program.getScope().toStringVars(program, false));
+         getLog().append("SYMBOL TABLE SSA");
+         getLog().append(program.getScope().toStringVars(program, false));
+      }
 
       program.endPass1();
 
+   }
+
+   private boolean shouldRunIntermediateSsaAsserts() {
+      return getLog().isVerboseSSAOptimize() || getLog().isVerboseLiveRanges() || Boolean.getBoolean("kickc.verify");
    }
 
    private void pass2AssertSSA() {
@@ -424,7 +431,7 @@ public class Compiler {
       }
    }
 
-   private List<PassStep> getPass2Optimizations() {
+   private List<PassStep> getPass2Optimizations(boolean[] runLoopAnalysis) {
       List<PassStep> optimizations = new ArrayList<>();
       optimizations.add(new PassNAddNumberTypeConversions(program));
       optimizations.add(new Pass2InlineCast(program));
@@ -481,8 +488,10 @@ public class Compiler {
       optimizations.add(new PassNEliminateEmptyStart(program));
       optimizations.add(new PassNStatementIndices(program));
       optimizations.add(() -> {
-         program.clearDominators();
-         program.clearLoopSet();
+         if(runLoopAnalysis == null || runLoopAnalysis[0]) {
+            program.clearDominators();
+            program.clearLoopSet();
+         }
          return false;
       });
       if(enableLoopHeadConstant) {
@@ -490,7 +499,9 @@ public class Compiler {
       }
       optimizations.add(new Pass2LoopInvariantCodeMotion(program));
       optimizations.add(() -> {
-         program.clearStatementIndices();
+         if(runLoopAnalysis == null || runLoopAnalysis[0]) {
+            program.clearStatementIndices();
+         }
          return false;
       });
       return optimizations;
@@ -502,8 +513,9 @@ public class Compiler {
          getLog().append(program.getSizeInfo());
       }
 
-      List<PassStep> optimizations = getPass2Optimizations();
-      return pass2Execute(optimizations);
+      boolean[] runLoopAnalysis = { true };
+      List<PassStep> optimizations = getPass2Optimizations(runLoopAnalysis);
+      return pass2Execute(optimizations, runLoopAnalysis);
    }
 
    private void pass2UnrollLoops() {
@@ -558,8 +570,9 @@ public class Compiler {
       constantOptimizations.add(new Pass2ConstantInlining(program));
       constantOptimizations.add(new Pass2ConstantAdditionElimination(program));
       constantOptimizations.add(new Pass2ConstantSimplification(program));
-      constantOptimizations.addAll(getPass2Optimizations());
-      pass2Execute(constantOptimizations);
+      boolean[] runLoopAnalysis = { true };
+      constantOptimizations.addAll(getPass2Optimizations(runLoopAnalysis));
+      pass2Execute(constantOptimizations, runLoopAnalysis);
 
 
    }
@@ -570,8 +583,9 @@ public class Compiler {
       }
       List<PassStep> constantOptimizations = new ArrayList<>();
       constantOptimizations.add(new PassNFinalizeNumberTypeConversions(program, true));
-      constantOptimizations.addAll(getPass2Optimizations());
-      pass2Execute(constantOptimizations);
+      boolean[] runLoopAnalysis = { false };
+      constantOptimizations.addAll(getPass2Optimizations(runLoopAnalysis));
+      pass2Execute(constantOptimizations, runLoopAnalysis);
    }
 
    /**
@@ -580,17 +594,30 @@ public class Compiler {
     * @param optimizations The optimizations to repeat
     */
    private int pass2Execute(List<PassStep> optimizations) {
+      return pass2Execute(optimizations, null);
+   }
+
+   private int pass2Execute(List<PassStep> optimizations, boolean[] runLoopAnalysis) {
+      if(runLoopAnalysis != null) {
+         runLoopAnalysis[0] = true;
+      }
       boolean ssaOptimized = true;
       int round = 0;
       while(ssaOptimized) {
          round++;
          CompilerProgress.status(String.format("Pass 2 (SSA Optimize): Round %d...", round));
          long tRoundStart = System.currentTimeMillis();
-         if(round == 1) {
+         if(round == 1 && shouldRunIntermediateSsaAsserts()) {
             pass2AssertSSA();
          }
          ssaOptimized = false;
+         boolean loopModifiedInRound = false;
          for(PassStep optimization : optimizations) {
+            boolean isLoopOpt = (optimization instanceof Pass2LoopHeadConstantIdentification)
+                  || (optimization instanceof Pass2LoopInvariantCodeMotion);
+            if(runLoopAnalysis != null && !runLoopAnalysis[0] && isLoopOpt) {
+               continue;
+            }
             boolean stepOptimized = true;
             while(stepOptimized) {
                long tStepStart = System.currentTimeMillis();
@@ -599,9 +626,19 @@ public class Compiler {
                if(stepElapsed > 1000 && getLog().isVerboseSSAOptimize()) {
                   System.out.println(String.format("       [SLOW PASS2 STEP] %s took %5.2f s (round %d)", optimization.getClass().getSimpleName(), stepElapsed / 1000.0, round));
                }
-               if(stepOptimized) ssaOptimized = true;
+               if(stepOptimized) {
+                  ssaOptimized = true;
+                  if(isLoopOpt) {
+                     loopModifiedInRound = true;
+                  } else if(runLoopAnalysis != null) {
+                     runLoopAnalysis[0] = true;
+                  }
+               }
                pass2LogOptimization(optimization, stepOptimized);
             }
+         }
+         if(runLoopAnalysis != null) {
+            runLoopAnalysis[0] = loopModifiedInRound;
          }
          long roundElapsed = System.currentTimeMillis() - tRoundStart;
          if(roundElapsed > 500 && getLog().isVerboseSSAOptimize()) {
@@ -625,7 +662,9 @@ public class Compiler {
          if(stepOptimized) ssaOptimized = true;
          pass2LogOptimization(optimization, stepOptimized);
       }
-      pass2AssertSSA();
+      if(shouldRunIntermediateSsaAsserts()) {
+         pass2AssertSSA();
+      }
       return ssaOptimized;
    }
 
@@ -665,7 +704,9 @@ public class Compiler {
       new PassNBlockSequencePlanner(program).step();
       //getLog().append("CONTROL FLOW GRAPH - PHI LIFTED");
       //getLog().append(program.prettyControlFlowGraph());
-      pass2AssertSSA();
+      if(shouldRunIntermediateSsaAsserts()) {
+         pass2AssertSSA();
+      }
       new Pass3AddNopBeforeCallOns(program).generate();
       new PassNStatementIndices(program).execute();
 
@@ -782,11 +823,25 @@ public class Compiler {
       // Initial Code generation
       CompilerProgress.status("Pass 4 (Register Allocation): Initial code generation...");
       long tStep = System.currentTimeMillis();
-      new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing()).generate();
+      boolean needFullInitialCodeGen = getLog().isEnabled() || program.isWarnFragmentMissing();
+      if(!needFullInitialCodeGen) {
+         Pass4DirectTrialEvaluator.TrialEvalResult res = Pass4DirectTrialEvaluator.evaluateBlocks(
+               program,
+               new LinkedHashSet<>(program.getGraph().getAllBlocks()),
+               null,
+               new ArrayList<>()
+         );
+         if(!res.success()) {
+            needFullInitialCodeGen = true;
+         }
+      }
+      if(needFullInitialCodeGen) {
+         new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing()).generate();
+         new Pass4AssertNoCpuClobber(program).check();
+      }
       if(getLog().isVerboseUplift()) {
          System.out.println(String.format("   [PASS4] Initial CodeGen:              %6.2f s", (System.currentTimeMillis() - tStep) / 1000.0));
       }
-      new Pass4AssertNoCpuClobber(program).check();
 
       if(disableUplift) {
          getLog().append("REGISTER UPLIFT DISABLED!");
@@ -870,14 +925,28 @@ public class Compiler {
       if(getLog().isVerboseUplift()) {
          System.out.println(String.format("   [PASS4] Total Pass 4 time:            %6.2f s", (System.currentTimeMillis() - tPass4Start) / 1000.0));
       }
-      new Pass4RegistersFinalize(program).allocate(true, true);
+      Pass4RegistersFinalize registersFinalize = new Pass4RegistersFinalize(program);
+      registersFinalize.allocate(true, true);
       new Pass4AssertZeropageAllocation(program).check();
 
       // Final ASM code generation before optimization
       program.clearPhiTransitions();
       CompilerProgress.status("Pass 4 (Register Allocation): Final code generation...");
       new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing()).generate();
-      new Pass4AssertNoCpuClobber(program).check();
+      Pass4AssertNoCpuClobber assertNoCpuClobber = new Pass4AssertNoCpuClobber(program);
+      final int maxDemoteIterations = 16;
+      for(int iter = 0; iter < maxDemoteIterations; iter++) {
+         java.util.Set<dk.camelot64.kickc.model.values.VariableRef> clobberedVars = assertNoCpuClobber.findClobberedVariables(program.getAsm());
+         if(clobberedVars.isEmpty()) {
+            break;
+         }
+         if(!registersFinalize.demoteClobberedRegistersToMemory(clobberedVars)) {
+            break;
+         }
+         program.clearPhiTransitions();
+         new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing()).generate();
+      }
+      assertNoCpuClobber.check();
 
       program.endPass4();
 
@@ -911,12 +980,12 @@ public class Compiler {
       pass5Optimizations.add(new Pass5LoopRegisterPinning(program));
       pass5Optimizations.add(new Pass5PageAlignedPointerAdditionElimination(program));
       pass5Optimizations.add(new Pass5TailCallOptimization(program));
+      pass5Optimizations.add(new Pass5RelabelLongLabels(program));
       pass5Optimizations.add(new Pass5DuplicateBlockElimination(program));
       pass5Optimizations.add(new Pass5RedundantLabelElimination(program));
       pass5Optimizations.add(new Pass5UnusedLabelElimination(program));
       pass5Optimizations.add(new Pass5DoubleJumpElimination(program));
       pass5Optimizations.add(new Pass5UnreachableCodeElimination(program));
-      pass5Optimizations.add(new Pass5RelabelLongLabels(program));
       pass5Optimizations.add(new Pass5AddMainRts(program));
       pass5Optimizations.add(new Pass5HighSpeedJumpTableSwitch(program));
       boolean asmOptimized = true;
