@@ -24,7 +24,7 @@
 
 ### Tooling & Diagnostics
 
-- **Source-Level Code Size Profiler (#57):** Added `-csz` / `-codesize` (`CodeSizeProfiler`) generating human-readable `.csz` and structured `.csz.json` reports with segment summaries, Top-20 largest procedures, and line-by-line C source byte accounting.
+- **Source-Level Code Size & Static Cycle Profiler (#57):** Added `-csz` / `-codesize` (`CodeSizeProfiler`) generating human-readable `.csz` and structured `.csz.json` reports with segment summaries, Top-20 procedures and C source lines by bytes and static 6502 cycles, and line-by-line byte/cycle accounting.
 
 ### Bug Fixes
 

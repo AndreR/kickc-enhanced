@@ -13,9 +13,9 @@ import java.nio.file.Path;
 import java.util.*;
 
 /**
- * Source-level code and data size profiler for compiled 6502 assembly programs.
- * Aggregates byte sizes by segment, procedure/scope, and C source line from the final {@link AsmProgram},
- * and formats human-readable (.csz) and JSON reports.
+ * Source-level code/data size and static cycle profiler for compiled 6502 assembly programs.
+ * Aggregates byte sizes, instruction counts, and static 6502 cycles by segment, procedure/scope,
+ * and C source line from the final {@link AsmProgram}, and formats human-readable (.csz) and JSON reports.
  */
 public class CodeSizeProfiler {
 
@@ -25,6 +25,7 @@ public class CodeSizeProfiler {
       private final String name;
       private int bytes;
       private int instructions;
+      private double cycles;
 
       public SegmentStats(String name) {
          this.name = name;
@@ -42,10 +43,15 @@ public class CodeSizeProfiler {
          return instructions;
       }
 
-      void add(int lineBytes, boolean isInstruction) {
+      public double getCycles() {
+         return cycles;
+      }
+
+      void add(int lineBytes, boolean isInstruction, double lineCycles) {
          this.bytes += lineBytes;
          if(isInstruction) {
             this.instructions++;
+            this.cycles += lineCycles;
          }
       }
    }
@@ -55,6 +61,7 @@ public class CodeSizeProfiler {
       private String segment;
       private int bytes;
       private int instructions;
+      private double cycles;
 
       public ProcedureStats(String name, String segment) {
          this.name = name;
@@ -77,13 +84,18 @@ public class CodeSizeProfiler {
          return instructions;
       }
 
-      void add(String seg, int lineBytes, boolean isInstruction) {
+      public double getCycles() {
+         return cycles;
+      }
+
+      void add(String seg, int lineBytes, boolean isInstruction, double lineCycles) {
          if(this.segment == null || "Default".equals(this.segment)) {
             this.segment = seg;
          }
          this.bytes += lineBytes;
          if(isInstruction) {
             this.instructions++;
+            this.cycles += lineCycles;
          }
       }
    }
@@ -95,6 +107,7 @@ public class CodeSizeProfiler {
       private final String scope;
       private int bytes;
       private int instructions;
+      private double cycles;
 
       public SourceLineStats(String file, int line, String code, String scope) {
          this.file = file;
@@ -127,10 +140,15 @@ public class CodeSizeProfiler {
          return instructions;
       }
 
-      void add(int lineBytes, boolean isInstruction) {
+      public double getCycles() {
+         return cycles;
+      }
+
+      void add(int lineBytes, boolean isInstruction, double lineCycles) {
          this.bytes += lineBytes;
          if(isInstruction) {
             this.instructions++;
+            this.cycles += lineCycles;
          }
       }
    }
@@ -138,26 +156,35 @@ public class CodeSizeProfiler {
    public static final class Report {
       private final int totalBytes;
       private final int totalInstructions;
+      private final double totalCycles;
       private final List<SegmentStats> segments;
       private final List<ProcedureStats> procedures;
       private final List<ProcedureStats> topProcedures;
+      private final List<ProcedureStats> topProceduresByCycles;
       private final List<SourceLineStats> sourceLines;
       private final List<SourceLineStats> topSourceLines;
+      private final List<SourceLineStats> topSourceLinesByCycles;
 
       public Report(int totalBytes,
                     int totalInstructions,
+                    double totalCycles,
                     List<SegmentStats> segments,
                     List<ProcedureStats> procedures,
                     List<ProcedureStats> topProcedures,
+                    List<ProcedureStats> topProceduresByCycles,
                     List<SourceLineStats> sourceLines,
-                    List<SourceLineStats> topSourceLines) {
+                    List<SourceLineStats> topSourceLines,
+                    List<SourceLineStats> topSourceLinesByCycles) {
          this.totalBytes = totalBytes;
          this.totalInstructions = totalInstructions;
+         this.totalCycles = totalCycles;
          this.segments = Collections.unmodifiableList(segments);
          this.procedures = Collections.unmodifiableList(procedures);
          this.topProcedures = Collections.unmodifiableList(topProcedures);
+         this.topProceduresByCycles = Collections.unmodifiableList(topProceduresByCycles);
          this.sourceLines = Collections.unmodifiableList(sourceLines);
          this.topSourceLines = Collections.unmodifiableList(topSourceLines);
+         this.topSourceLinesByCycles = Collections.unmodifiableList(topSourceLinesByCycles);
       }
 
       public int getTotalBytes() {
@@ -166,6 +193,10 @@ public class CodeSizeProfiler {
 
       public int getTotalInstructions() {
          return totalInstructions;
+      }
+
+      public double getTotalCycles() {
+         return totalCycles;
       }
 
       public List<SegmentStats> getSegments() {
@@ -180,6 +211,10 @@ public class CodeSizeProfiler {
          return topProcedures;
       }
 
+      public List<ProcedureStats> getTopProceduresByCycles() {
+         return topProceduresByCycles;
+      }
+
       public List<SourceLineStats> getSourceLines() {
          return sourceLines;
       }
@@ -187,17 +222,22 @@ public class CodeSizeProfiler {
       public List<SourceLineStats> getTopSourceLines() {
          return topSourceLines;
       }
+
+      public List<SourceLineStats> getTopSourceLinesByCycles() {
+         return topSourceLinesByCycles;
+      }
    }
 
    private CodeSizeProfiler() {
    }
 
    /**
-    * Analyzes the compiled assembly program and produces aggregated code/data size statistics.
+    * Analyzes the compiled assembly program and produces aggregated code/data size and static cycle statistics.
     */
    public static Report analyze(Program program) {
       if(program == null || program.getAsm() == null) {
-         return new Report(0, 0, Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), Collections.emptyList());
+         return new Report(0, 0, 0.0, Collections.emptyList(), Collections.emptyList(), Collections.emptyList(),
+               Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), Collections.emptyList());
       }
 
       Map<Integer, StatementSource> stmtSources = new HashMap<>();
@@ -222,6 +262,7 @@ public class CodeSizeProfiler {
       String activeScope = "";
       int totalBytes = 0;
       int totalInstructions = 0;
+      double totalCycles = 0.0;
 
       for(AsmChunk chunk : program.getAsm().getChunks()) {
          StatementSource chunkSource = resolveChunkSource(chunk, stmtSources, stmtInfos);
@@ -246,6 +287,7 @@ public class CodeSizeProfiler {
             if(lineBytes <= 0 && !isInst) {
                continue;
             }
+            double lineCycles = isInst ? line.getLineCycles() : 0.0;
 
             String scopeName;
             if(!activeScope.isEmpty()) {
@@ -259,14 +301,15 @@ public class CodeSizeProfiler {
             totalBytes += lineBytes;
             if(isInst) {
                totalInstructions++;
+               totalCycles += lineCycles;
             }
 
             segmentMap.computeIfAbsent(currentSegment, SegmentStats::new)
-                  .add(lineBytes, isInst);
+                  .add(lineBytes, isInst, lineCycles);
 
             final String segForLambda = currentSegment;
             procMap.computeIfAbsent(scopeName, k -> new ProcedureStats(k, segForLambda))
-                  .add(currentSegment, lineBytes, isInst);
+                  .add(currentSegment, lineBytes, isInst, lineCycles);
 
             if(chunkSource != null && chunkSource.getFileName() != null && chunkSource.getLineNumber() != null && lineBytes > 0) {
                String file = chunkSource.getFileName();
@@ -274,7 +317,7 @@ public class CodeSizeProfiler {
                String srcKey = file + ":" + lineNum;
                String code = sanitizeSnippet(chunkSource.getCode());
                sourceLineMap.computeIfAbsent(srcKey, k -> new SourceLineStats(file, lineNum, code, scopeName))
-                     .add(lineBytes, isInst);
+                     .add(lineBytes, isInst, lineCycles);
             }
          }
       }
@@ -288,6 +331,19 @@ public class CodeSizeProfiler {
             .thenComparing(ProcedureStats::getName));
       List<ProcedureStats> topProcedures = new ArrayList<>(procedures.subList(0, Math.min(TOP_LIMIT, procedures.size())));
 
+      List<ProcedureStats> topProceduresByCycles = new ArrayList<>();
+      for(ProcedureStats p : procMap.values()) {
+         if(p.getCycles() > 0.0) {
+            topProceduresByCycles.add(p);
+         }
+      }
+      topProceduresByCycles.sort(Comparator.comparingDouble(ProcedureStats::getCycles).reversed()
+            .thenComparing(Comparator.comparingInt(ProcedureStats::getBytes).reversed())
+            .thenComparing(ProcedureStats::getName));
+      if(topProceduresByCycles.size() > TOP_LIMIT) {
+         topProceduresByCycles = new ArrayList<>(topProceduresByCycles.subList(0, TOP_LIMIT));
+      }
+
       List<SourceLineStats> sourceLines = new ArrayList<>(sourceLineMap.values());
       sourceLines.sort(Comparator.comparing(SourceLineStats::getFile)
             .thenComparingInt(SourceLineStats::getLine));
@@ -300,7 +356,22 @@ public class CodeSizeProfiler {
          topSourceLines = new ArrayList<>(topSourceLines.subList(0, TOP_LIMIT));
       }
 
-      return new Report(totalBytes, totalInstructions, segments, procedures, topProcedures, sourceLines, topSourceLines);
+      List<SourceLineStats> topSourceLinesByCycles = new ArrayList<>();
+      for(SourceLineStats sl : sourceLineMap.values()) {
+         if(sl.getCycles() > 0.0) {
+            topSourceLinesByCycles.add(sl);
+         }
+      }
+      topSourceLinesByCycles.sort(Comparator.comparingDouble(SourceLineStats::getCycles).reversed()
+            .thenComparing(Comparator.comparingInt(SourceLineStats::getBytes).reversed())
+            .thenComparing(SourceLineStats::getFile)
+            .thenComparingInt(SourceLineStats::getLine));
+      if(topSourceLinesByCycles.size() > TOP_LIMIT) {
+         topSourceLinesByCycles = new ArrayList<>(topSourceLinesByCycles.subList(0, TOP_LIMIT));
+      }
+
+      return new Report(totalBytes, totalInstructions, totalCycles, segments, procedures, topProcedures,
+            topProceduresByCycles, sourceLines, topSourceLines, topSourceLinesByCycles);
    }
 
    private static StatementSource resolveChunkSource(AsmChunk chunk, Map<Integer, StatementSource> stmtSources, StatementInfos stmtInfos) {
@@ -346,70 +417,91 @@ public class CodeSizeProfiler {
    }
 
    /**
-    * Formats the size profile report in human-readable {@code .csz} text format.
+    * Formats the size and static cycle profile report in human-readable {@code .csz} text format.
     */
    public static String formatText(Report report) {
       StringBuilder sb = new StringBuilder();
       sb.append("=== Code Size Profile (.csz) ===\n");
-      sb.append(String.format(Locale.ROOT, "Total Bytes: %d | Instructions: %d | Segments: %d | Procedures: %d | Source Lines: %d%n%n",
-            report.getTotalBytes(), report.getTotalInstructions(), report.getSegments().size(),
-            report.getProcedures().size(), report.getSourceLines().size()));
+      sb.append(String.format(Locale.ROOT, "Total Bytes: %d | Instructions: %d | Static Cycles: %s | Segments: %d | Procedures: %d | Source Lines: %d%n%n",
+            report.getTotalBytes(), report.getTotalInstructions(), formatCycles(report.getTotalCycles()),
+            report.getSegments().size(), report.getProcedures().size(), report.getSourceLines().size()));
 
       sb.append("--- Segment Summary ---\n");
-      sb.append(String.format(Locale.ROOT, "%-24s %10s %8s %12s%n", "Segment", "Bytes", "%Total", "Instructions"));
+      sb.append(String.format(Locale.ROOT, "%-24s %10s %8s %12s %10s%n", "Segment", "Bytes", "%Total", "Instructions", "Cycles"));
       for(SegmentStats seg : report.getSegments()) {
          double pct = report.getTotalBytes() > 0 ? (100.0 * seg.getBytes() / report.getTotalBytes()) : 0.0;
-         sb.append(String.format(Locale.ROOT, "%-24s %10d %7.2f%% %12d%n",
-               seg.getName(), seg.getBytes(), pct, seg.getInstructions()));
+         sb.append(String.format(Locale.ROOT, "%-24s %10d %7.2f%% %12d %10s%n",
+               seg.getName(), seg.getBytes(), pct, seg.getInstructions(), formatCycles(seg.getCycles())));
       }
       sb.append('\n');
 
       sb.append("--- Top 20 Largest Functions / Scopes ---\n");
-      sb.append(String.format(Locale.ROOT, "%-4s %-32s %-18s %8s %8s %12s%n", "Rank", "Procedure", "Segment", "Bytes", "%Total", "Instructions"));
+      sb.append(String.format(Locale.ROOT, "%-4s %-32s %-18s %8s %8s %8s %10s%n", "Rank", "Procedure", "Segment", "Bytes", "%Total", "Insts", "Cycles"));
       int rank = 1;
       for(ProcedureStats proc : report.getTopProcedures()) {
          double pct = report.getTotalBytes() > 0 ? (100.0 * proc.getBytes() / report.getTotalBytes()) : 0.0;
-         sb.append(String.format(Locale.ROOT, "%-4d %-32s %-18s %8d %7.2f%% %12d%n",
-               rank++, proc.getName(), proc.getSegment(), proc.getBytes(), pct, proc.getInstructions()));
+         sb.append(String.format(Locale.ROOT, "%-4d %-32s %-18s %8d %7.2f%% %8d %10s%n",
+               rank++, proc.getName(), proc.getSegment(), proc.getBytes(), pct, proc.getInstructions(), formatCycles(proc.getCycles())));
+      }
+      sb.append('\n');
+
+      sb.append("--- Top 20 Costliest Functions / Scopes (Static Cycles) ---\n");
+      sb.append(String.format(Locale.ROOT, "%-4s %-32s %-18s %10s %8s %8s%n", "Rank", "Procedure", "Segment", "Cycles", "Insts", "Bytes"));
+      rank = 1;
+      for(ProcedureStats proc : report.getTopProceduresByCycles()) {
+         sb.append(String.format(Locale.ROOT, "%-4d %-32s %-18s %10s %8d %8d%n",
+               rank++, proc.getName(), proc.getSegment(), formatCycles(proc.getCycles()), proc.getInstructions(), proc.getBytes()));
       }
       sb.append('\n');
 
       sb.append("--- Top 20 Costliest C Source Lines ---\n");
-      sb.append(String.format(Locale.ROOT, "%-4s %-36s %8s %6s %-20s %s%n", "Rank", "Location", "Bytes", "Insts", "Scope", "Code"));
+      sb.append(String.format(Locale.ROOT, "%-4s %-36s %8s %6s %8s %-20s %s%n", "Rank", "Location", "Bytes", "Insts", "Cycles", "Scope", "Code"));
       rank = 1;
       for(SourceLineStats sl : report.getTopSourceLines()) {
          String loc = sl.getFile() + ":" + sl.getLine();
-         sb.append(String.format(Locale.ROOT, "%-4d %-36s %8d %6d %-20s %s%n",
-               rank++, loc, sl.getBytes(), sl.getInstructions(), sl.getScope(), truncate(sl.getCode(), 72)));
+         sb.append(String.format(Locale.ROOT, "%-4d %-36s %8d %6d %8s %-20s %s%n",
+               rank++, loc, sl.getBytes(), sl.getInstructions(), formatCycles(sl.getCycles()), sl.getScope(), truncate(sl.getCode(), 72)));
+      }
+      sb.append('\n');
+
+      sb.append("--- Top 20 Costliest C Source Lines (Static Cycles) ---\n");
+      sb.append(String.format(Locale.ROOT, "%-4s %-36s %8s %6s %8s %-20s %s%n", "Rank", "Location", "Cycles", "Insts", "Bytes", "Scope", "Code"));
+      rank = 1;
+      for(SourceLineStats sl : report.getTopSourceLinesByCycles()) {
+         String loc = sl.getFile() + ":" + sl.getLine();
+         sb.append(String.format(Locale.ROOT, "%-4d %-36s %8s %6d %8d %-20s %s%n",
+               rank++, loc, formatCycles(sl.getCycles()), sl.getInstructions(), sl.getBytes(), sl.getScope(), truncate(sl.getCode(), 72)));
       }
       sb.append('\n');
 
       sb.append("--- Source-Line Overview ---\n");
-      sb.append(String.format(Locale.ROOT, "%-36s %8s %6s %-20s %s%n", "Location", "Bytes", "Insts", "Scope", "Code"));
+      sb.append(String.format(Locale.ROOT, "%-36s %8s %6s %8s %-20s %s%n", "Location", "Bytes", "Insts", "Cycles", "Scope", "Code"));
       for(SourceLineStats sl : report.getSourceLines()) {
          String loc = sl.getFile() + ":" + sl.getLine();
-         sb.append(String.format(Locale.ROOT, "%-36s %8d %6d %-20s %s%n",
-               loc, sl.getBytes(), sl.getInstructions(), sl.getScope(), truncate(sl.getCode(), 72)));
+         sb.append(String.format(Locale.ROOT, "%-36s %8d %6d %8s %-20s %s%n",
+               loc, sl.getBytes(), sl.getInstructions(), formatCycles(sl.getCycles()), sl.getScope(), truncate(sl.getCode(), 72)));
       }
 
       return sb.toString();
    }
 
    /**
-    * Formats the size profile report as valid structured JSON without external dependencies.
+    * Formats the size and static cycle profile report as valid structured JSON without external dependencies.
     */
    public static String formatJson(Report report) {
       StringBuilder sb = new StringBuilder();
       sb.append("{\n");
       sb.append("  \"totalBytes\": ").append(report.getTotalBytes()).append(",\n");
       sb.append("  \"totalInstructions\": ").append(report.getTotalInstructions()).append(",\n");
+      sb.append("  \"totalCycles\": ").append(formatCycles(report.getTotalCycles())).append(",\n");
 
       sb.append("  \"segments\": [\n");
       List<SegmentStats> segs = report.getSegments();
       for(int i = 0; i < segs.size(); i++) {
          SegmentStats s = segs.get(i);
          sb.append("    {\"name\": \"").append(escapeJson(s.getName())).append("\", \"bytes\": ")
-               .append(s.getBytes()).append(", \"instructions\": ").append(s.getInstructions()).append("}");
+               .append(s.getBytes()).append(", \"instructions\": ").append(s.getInstructions())
+               .append(", \"cycles\": ").append(formatCycles(s.getCycles())).append("}");
          sb.append(i + 1 < segs.size() ? ",\n" : "\n");
       }
       sb.append("  ],\n");
@@ -418,12 +510,20 @@ public class CodeSizeProfiler {
       appendProceduresJson(sb, report.getTopProcedures());
       sb.append("  ],\n");
 
+      sb.append("  \"topProceduresByCycles\": [\n");
+      appendProceduresJson(sb, report.getTopProceduresByCycles());
+      sb.append("  ],\n");
+
       sb.append("  \"procedures\": [\n");
       appendProceduresJson(sb, report.getProcedures());
       sb.append("  ],\n");
 
       sb.append("  \"topSourceLines\": [\n");
       appendSourceLinesJson(sb, report.getTopSourceLines());
+      sb.append("  ],\n");
+
+      sb.append("  \"topSourceLinesByCycles\": [\n");
+      appendSourceLinesJson(sb, report.getTopSourceLinesByCycles());
       sb.append("  ],\n");
 
       sb.append("  \"sourceLines\": [\n");
@@ -440,7 +540,8 @@ public class CodeSizeProfiler {
          sb.append("    {\"name\": \"").append(escapeJson(p.getName()))
                .append("\", \"segment\": \"").append(escapeJson(p.getSegment()))
                .append("\", \"bytes\": ").append(p.getBytes())
-               .append(", \"instructions\": ").append(p.getInstructions()).append("}");
+               .append(", \"instructions\": ").append(p.getInstructions())
+               .append(", \"cycles\": ").append(formatCycles(p.getCycles())).append("}");
          sb.append(i + 1 < procs.size() ? ",\n" : "\n");
       }
    }
@@ -452,10 +553,18 @@ public class CodeSizeProfiler {
                .append("\", \"line\": ").append(sl.getLine())
                .append(", \"bytes\": ").append(sl.getBytes())
                .append(", \"instructions\": ").append(sl.getInstructions())
+               .append(", \"cycles\": ").append(formatCycles(sl.getCycles()))
                .append(", \"scope\": \"").append(escapeJson(sl.getScope()))
                .append("\", \"code\": \"").append(escapeJson(sl.getCode())).append("\"}");
          sb.append(i + 1 < lines.size() ? ",\n" : "\n");
       }
+   }
+
+   static String formatCycles(double cycles) {
+      if(Math.abs(cycles - Math.rint(cycles)) < 1e-6) {
+         return String.format(Locale.ROOT, "%.0f", cycles);
+      }
+      return String.format(Locale.ROOT, "%.1f", cycles);
    }
 
    private static String truncate(String s, int maxLen) {

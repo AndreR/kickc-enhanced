@@ -88,27 +88,42 @@ public class TestCodeSizeProfilerAndStructPack {
 
       assertTrue(report.getTotalBytes() > 0, "Total bytes must be positive");
       assertTrue(report.getTotalInstructions() > 0, "Total instructions must be positive");
+      assertTrue(report.getTotalCycles() > 0.0, "Total static cycles must be positive");
       assertFalse(report.getSegments().isEmpty(), "Segment summary must not be empty");
       assertFalse(report.getProcedures().isEmpty(), "Procedure list must not be empty");
+      assertFalse(report.getTopProceduresByCycles().isEmpty(), "Top procedures by cycles must not be empty");
       assertFalse(report.getSourceLines().isEmpty(), "Source-line stats must not be empty");
+      assertFalse(report.getTopSourceLinesByCycles().isEmpty(), "Top source lines by cycles must not be empty");
       assertTrue(report.getTopProcedures().size() <= CodeSizeProfiler.TOP_LIMIT);
+      assertTrue(report.getTopProceduresByCycles().size() <= CodeSizeProfiler.TOP_LIMIT);
       assertTrue(report.getTopSourceLines().size() <= CodeSizeProfiler.TOP_LIMIT);
+      assertTrue(report.getTopSourceLinesByCycles().size() <= CodeSizeProfiler.TOP_LIMIT);
 
       boolean foundComputeSum = report.getProcedures().stream()
-            .anyMatch(p -> p.getName().contains("compute_sum") && p.getBytes() > 0 && p.getInstructions() > 0);
-      assertTrue(foundComputeSum, "Report must contain compute_sum procedure stats");
+            .anyMatch(p -> p.getName().contains("compute_sum") && p.getBytes() > 0 && p.getInstructions() > 0 && p.getCycles() > 0.0);
+      assertTrue(foundComputeSum, "Report must contain compute_sum procedure stats with cycles");
 
       int sumProcBytes = report.getProcedures().stream().mapToInt(CodeSizeProfiler.ProcedureStats::getBytes).sum();
       int sumSegBytes = report.getSegments().stream().mapToInt(CodeSizeProfiler.SegmentStats::getBytes).sum();
+      double sumProcCycles = report.getProcedures().stream().mapToDouble(CodeSizeProfiler.ProcedureStats::getCycles).sum();
+      double sumSegCycles = report.getSegments().stream().mapToDouble(CodeSizeProfiler.SegmentStats::getCycles).sum();
       assertEquals(report.getTotalBytes(), sumProcBytes, "Procedure bytes sum must equal totalBytes");
       assertEquals(report.getTotalBytes(), sumSegBytes, "Segment bytes sum must equal totalBytes");
+      assertEquals(report.getTotalCycles(), sumProcCycles, 1e-6, "Procedure cycles sum must equal totalCycles");
+      assertEquals(report.getTotalCycles(), sumSegCycles, 1e-6, "Segment cycles sum must equal totalCycles");
 
-      // Verify descending sort order of procedures and topSourceLines
+      // Verify descending sort order of procedures and topSourceLines (bytes and cycles)
       for(int i = 1; i < report.getProcedures().size(); i++) {
          assertTrue(report.getProcedures().get(i - 1).getBytes() >= report.getProcedures().get(i).getBytes());
       }
+      for(int i = 1; i < report.getTopProceduresByCycles().size(); i++) {
+         assertTrue(report.getTopProceduresByCycles().get(i - 1).getCycles() >= report.getTopProceduresByCycles().get(i).getCycles());
+      }
       for(int i = 1; i < report.getTopSourceLines().size(); i++) {
          assertTrue(report.getTopSourceLines().get(i - 1).getBytes() >= report.getTopSourceLines().get(i).getBytes());
+      }
+      for(int i = 1; i < report.getTopSourceLinesByCycles().size(); i++) {
+         assertTrue(report.getTopSourceLinesByCycles().get(i - 1).getCycles() >= report.getTopSourceLinesByCycles().get(i).getCycles());
       }
 
       Path tempDir = Files.createTempDirectory("kickc_csz_test_");
@@ -120,17 +135,24 @@ public class TestCodeSizeProfilerAndStructPack {
          String jsonText = Files.readString(jsonPath);
 
          assertTrue(cszText.contains("Code Size Profile (.csz)"));
+         assertTrue(cszText.contains("Static Cycles:"));
          assertTrue(cszText.contains("Segment Summary"));
          assertTrue(cszText.contains("Top 20 Largest Functions"));
+         assertTrue(cszText.contains("Top 20 Costliest Functions / Scopes (Static Cycles)"));
          assertTrue(cszText.contains("Top 20 Costliest C Source Lines"));
+         assertTrue(cszText.contains("Top 20 Costliest C Source Lines (Static Cycles)"));
          assertTrue(cszText.contains("compute_sum"));
 
          assertTrue(jsonText.startsWith("{"));
          assertTrue(jsonText.trim().endsWith("}"));
          assertTrue(jsonText.contains("\"totalBytes\": " + report.getTotalBytes()));
+         assertTrue(jsonText.contains("\"totalCycles\": "));
+         assertTrue(jsonText.contains("\"cycles\": "));
          assertTrue(jsonText.contains("\"segments\":"));
          assertTrue(jsonText.contains("\"topProcedures\":"));
+         assertTrue(jsonText.contains("\"topProceduresByCycles\":"));
          assertTrue(jsonText.contains("\"topSourceLines\":"));
+         assertTrue(jsonText.contains("\"topSourceLinesByCycles\":"));
          assertTrue(jsonText.contains("\"sourceLines\":"));
          assertTrue(jsonText.contains("compute_sum"));
       } finally {
