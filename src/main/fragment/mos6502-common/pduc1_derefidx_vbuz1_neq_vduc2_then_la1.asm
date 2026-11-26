@@ -1,0 +1,13 @@
+ldx {z1}
+lda {c1},x
+cmp #<{c2}
+bne {la1}
+lda {c1}+1,x
+cmp #>{c2}
+bne {la1}
+lda {c1}+2,x
+cmp #<{c2}>>$10
+bne {la1}
+lda {c1}+3,x
+cmp #>{c2}>>$10
+bne {la1}
