@@ -40,6 +40,12 @@
 - Fixed constant folding before child narrowing, signed-cast edge cases, `DWORD` limits, and `-fconvenience` division/modulo handling.
 - Resolved multi-core data races, isolated static compiler state, enabled lock-free fragment cache access, and precompiled regex patterns.
 
+### Compiler Performance & Register Allocation
+
+- **Core IR & Passes 1–3:** Added O(1) `ControlFlowGraph.BlockIndex`, `Program.procedureCompilationMap`, `Variable.cachedRef`, `VariableReferenceInfos` caching, selective `ProgramScope` cache removal, lazy `VarAssignments.Index`, `BitSet` backward liveness (`PassNCalcLiveRangeVariables`), and guarded verbose logging/redundant loop-analysis gating.
+- **Pass 4 & Fragments:** Added `Pass4DirectTrialEvaluator` with `FastClobberIndex` (zero-`AsmProgram`/zero-ANTLR trial scoring and thread-local register patching), fast ZP+ZP coalescing, buffered fragment cache I/O, and opt-in `-Olocalsearch` Phase-3 1-opt/2-opt local-search refinement (`Pass4RegisterUpliftLocalSearch`).
+- **Pass 5:** Added `Pass5RoundContext` dirty-scope gating and shared per-round line/alias caches across Pass 5 optimizations, widespread O(1) tombstone deletion, `BlockSignature` bucketing in `Pass5DuplicateBlockElimination`, and analytical branch safety with `AsmLoopAlign` interval padding in `Pass5FixLongBranches`.
+
 ### Bug Fixes
 
 - Fixed `jsr`/`dcp`/`bit` liveness, `volatile` indirect pointer guards, and stale `AsmProgramStaticRegisterValues` snapshots in `Pass5UnnecesaryLoadElimination`.
