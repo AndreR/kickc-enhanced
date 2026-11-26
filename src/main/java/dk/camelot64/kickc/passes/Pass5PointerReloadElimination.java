@@ -34,45 +34,69 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
       return isZpAddressOperand(op, "$fd") || (op != null && op.trim().equals("253"));
    }
 
-   @Override
-   public boolean optimize() {
-      boolean overallModified = false;
-      boolean passModified = true;
-
-      while(passModified) {
-         passModified = false;
-
-         List<LineRef> allLines = flattenLines(getAsmProgram());
-         Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
-
-         // ZP-01: Pre-scan back-edges, nooptimize labels, and scopes containing inline KickAsm
-         Set<String> seenLabelsInScan = new HashSet<>();
-         Set<String> backEdgeOrUnsafeLabels = new HashSet<>();
-         boolean scopeSawInlineAsm = false;
-         for(LineRef r : allLines) {
-            if(r.line instanceof AsmScopeBegin || r.line instanceof AsmScopeEnd) {
-               seenLabelsInScan.clear();
-               scopeSawInlineAsm = false;
-            } else if(r.line instanceof AsmInlineKickAsm) {
-               scopeSawInlineAsm = true;
-            } else if(r.line instanceof AsmLabel lbl) {
-               String key = r.scope + "::" + lbl.getLabel();
-               seenLabelsInScan.add(key);
-               if(scopeSawInlineAsm || lbl.isNoOptimize() || (lbl.getLabel() != null && lbl.getLabel().startsWith("!"))) {
-                  backEdgeOrUnsafeLabels.add(key);
+   private static boolean hasFeFfOrIzy(AsmProgram asmProgram) {
+      for(AsmChunk chunk : asmProgram.getChunks()) {
+         for(AsmLine line : chunk.getLines()) {
+            if(line instanceof AsmInstruction inst) {
+               CpuOpcode op = inst.getCpuOpcode();
+               if(op == null) continue;
+               if(op.getAddressingMode() == CpuAddressingMode.IZY) {
+                  return true;
                }
-            } else if(r.line instanceof AsmInstruction inst && inst.getCpuOpcode() != null && inst.getCpuOpcode().isJump()) {
-               String target = inst.getOperandJumpTarget();
-               if(target != null) {
-                  String key = r.scope + "::" + target;
-                  if(seenLabelsInScan.contains(key)) {
-                     backEdgeOrUnsafeLabels.add(key);
-                  }
+               String op1 = inst.getOperand1();
+               if(op1 != null && (isZpFe(op1) || isZpFf(op1))) {
+                  return true;
                }
             }
          }
+      }
+      return false;
+   }
 
-         Map<String, String[]> incomingFeFf = new HashMap<>();
+   @Override
+   public boolean optimize() {
+      if(!hasFeFfOrIzy(getAsmProgram())) {
+         return false;
+      }
+
+      boolean overallModified = false;
+      boolean passModified = true;
+
+      List<LineRef> allLines = flattenLines(getAsmProgram());
+      Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
+
+      // ZP-01: Pre-scan back-edges, nooptimize labels, and scopes containing inline KickAsm
+      Set<String> seenLabelsInScan = new HashSet<>();
+      Set<String> backEdgeOrUnsafeLabels = new HashSet<>();
+      boolean scopeSawInlineAsm = false;
+      for(LineRef r : allLines) {
+         if(r.line instanceof AsmScopeBegin || r.line instanceof AsmScopeEnd) {
+            seenLabelsInScan.clear();
+            scopeSawInlineAsm = false;
+         } else if(r.line instanceof AsmInlineKickAsm) {
+            scopeSawInlineAsm = true;
+         } else if(r.line instanceof AsmLabel lbl) {
+            String key = r.scope + "::" + lbl.getLabel();
+            seenLabelsInScan.add(key);
+            if(scopeSawInlineAsm || lbl.isNoOptimize() || (lbl.getLabel() != null && lbl.getLabel().startsWith("!"))) {
+               backEdgeOrUnsafeLabels.add(key);
+            }
+         } else if(r.line instanceof AsmInstruction inst && inst.getCpuOpcode() != null && inst.getCpuOpcode().isJump()) {
+            String target = inst.getOperandJumpTarget();
+            if(target != null) {
+               String key = r.scope + "::" + target;
+               if(seenLabelsInScan.contains(key)) {
+                  backEdgeOrUnsafeLabels.add(key);
+               }
+            }
+         }
+      }
+
+      Map<String, String[]> incomingFeFf = new HashMap<>();
+
+      while(passModified) {
+         passModified = false;
+         incomingFeFf.clear();
          boolean prevWasUncondTerminator = false;
 
          String currentFe = null;

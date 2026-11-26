@@ -31,9 +31,14 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
       if(allLines.isEmpty()) return false;
       Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
 
-      // Map procedure name -> scope range in allLines, and collect per-scope .label declarations
+      // Map procedure name -> scope range in allLines, and collect per-scope .label declarations and call/operand indices
       Map<String, int[]> scopeRanges = new LinkedHashMap<>();
       Map<String, Map<String, String>> scopeLabelDecls = new HashMap<>();
+      Map<String, List<Integer>> jsrSites = new HashMap<>();
+      Map<String, List<Integer>> jmpSites = new HashMap<>();
+      List<Integer> inlineKickAsmIndices = new ArrayList<>();
+      Map<String, List<Integer>> dotOperandRefs = new HashMap<>();
+      Map<String, Map<String, List<Integer>>> scopeOperandRefs = new HashMap<>();
       int scopeStart = -1;
       String curScope = null;
       for(int i = 0; i < allLines.size(); i++) {
@@ -52,7 +57,48 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
             String v = decl.getValue().trim();
             if(v.startsWith(".z ")) v = v.substring(3).trim();
             scopeLabelDecls.computeIfAbsent(sc, k -> new LinkedHashMap<>()).put(n, v);
+         } else if(l instanceof AsmInlineKickAsm) {
+            inlineKickAsmIndices.add(i);
+         } else if(l instanceof AsmInstruction inst && inst.getCpuOpcode() != null) {
+            String m = inst.getCpuOpcode().getMnemonic();
+            String op = inst.getOperand1();
+            if(op != null) {
+               String opTrim = op.trim();
+               if("jsr".equals(m)) {
+                  jsrSites.computeIfAbsent(opTrim, k -> new ArrayList<>()).add(i);
+               } else if("jmp".equals(m)) {
+                  jmpSites.computeIfAbsent(opTrim, k -> new ArrayList<>()).add(i);
+               }
+               String opBase = getBaseVar(opTrim);
+               String sc = ref.scope != null ? ref.scope : "";
+               Map<String, List<Integer>> scRefs = scopeOperandRefs.computeIfAbsent(sc, k -> new HashMap<>());
+               scRefs.computeIfAbsent(opBase, k -> new ArrayList<>()).add(i);
+               if(!opTrim.equals(opBase)) {
+                  scRefs.computeIfAbsent(opTrim, k -> new ArrayList<>()).add(i);
+               }
+               if(opBase.indexOf('.') != -1) {
+                  dotOperandRefs.computeIfAbsent(opBase, k -> new ArrayList<>()).add(i);
+               }
+               if(!opTrim.equals(opBase) && opTrim.indexOf('.') != -1) {
+                  dotOperandRefs.computeIfAbsent(opTrim, k -> new ArrayList<>()).add(i);
+               }
+            }
          }
+      }
+
+      // Build reverse .label index per scope for O(1) caller return alias lookup
+      Map<String, Map<String, List<String>>> scopeReverseDecls = new HashMap<>();
+      Map<String, Set<String>> scopesReferencingRhs = new HashMap<>();
+      for(Map.Entry<String, Map<String, String>> scEntry : scopeLabelDecls.entrySet()) {
+         String sc = scEntry.getKey();
+         Map<String, List<String>> rev = new HashMap<>();
+         for(Map.Entry<String, String> d : scEntry.getValue().entrySet()) {
+            String lhs = d.getKey();
+            String rhsBase = getBaseVar(d.getValue());
+            rev.computeIfAbsent(rhsBase, k -> new ArrayList<>()).add(lhs);
+            scopesReferencingRhs.computeIfAbsent(rhsBase, k -> new LinkedHashSet<>()).add(sc);
+         }
+         scopeReverseDecls.put(sc, rev);
       }
 
       boolean modified = false;
@@ -161,57 +207,73 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
 
          // Collect per-caller-scope transitive .label aliases pointing to qualifiedRetName (e.g. .label __3 = fn.return)
          Map<String, Set<String>> callerRetAliases = new HashMap<>();
-         for(Map.Entry<String, Map<String, String>> scEntry : scopeLabelDecls.entrySet()) {
-            String sc = scEntry.getKey();
-            if(procName.equals(sc)) continue;
-            Map<String, String> decls = scEntry.getValue();
-            Set<String> aliases = new HashSet<>();
-            aliases.add(qualifiedRetName);
-            boolean grown = true;
-            while(grown) {
-               grown = false;
-               for(Map.Entry<String, String> d : decls.entrySet()) {
-                  String lhs = d.getKey();
-                  String rhsBase = getBaseVar(d.getValue());
-                  if(aliases.contains(rhsBase) && aliases.add(lhs)) {
-                     grown = true;
+         Set<String> candidateAliasScopes = scopesReferencingRhs.get(qualifiedRetName);
+         if(candidateAliasScopes != null) {
+            for(String sc : candidateAliasScopes) {
+               if(procName.equals(sc)) continue;
+               Map<String, List<String>> rev = scopeReverseDecls.get(sc);
+               if(rev == null) continue;
+               Set<String> aliases = new HashSet<>();
+               aliases.add(qualifiedRetName);
+               ArrayDeque<String> queue = new ArrayDeque<>();
+               queue.add(qualifiedRetName);
+               while(!queue.isEmpty()) {
+                  String cur = queue.poll();
+                  List<String> lhss = rev.get(cur);
+                  if(lhss != null) {
+                     for(String lhs : lhss) {
+                        if(aliases.add(lhs)) {
+                           queue.add(lhs);
+                        }
+                     }
                   }
                }
-            }
-            if(aliases.size() > 1) {
-               callerRetAliases.put(sc, aliases);
+               if(aliases.size() > 1) {
+                  callerRetAliases.put(sc, aliases);
+               }
             }
          }
 
-         // 2. Verify all callers across the entire program (including recursion / tail-calls / aliases / N&Z flags)
+         // 2. Verify all callers across the entire program using pre-indexed sites (recursion / tail-calls / aliases / N&Z flags)
          List<Integer> callerLoadIndices = new ArrayList<>();
+         Set<Integer> callerLoadSet = new HashSet<>();
          boolean callersOk = true;
          int callCount = 0;
-         for(int i = 0; i < allLines.size(); i++) {
+
+         for(int i : inlineKickAsmIndices) {
             if(i >= range[0] && i <= range[1]) continue;
-            LineRef ref = allLines.get(i);
-            String refScope = ref.scope != null ? ref.scope : "";
-            AsmLine l = ref.line;
-            if(l instanceof AsmInlineKickAsm inlineAsm) {
+            if(allLines.get(i).line instanceof AsmInlineKickAsm inlineAsm) {
                String code = inlineAsm.getKickAsmCode();
                if(code != null && (code.contains(procName) || code.contains(qualifiedRetName))) {
                   callersOk = false;
                   break;
                }
-               continue;
             }
-            if(l instanceof AsmInstruction inst && inst.getCpuOpcode() != null) {
-               String m = inst.getCpuOpcode().getMnemonic();
-               String op = inst.getOperand1();
-               String opTrim = op != null ? op.trim() : null;
-               Set<String> scopeAliases = callerRetAliases.get(refScope);
+         }
 
-               if("jmp".equals(m) && opTrim != null && procName.equals(opTrim)) {
-                  // Tail-call into procName: caller's callers still expect ZP return ABI -> abort
-                  callersOk = false;
-                  break;
+         if(callersOk) {
+            List<Integer> procJmps = jmpSites.get(procName);
+            if(procJmps != null) {
+               for(int i : procJmps) {
+                  if(i >= range[0] && i <= range[1]) continue;
+                  if(allLines.get(i).line instanceof AsmInstruction) {
+                     // Tail-call into procName: caller's callers still expect ZP return ABI -> abort
+                     callersOk = false;
+                     break;
+                  }
                }
-               if("jsr".equals(m) && opTrim != null && procName.equals(opTrim)) {
+            }
+         }
+
+         if(callersOk) {
+            List<Integer> procJsrs = jsrSites.get(procName);
+            if(procJsrs != null) {
+               for(int i : procJsrs) {
+                  if(i >= range[0] && i <= range[1]) continue;
+                  LineRef ref = allLines.get(i);
+                  if(!(ref.line instanceof AsmInstruction)) continue;
+                  String refScope = ref.scope != null ? ref.scope : "";
+                  Set<String> scopeAliases = callerRetAliases.get(refScope);
                   callCount++;
                   CanonicalResolver callerResolver = scopeResolvers.getOrDefault(refScope, scopeResolvers.get(""));
                   int nextIdx = findNextInstruction(allLines, i + 1);
@@ -234,6 +296,7 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
                            break;
                         }
                         callerLoadIndices.add(nextIdx);
+                        callerLoadSet.add(nextIdx);
                         continue;
                      }
                   }
@@ -243,19 +306,51 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
                      callersOk = false;
                      break;
                   }
-               } else if(opTrim != null) {
-                  String opBase = getBaseVar(opTrim);
-                  boolean refsReturn = qualifiedRetName.equals(opTrim) || qualifiedRetName.equals(opBase)
-                        || (scopeAliases != null && (scopeAliases.contains(opTrim) || scopeAliases.contains(opBase)));
-                  if(refsReturn && !callerLoadIndices.contains(i)) {
-                     // Any other reference (including via .label alias) to procName.return -> abort
-                     callersOk = false;
-                     break;
-                  }
                }
             }
          }
          if(!callersOk || callCount == 0 || callerLoadIndices.isEmpty()) continue;
+
+         // Verify no other instructions reference procName.return (directly or via .label alias)
+         List<Integer> directRetRefs = dotOperandRefs.get(qualifiedRetName);
+         if(directRetRefs != null) {
+            for(int idx : directRetRefs) {
+               if(idx >= range[0] && idx <= range[1]) continue;
+               if(callerLoadSet.contains(idx)) continue;
+               AsmLine l = allLines.get(idx).line;
+               if(!(l instanceof AsmInstruction inst) || inst.getCpuOpcode() == null) continue;
+               String m = inst.getCpuOpcode().getMnemonic();
+               String opTrim = inst.getOperand1() != null ? inst.getOperand1().trim() : null;
+               if(("jmp".equals(m) || "jsr".equals(m)) && procName.equals(opTrim)) continue;
+               callersOk = false;
+               break;
+            }
+         }
+         if(callersOk && !callerRetAliases.isEmpty()) {
+            for(Map.Entry<String, Set<String>> aliasEntry : callerRetAliases.entrySet()) {
+               Map<String, List<Integer>> scRefs = scopeOperandRefs.get(aliasEntry.getKey());
+               if(scRefs == null) continue;
+               for(String alias : aliasEntry.getValue()) {
+                  if(qualifiedRetName.equals(alias)) continue;
+                  List<Integer> aliasRefs = scRefs.get(alias);
+                  if(aliasRefs == null) continue;
+                  for(int idx : aliasRefs) {
+                     if(idx >= range[0] && idx <= range[1]) continue;
+                     if(callerLoadSet.contains(idx)) continue;
+                     AsmLine l = allLines.get(idx).line;
+                     if(!(l instanceof AsmInstruction inst) || inst.getCpuOpcode() == null) continue;
+                     String m = inst.getCpuOpcode().getMnemonic();
+                     String opTrim = inst.getOperand1() != null ? inst.getOperand1().trim() : null;
+                     if(("jmp".equals(m) || "jsr".equals(m)) && procName.equals(opTrim)) continue;
+                     callersOk = false;
+                     break;
+                  }
+                  if(!callersOk) break;
+               }
+               if(!callersOk) break;
+            }
+         }
+         if(!callersOk) continue;
 
          // 3. Apply transformation: callee stores -> removed (or txa/tya), caller loads -> removed
          CpuOpcode txaOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("txa", CpuAddressingMode.NON, false);

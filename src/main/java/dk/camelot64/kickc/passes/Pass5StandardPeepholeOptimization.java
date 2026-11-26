@@ -104,7 +104,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                         inst3.setCpuOpcode(newBranchOp);
                         passModified = true;
                         overallModified = true;
-                        break;
+                        continue;
                      }
                   }
                }
@@ -155,13 +155,13 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                         getLog().append("Folding 8-to-16 cast and << 8 on " + varC);
                         inst1.setOperand1(instD.getOperand1());
                         instB.setOperand1(instF.getOperand1());
-                        allLines.get(i4).chunk.getLines().remove(instC);
-                        allLines.get(i5).chunk.getLines().remove(instD);
-                        allLines.get(i6).chunk.getLines().remove(instE);
-                        allLines.get(i7).chunk.getLines().remove(instF);
+                        tombstoneLine(allLines, i4);
+                        tombstoneLine(allLines, i5);
+                        tombstoneLine(allLines, i6);
+                        tombstoneLine(allLines, i7);
                         passModified = true;
                         overallModified = true;
-                        break;
+                        continue;
                      }
                   }
                }
@@ -204,15 +204,15 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                            getLog().append("Collapsing register shuffle cascade to STX " + targetOp);
                            inst1.setCpuOpcode(stxOp);
                            inst1.setOperand1(targetOp);
-                           allLines.get(i2).chunk.getLines().remove(instA);
-                           allLines.get(i3).chunk.getLines().remove(instB);
-                           allLines.get(i4).chunk.getLines().remove(instC);
-                           allLines.get(i5).chunk.getLines().remove(instD);
-                           allLines.get(i6).chunk.getLines().remove(instE);
-                           allLines.get(i7).chunk.getLines().remove(instF);
+                           tombstoneLine(allLines, i2);
+                           tombstoneLine(allLines, i3);
+                           tombstoneLine(allLines, i4);
+                           tombstoneLine(allLines, i5);
+                           tombstoneLine(allLines, i6);
+                           tombstoneLine(allLines, i7);
                            passModified = true;
                            overallModified = true;
-                           break;
+                           continue;
                         }
                      }
                   }
@@ -254,22 +254,22 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
 
                         if(instE.getCpuOpcode().getMnemonic().equals("rts")) {
                            getLog().append("Eliminating redundant right-shift intermediate stores before RTS");
-                           allLines.get(i2).chunk.getLines().remove(instA);
-                           allLines.get(i3).chunk.getLines().remove(instB);
-                           allLines.get(i4).chunk.getLines().remove(instC);
-                           allLines.get(i5).chunk.getLines().remove(instD);
+                           tombstoneLine(allLines, i2);
+                           tombstoneLine(allLines, i3);
+                           tombstoneLine(allLines, i4);
+                           tombstoneLine(allLines, i5);
                            passModified = true;
                            overallModified = true;
-                           break;
+                           continue;
                         } else if(instE.getCpuOpcode().getMnemonic().equals("sta")) {
                            getLog().append("Forwarding right-shift high-byte load directly to STA " + instE.getOperand1());
-                           allLines.get(i2).chunk.getLines().remove(instA);
-                           allLines.get(i3).chunk.getLines().remove(instB);
-                           allLines.get(i4).chunk.getLines().remove(instC);
-                           allLines.get(i5).chunk.getLines().remove(instD);
+                           tombstoneLine(allLines, i2);
+                           tombstoneLine(allLines, i3);
+                           tombstoneLine(allLines, i4);
+                           tombstoneLine(allLines, i5);
                            passModified = true;
                            overallModified = true;
-                           break;
+                           continue;
                         }
                      }
                   }
@@ -323,11 +323,11 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                         CpuOpcode ldyIdxOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("ldy", idxMode, false);
                         instD.setCpuOpcode(ldyIdxOp);
                         instD.setOperand1(idxOp);
-                        allLines.get(i6).chunk.getLines().remove(instE);
-                        allLines.get(i7).chunk.getLines().remove(instF);
+                        tombstoneLine(allLines, i6);
+                        tombstoneLine(allLines, i7);
                         passModified = true;
                         overallModified = true;
-                        break;
+                        continue;
                      }
                   }
                }
@@ -413,17 +413,17 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                         instF.setCpuOpcode(instK.getCpuOpcode());
                         instF.setOperand1(instK.getOperand1());
 
-                        allLines.get(i8).chunk.getLines().remove(instG);
-                        allLines.get(i9).chunk.getLines().remove(instH);
-                        allLines.get(i10).chunk.getLines().remove(instI);
-                        allLines.get(i11).chunk.getLines().remove(instJ);
-                        allLines.get(i12).chunk.getLines().remove(instK);
-                        allLines.get(i13).chunk.getLines().remove(instL);
-                        allLines.get(i14).chunk.getLines().remove(instM);
-                        allLines.get(i15).chunk.getLines().remove(instN);
+                        tombstoneLine(allLines, i8);
+                        tombstoneLine(allLines, i9);
+                        tombstoneLine(allLines, i10);
+                        tombstoneLine(allLines, i11);
+                        tombstoneLine(allLines, i12);
+                        tombstoneLine(allLines, i13);
+                        tombstoneLine(allLines, i14);
+                        tombstoneLine(allLines, i15);
                         passModified = true;
                         overallModified = true;
-                        break;
+                        continue;
                      }
                   }
                }
@@ -433,6 +433,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
             // Pattern 0k: Redundant TXA elimination
             // -------------------------------------------------------------
             if(mnem1.equals("txa")) {
+               boolean removedTxa = false;
                for(int k = nextIdx; k < allLines.size(); k++) {
                   LineRef cand = allLines.get(k);
                   if(cand.line instanceof AsmComment || cand.line instanceof AsmConstant || cand.line instanceof AsmLabelDecl) continue;
@@ -444,9 +445,10 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                      String mnemK = opK.getMnemonic();
                      if(mnemK.equals("txa")) {
                         getLog().append("Eliminating redundant secondary TXA");
-                        cand.chunk.getLines().remove(instK);
+                        tombstoneLine(allLines, k);
                         passModified = true;
                         overallModified = true;
+                        removedTxa = true;
                         break;
                      }
                      if(mnemK.equals("lda") || mnemK.equals("pla") || mnemK.equals("tax") || mnemK.equals("tay") ||
@@ -465,7 +467,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                   }
                   break;
                }
-               if(passModified) break;
+               if(removedTxa) continue;
             }
 
             // -------------------------------------------------------------
@@ -837,14 +839,14 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                                  inst8.setCpuOpcode(inst10.getCpuOpcode());
                                  inst8.setOperand1(inst10.getOperand1());
 
-                                 allLines.get(idx3).chunk.getLines().remove(in3);
-                                 allLines.get(idx6).chunk.getLines().remove(inst6);
-                                 allLines.get(idx9).chunk.getLines().remove(inst9);
-                                 allLines.get(idx10).chunk.getLines().remove(inst10);
+                                 tombstoneLine(allLines, idx3);
+                                 tombstoneLine(allLines, idx6);
+                                 tombstoneLine(allLines, idx9);
+                                 tombstoneLine(allLines, idx10);
 
                                  passModified = true;
                                  overallModified = true;
-                                 break;
+                                 continue;
                               }
                            }
                         }

@@ -264,10 +264,10 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                      String canon = getCanonical(operand, localAliases, globalAliasMap);
                      if(xMems.contains(canon)) {
                         getLog().append("Eliminating redundant self-store " + inst.getAsm() + " (X already loaded from " + canon + ")");
-                        ref.chunk.getLines().remove(inst);
+                        tombstoneLine(allLines, i);
                         passModified = true;
                         overallModified = true;
-                        break;
+                        continue;
                      }
                      aMems.remove(canon);
                      yMems.remove(canon);
@@ -313,10 +313,10 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                      String canon = getCanonical(operand, localAliases, globalAliasMap);
                      if(yMems.contains(canon)) {
                         getLog().append("Eliminating redundant self-store " + inst.getAsm() + " (Y already loaded from " + canon + ")");
-                        ref.chunk.getLines().remove(inst);
+                        tombstoneLine(allLines, i);
                         passModified = true;
                         overallModified = true;
-                        break;
+                        continue;
                      }
                      aMems.remove(canon);
                      xMems.remove(canon);

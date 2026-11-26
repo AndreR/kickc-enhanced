@@ -15,6 +15,7 @@ public class AsmProgramStaticRegisterValues {
 
    private AsmProgram program;
    private Program kickcProgram;
+   private List<Pass5AsmOptimization.LineRef> allLines;
    private Map<String, Pass5AsmOptimization.CanonicalResolver> scopeResolvers;
    private String currentScope = "";
 
@@ -255,13 +256,21 @@ public class AsmProgramStaticRegisterValues {
       return values.get(instruction);
    }
 
+   public List<Pass5AsmOptimization.LineRef> getAllLines() {
+      return allLines;
+   }
+
+   public Map<String, Pass5AsmOptimization.CanonicalResolver> getScopeResolvers() {
+      return scopeResolvers;
+   }
+
    private void initValues() {
       AsmRegisterValues current = new AsmRegisterValues();
       forwardBranches.clear();
       backwardTargetLabels.clear();
       lastInstructionWasUnconditionalControlFlow = false;
       currentScope = "";
-      List<Pass5AsmOptimization.LineRef> allLines = Pass5AsmOptimization.flattenLines(program);
+      this.allLines = Pass5AsmOptimization.flattenLines(program);
       scopeResolvers = Pass5AsmOptimization.buildScopeResolvers(allLines);
       // CF-08: Pre-scan backward jumps to multi-labels (!-, !loop-, !--, etc.) and invalidate state at their targets
       for(int i = 0; i < allLines.size(); i++) {

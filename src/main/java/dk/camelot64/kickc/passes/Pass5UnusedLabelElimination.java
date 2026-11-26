@@ -91,56 +91,16 @@ public class Pass5UnusedLabelElimination extends Pass5AsmOptimization {
                   usedLabels.add(labelStr);
 
                }
-               for(String op : new String[]{instruction.getOperand1(), instruction.getOperand2()}) {
-                  if(op != null) {
-                     for(String token : op.split("[^a-zA-Z0-9_]")) {
-                        if(!token.isEmpty() && !Character.isDigit(token.charAt(0))) {
-                           usedLabels.add(currentScope + "::" + token);
-                           usedLabels.add("::" + token);
-                        }
-                     }
-                  }
-               }
+               addIdentifierTokens(instruction.getOperand1(), currentScope, usedLabels);
+               addIdentifierTokens(instruction.getOperand2(), currentScope, usedLabels);
 
             } else if(line instanceof AsmDataKickAsm) {
 
-               String data = ((AsmDataKickAsm) line).getKickAsmCode();
-
-               if(data != null) {
-
-                  for(String token : data.split("[^a-zA-Z0-9_]")) {
-
-                     if(!token.isEmpty() && !Character.isDigit(token.charAt(0))) {
-
-                        usedLabels.add(currentScope + "::" + token);
-
-                        usedLabels.add("::" + token);
-
-                     }
-
-                  }
-
-               }
+               addIdentifierTokens(((AsmDataKickAsm) line).getKickAsmCode(), currentScope, usedLabels);
 
             } else if(line instanceof AsmInlineKickAsm) {
 
-               String asmStr = ((AsmInlineKickAsm) line).getAsm();
-
-               if(asmStr != null) {
-
-                  for(String token : asmStr.split("[^a-zA-Z0-9_]")) {
-
-                     if(!token.isEmpty() && !Character.isDigit(token.charAt(0))) {
-
-                        usedLabels.add(currentScope + "::" + token);
-
-                        usedLabels.add("::" + token);
-
-                     }
-
-                  }
-
-               }
+               addIdentifierTokens(((AsmInlineKickAsm) line).getAsm(), currentScope, usedLabels);
 
             }
 
@@ -152,6 +112,33 @@ public class Pass5UnusedLabelElimination extends Pass5AsmOptimization {
 
       return usedLabels;
 
+   }
+
+   private static boolean isIdentChar(char c) {
+      return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+   }
+
+   private static void addIdentifierTokens(String s, String currentScope, Set<String> usedLabels) {
+      if(s == null || s.isEmpty()) return;
+      int len = s.length();
+      int i = 0;
+      while(i < len) {
+         if(isIdentChar(s.charAt(i))) {
+            int start = i;
+            i++;
+            while(i < len && isIdentChar(s.charAt(i))) {
+               i++;
+            }
+            char first = s.charAt(start);
+            if(first < '0' || first > '9') {
+               String token = s.substring(start, i);
+               usedLabels.add(currentScope + "::" + token);
+               usedLabels.add("::" + token);
+            }
+         } else {
+            i++;
+         }
+      }
    }
 
 

@@ -69,34 +69,30 @@ public class Pass5BitTestOptimization extends Pass5AsmOptimization {
    @Override
    public boolean optimize() {
       boolean overallModified = false;
-      boolean passModified = true;
 
-      while(passModified) {
-         passModified = false;
+      List<LineRef> allLines = new ArrayList<>();
+      String currentScope = null;
+      int lineIdx = 0;
+      Map<String, Integer> labelIndices = new HashMap<>();
 
-         List<LineRef> allLines = new ArrayList<>();
-         String currentScope = null;
-         int lineIdx = 0;
-         Map<String, Integer> labelIndices = new HashMap<>();
-
-         for(AsmChunk chunk : getAsmProgram().getChunks()) {
-            for(AsmLine line : chunk.getLines()) {
-               if(line instanceof AsmScopeBegin) {
-                  currentScope = ((AsmScopeBegin) line).getLabel();
-               } else if(line instanceof AsmScopeEnd) {
-                  currentScope = null;
-               } else if(line instanceof AsmLabel) {
-                  String lbl = ((AsmLabel) line).getLabel();
-                  if(lbl != null && !lbl.startsWith("!")) {
-                     String key = (currentScope != null ? currentScope + "::" : "") + lbl;
-                     labelIndices.put(key, lineIdx);
-                  }
+      for(AsmChunk chunk : getAsmProgram().getChunks()) {
+         for(AsmLine line : chunk.getLines()) {
+            if(line instanceof AsmScopeBegin) {
+               currentScope = ((AsmScopeBegin) line).getLabel();
+            } else if(line instanceof AsmScopeEnd) {
+               currentScope = null;
+            } else if(line instanceof AsmLabel) {
+               String lbl = ((AsmLabel) line).getLabel();
+               if(lbl != null && !lbl.startsWith("!")) {
+                  String key = (currentScope != null ? currentScope + "::" : "") + lbl;
+                  labelIndices.put(key, lineIdx);
                }
-               allLines.add(new LineRef(lineIdx++, chunk, line, currentScope));
             }
+            allLines.add(new LineRef(lineIdx++, chunk, line, currentScope));
          }
+      }
 
-         for(int i = 0; i < allLines.size(); i++) {
+      for(int i = 0; i < allLines.size(); i++) {
             LineRef ref1 = allLines.get(i);
             if(!(ref1.line instanceof AsmInstruction)) continue;
             AsmInstruction inst1 = (AsmInstruction) ref1.line;
@@ -242,21 +238,18 @@ public class Pass5BitTestOptimization extends Pass5AsmOptimization {
             inst1.setOperand3(null);
 
             // Remove inst2
-            ref2.chunk.getLines().remove(inst2);
+            tombstoneLine(allLines, idx2);
 
             // Remove CMP #0 if present
             if(refCmpZero != null) {
-               refCmpZero.chunk.getLines().remove(instNext);
+               tombstoneLine(allLines, idxNext);
             }
 
             // Update instBranch to new branch opcode
             instBranch.setCpuOpcode(newBranchOp);
 
-            passModified = true;
             overallModified = true;
-            break; // re-scan from clean state
          }
-      }
 
       return overallModified;
    }

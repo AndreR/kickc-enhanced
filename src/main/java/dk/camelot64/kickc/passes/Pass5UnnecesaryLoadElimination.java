@@ -22,8 +22,9 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
    @Override
    public boolean optimize() {
       AsmProgramStaticRegisterValues staticValues = new AsmProgramStaticRegisterValues(getAsmProgram(), getProgram());
-      List<LineRef> allLines = flattenLines(getAsmProgram());
-      Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
+      List<LineRef> allLines = staticValues.getAllLines();
+      Map<String, CanonicalResolver> scopeResolvers = staticValues.getScopeResolvers();
+      CanonicalResolver defaultResolver = scopeResolvers.get("");
       boolean modified = false;
 
       for(int i = 0; i < allLines.size(); i++) {
@@ -38,7 +39,6 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
          CpuOpcode cpuOpcode = instruction.getCpuOpcode();
          String mnem = cpuOpcode.getMnemonic();
          CpuAddressingMode mode = cpuOpcode.getAddressingMode();
-         CanonicalResolver resolver = scopeResolvers.getOrDefault(ref.scope, scopeResolvers.get(""));
 
          if(mnem.equals("lda") && mode.equals(CpuAddressingMode.IMM)) {
             String immValue = instruction.getOperand1();
@@ -65,6 +65,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
             }
          } else if(mnem.equals("lda") && (mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS))) {
             String memValue = instruction.getOperand1();
+            CanonicalResolver resolver = scopeResolvers.getOrDefault(ref.scope, defaultResolver);
             if(!isVolatileOrHardwareOperand(memValue, ref.scope, resolver, getProgram())) {
                AsmProgramStaticRegisterValues.AsmRegisterValues instructionValues = staticValues.getValues(instruction);
                if(instructionValues != null) {
@@ -123,6 +124,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
             }
          } else if(mnem.equals("ldx") && (mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS))) {
             String memValue = instruction.getOperand1();
+            CanonicalResolver resolver = scopeResolvers.getOrDefault(ref.scope, defaultResolver);
             if(!isVolatileOrHardwareOperand(memValue, ref.scope, resolver, getProgram())) {
                AsmProgramStaticRegisterValues.AsmRegisterValues instructionValues = staticValues.getValues(instruction);
                if(instructionValues != null) {
@@ -173,6 +175,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
             }
          } else if(mnem.equals("ldy") && (mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS))) {
             String memValue = instruction.getOperand1();
+            CanonicalResolver resolver = scopeResolvers.getOrDefault(ref.scope, defaultResolver);
             if(!isVolatileOrHardwareOperand(memValue, ref.scope, resolver, getProgram())) {
                AsmProgramStaticRegisterValues.AsmRegisterValues instructionValues = staticValues.getValues(instruction);
                if(instructionValues != null) {
@@ -203,6 +206,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
             }
          } else if(mnem.equals("ldz") && (mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS))) {
             String memValue = instruction.getOperand1();
+            CanonicalResolver resolver = scopeResolvers.getOrDefault(ref.scope, defaultResolver);
             if(!isVolatileOrHardwareOperand(memValue, ref.scope, resolver, getProgram())) {
                AsmProgramStaticRegisterValues.AsmRegisterValues instructionValues = staticValues.getValues(instruction);
                if(instructionValues != null) {
@@ -232,7 +236,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
             }
          } else if(mnem.equals("cmp") || mnem.equals("cpx") || mnem.equals("cpy")) {
             if(!areModifiedFlagsLiveAfter(allLines, i, ref.scope, getProgram())
-               && !isVolatileOrHardwareOperand(instruction, ref.scope, resolver, getProgram())) {
+               && !isVolatileOrHardwareOperand(instruction, ref.scope, scopeResolvers.getOrDefault(ref.scope, defaultResolver), getProgram())) {
                removeLine(allLines, i, ref, instruction);
                modified = true;
             }

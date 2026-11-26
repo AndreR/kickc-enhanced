@@ -352,6 +352,7 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
 
             // Find next executable instruction
             LineRef ref2 = null;
+            int rtsIdx = -1;
             boolean blocked = false;
             boolean hasInterveningLabel = false;
             for(int j = i + 1; j < allLines.size(); j++) {
@@ -371,6 +372,7 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
                }
                if(candidate.line instanceof AsmInstruction) {
                   ref2 = candidate;
+                  rtsIdx = j;
                   break;
                }
                // Any other construct (e.g. data, inline asm) blocks tail call
@@ -387,11 +389,10 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
                getLog().append("Tail Call Optimization: Replacing " + inst1.getAsm() + "; rts with jmp " + inst1.getOperand1());
                inst1.setCpuOpcode(jmpOpcode);
                if(!hasInterveningLabel) {
-                  ref2.chunk.getLines().remove(inst2);
+                  tombstoneLine(allLines, rtsIdx);
                }
                passModified = true;
                overallModified = true;
-               break; // Restart scan after list modification
             }
          }
       }

@@ -6,6 +6,8 @@ import dk.camelot64.kickc.asm.*;
 import dk.camelot64.kickc.model.Program;
 
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Pass 5 Optimization: Interprocedural Preservation of Unmodified Zero-Page Parameters across JSR.
@@ -20,6 +22,8 @@ import java.util.*;
  *    is guaranteed to already contain the identical immediate value.
  */
 public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimization {
+
+   private static final Pattern IDENT_PATTERN = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
 
    private static final Set<String> ZP_MODIFY_MNEMONICS = new HashSet<>(Arrays.asList(
          "sta", "stx", "sty", "sax", "asl", "lsr", "rol", "ror", "inc", "dec",
@@ -109,9 +113,9 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
       return mnem.equals("ldy") || mnem.equals("tay");
    }
 
-   private boolean canEliminatePrecedingLoad(List<LineRef> allLines, int storeIdx, LineRef loadRef, String reg) {
+   private boolean canEliminatePrecedingLoad(List<LineRef> allLines, int storeIdx, LineRef loadRef, String reg, Set<AsmLine> removedLines) {
       if(loadRef == null || !(loadRef.line instanceof AsmInstruction)) return false;
-      if(!loadRef.chunk.getLines().contains(loadRef.line)) return false;
+      if(removedLines.contains(loadRef.line)) return false;
 
       int loadIdx = -1;
       for(int i = storeIdx - 1; i >= 0 && i >= storeIdx - 15; i--) {
@@ -332,7 +336,7 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                // Collect any jump-table or inline-ASM label references as jump targets
                String asmText = line.getAsm();
                if(asmText != null) {
-                  java.util.regex.Matcher m = java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_]*").matcher(asmText);
+                  Matcher m = IDENT_PATTERN.matcher(asmText);
                   while(m.find()) {
                      jumpTargets.add(m.group());
                   }
@@ -345,6 +349,7 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
       // Notice: tracking persists across chunk boundaries within a procedure scope!
       List<LineRef> allLines = flattenLines(getAsmProgram());
       Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
+      Set<AsmLine> removedLines = Collections.newSetFromMap(new IdentityHashMap<>());
 
       Map<String, String> knownZp = new HashMap<>();
       String currentValA = null;
@@ -395,7 +400,7 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
 
          if(line instanceof AsmInstruction) {
             AsmInstruction inst = (AsmInstruction) line;
-            if(!ref.chunk.getLines().contains(inst)) {
+            if(removedLines.contains(inst)) {
                continue; // already removed
             }
             if(inst.isNoOptimize() || inst.getCpuOpcode() == null) {
@@ -553,11 +558,13 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                      // REDUNDANT STORE IDENTIFIED!
                      getLog().append("Pass 5: Eliminating redundant store across JSR: " + inst.getAsm());
                      ref.chunk.getLines().remove(ref.line);
+                     removedLines.add(ref.line);
                      modified = true;
 
-                     if(loadRef != null && canEliminatePrecedingLoad(allLines, i, loadRef, reg)) {
+                     if(loadRef != null && canEliminatePrecedingLoad(allLines, i, loadRef, reg, removedLines)) {
                         getLog().append("Pass 5: Eliminating dead preceding load: " + ((AsmInstruction) loadRef.line).getAsm());
                         loadRef.chunk.getLines().remove(loadRef.line);
+                        removedLines.add(loadRef.line);
                         if("A".equals(reg)) loadRefA = null;
                         else if("X".equals(reg)) loadRefX = null;
                         else if("Y".equals(reg)) loadRefY = null;

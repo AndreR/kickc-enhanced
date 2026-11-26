@@ -78,20 +78,20 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
             if(mnem1.equals("lax")) {
                if(mnem2.equals("txa")) {
                   getLog().append("Eliminating redundant TXA after LAX");
-                  ref2.chunk.getLines().remove(inst2);
+                  tombstoneLine(allLines, nextIdx);
                   passModified = true;
                   overallModified = true;
-                  break;
+                  continue;
                } else if(mnem2.equals("sta") || mnem2.equals("stx")) {
                   int i3 = findNextInstruction(allLines, nextIdx + 1);
                   if(i3 != -1) {
                      AsmInstruction instB = (AsmInstruction) allLines.get(i3).line;
                      if(instB.getCpuOpcode() != null && instB.getCpuOpcode().getMnemonic().equals("txa")) {
                         getLog().append("Eliminating redundant TXA after LAX and store");
-                        allLines.get(i3).chunk.getLines().remove(instB);
+                        tombstoneLine(allLines, i3);
                         passModified = true;
                         overallModified = true;
-                        break;
+                        continue;
                      }
                   }
                }
@@ -113,10 +113,10 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                   if(laxOpcode != null) {
                      getLog().append("Replacing " + inst1.getAsm() + "; " + inst2.getAsm() + " with LAX");
                      inst1.setCpuOpcode(laxOpcode);
-                     ref2.chunk.getLines().remove(inst2);
+                     tombstoneLine(allLines, nextIdx);
                      passModified = true;
                      overallModified = true;
-                     break;
+                     continue;
                   }
                }
             }
@@ -135,10 +135,10 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                   if(laxOpcode != null) {
                      getLog().append("Replacing " + inst1.getAsm() + "; " + inst2.getAsm() + " with LAX");
                      inst1.setCpuOpcode(laxOpcode);
-                     ref2.chunk.getLines().remove(inst2);
+                     tombstoneLine(allLines, nextIdx);
                      passModified = true;
                      overallModified = true;
-                     break;
+                     continue;
                   }
                }
             }
@@ -162,10 +162,10 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                         if(laxOpcode != null) {
                            getLog().append("Replacing " + inst1.getAsm() + "; " + inst2.getAsm() + "; TAX with LAX");
                            inst1.setCpuOpcode(laxOpcode);
-                           allLines.get(idx3).chunk.getLines().remove(instNext3);
+                           tombstoneLine(allLines, idx3);
                            passModified = true;
                            overallModified = true;
-                           break;
+                           continue;
                         }
                      }
                   }
@@ -191,10 +191,10 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                         if(laxOpcode != null) {
                            getLog().append("Lifting TAX into LAX before branch: " + inst1.getAsm() + "; " + inst2.getAsm() + "; TAX");
                            inst1.setCpuOpcode(laxOpcode);
-                           allLines.get(idx3).chunk.getLines().remove(instNext3);
+                           tombstoneLine(allLines, idx3);
                            passModified = true;
                            overallModified = true;
-                           break;
+                           continue;
                         }
                      }
                   }
@@ -219,7 +219,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                      inst2.setOperand1(null);
                      passModified = true;
                      overallModified = true;
-                     break;
+                     continue;
                   }
                }
             }
@@ -233,10 +233,10 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                if(alrOpcode != null) {
                   getLog().append("Replacing " + inst1.getAsm() + "; " + inst2.getAsm() + " with ALR");
                   inst1.setCpuOpcode(alrOpcode);
-                  ref2.chunk.getLines().remove(inst2);
+                  tombstoneLine(allLines, nextIdx);
                   passModified = true;
                   overallModified = true;
-                  break;
+                  continue;
                }
             }
 
@@ -254,10 +254,10 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                         getLog().append("Replacing LSR; " + inst2.getAsm() + " with ALR #$" + Integer.toHexString(alrImm));
                         inst1.setCpuOpcode(alrOpcode);
                         inst1.setOperand1("$" + Integer.toHexString(alrImm));
-                        ref2.chunk.getLines().remove(inst2);
+                        tombstoneLine(allLines, nextIdx);
                         passModified = true;
                         overallModified = true;
-                        break;
+                        continue;
                      }
                   }
                }
@@ -278,11 +278,11 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                         getLog().append("Replacing LSR; LSR; ASL with ALR #$fc");
                         inst1.setCpuOpcode(alrOpcode);
                         inst1.setOperand1("$fc");
-                        ref2.chunk.getLines().remove(inst2);
-                        allLines.get(idx3).chunk.getLines().remove(instNext3);
+                        tombstoneLine(allLines, nextIdx);
+                        tombstoneLine(allLines, idx3);
                         passModified = true;
                         overallModified = true;
-                        break;
+                        continue;
                      }
                   }
                }
