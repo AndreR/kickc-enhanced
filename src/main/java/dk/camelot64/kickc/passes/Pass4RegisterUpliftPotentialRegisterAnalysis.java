@@ -1,8 +1,6 @@
 package dk.camelot64.kickc.passes;
 
 import dk.camelot64.cpufamily6502.CpuClobber;
-import dk.camelot64.kickc.asm.AsmProgram;
-import dk.camelot64.kickc.fragment.synthesis.AsmFragmentTemplateSynthesizer;
 import dk.camelot64.kickc.model.*;
 import dk.camelot64.kickc.model.statements.Statement;
 import dk.camelot64.kickc.model.statements.StatementLValue;
@@ -179,21 +177,18 @@ public class Pass4RegisterUpliftPotentialRegisterAnalysis extends Pass2Base {
             RegisterCombination combination = combinations.next();
             // Apply the combination
             combination.allocate(getProgram());
-            // Generate ASM
-            AsmProgram asm = new AsmProgram(getProgram().getTargetCpu());
-            asm.startChunk(block.getScope(), statement.getIndex(), "");
-            try {
-               (new Pass4CodeGeneration(getProgram(), false, false)).generateStatementAsm(asm, block, statement, false);
-            } catch(AsmFragmentTemplateSynthesizer.UnknownFragmentException e) {
-               unknownFragments.add(e.getFragmentSignature());
-               StringBuilder msg = new StringBuilder();
-               msg.append("Potential register analysis " + statement);
-               msg.append(" missing fragment " + e.getFragmentSignature());
-               msg.append(" allocation: ").append(combination.toString());
-               getLog().append(msg.toString());
+            // Evaluate CPU register clobber directly from fragment metadata
+            CpuClobber clobber = Pass4DirectTrialEvaluator.evaluateStatementClobber(getProgram(), block, statement, unknownFragments);
+            if(clobber == null) {
+               if(getLog().isEnabled()) {
+                  StringBuilder msg = new StringBuilder();
+                  msg.append("Potential register analysis ").append(statement);
+                  msg.append(" missing fragment");
+                  msg.append(" allocation: ").append(combination.toString());
+                  getLog().append(msg.toString());
+               }
                continue;
             }
-            CpuClobber clobber = asm.getClobber();
             Collection<Registers.Register> clobberRegisters = Pass4AssertNoCpuClobber.getClobberRegisters(clobber);
             alwaysClobbered.removeIf(alwaysClobberRegister -> !clobberRegisters.contains(alwaysClobberRegister));
             if(alwaysClobbered.isEmpty()) {

@@ -21,6 +21,9 @@ public class Pass4MemoryCoalesceAssignment extends Pass2Base {
       CoalesceVarScores coalesceVarScores = new CoalesceVarScores(getProgram());
       LinkedHashSet<String> unknownFragments = new LinkedHashSet<>();
       Collection<ScopeRef> threadHeads = Pass4MemoryCoalesce.getThreadHeads(getProgram());
+      Map<LiveRangeEquivalenceClass, Set<ScopeRef>> threadCache = new HashMap<>();
+      Map<LiveRangeEquivalenceClass, Set<LiveRangeEquivalenceClass>> failedPairs = new HashMap<>();
+      Map<LiveRangeEquivalenceClass, Set<Integer>> ecStmtsCache = new HashMap<>();
 
       boolean change;
       do {
@@ -30,7 +33,35 @@ public class Pass4MemoryCoalesceAssignment extends Pass2Base {
          List<Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate> coalesceCandidates =
                equivalenceClassScores.getCoalesceCandidates();
          for(Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate candidate : coalesceCandidates) {
-            change |= Pass4MemoryCoalesce.attemptCoalesce(candidate, threadHeads, unknownFragments, getProgram());
+            LiveRangeEquivalenceClass ec1 = candidate.getEc1();
+            LiveRangeEquivalenceClass ec2 = candidate.getEc2();
+            Set<LiveRangeEquivalenceClass> ec1Failed = failedPairs.get(ec1);
+            if(ec1Failed != null && ec1Failed.contains(ec2)) {
+               continue;
+            }
+            boolean skipClobber = false;
+            if(ec1.getRegister() instanceof Registers.RegisterZpMem && ec2.getRegister() instanceof Registers.RegisterZpMem) {
+               Set<Integer> ec1Stmts = ecStmtsCache.computeIfAbsent(ec1, ec -> Pass4MemoryCoalesce.getEquivalenceClassStatements(ec, getProgram()));
+               skipClobber = !Pass4MemoryCoalesce.sharesAnyStatement(ec1Stmts, ec2, getProgram());
+            }
+            if(Pass4MemoryCoalesce.attemptCoalesce(candidate, threadHeads, unknownFragments, getProgram(), skipClobber, threadCache)) {
+               change = true;
+               ecStmtsCache.remove(ec1);
+               ecStmtsCache.remove(ec2);
+               failedPairs.remove(ec1);
+               failedPairs.remove(ec2);
+               Iterator<Map.Entry<LiveRangeEquivalenceClass, Set<LiveRangeEquivalenceClass>>> it = failedPairs.entrySet().iterator();
+               while(it.hasNext()) {
+                  Set<LiveRangeEquivalenceClass> failedSet = it.next().getValue();
+                  failedSet.remove(ec1);
+                  failedSet.remove(ec2);
+                  if(failedSet.isEmpty()) {
+                     it.remove();
+                  }
+               }
+            } else {
+               failedPairs.computeIfAbsent(ec1, k -> new HashSet<>()).add(ec2);
+            }
          }
       } while(change);
 

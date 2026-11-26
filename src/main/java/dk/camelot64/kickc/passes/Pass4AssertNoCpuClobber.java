@@ -66,6 +66,22 @@ public class Pass4AssertNoCpuClobber extends Pass2Base {
    }
 
    public boolean hasClobberProblem(boolean verbose, AsmProgram asm) {
+      return scanClobberProblems(verbose, asm, null);
+   }
+
+   /**
+    * Find all alive CPU-register variables that are clobbered by any statement in the generated ASM.
+    *
+    * @param asm The generated ASM program (if null, uses program.getAsm())
+    * @return Set of clobbered alive variable references
+    */
+   public Set<VariableRef> findClobberedVariables(AsmProgram asm) {
+      Set<VariableRef> clobbered = new LinkedHashSet<>();
+      scanClobberProblems(false, asm, clobbered);
+      return clobbered;
+   }
+
+   private boolean scanClobberProblems(boolean verbose, AsmProgram asm, Set<VariableRef> clobberedOut) {
       if(asm == null) {
          asm = getProgram().getAsm();
       }
@@ -171,6 +187,11 @@ public class Pass4AssertNoCpuClobber extends Pass2Base {
                }
                // Alive and not assigned to - clobber not allowed!
                if(clobberRegisters.contains(aliveVarRegister)) {
+                  if(clobberedOut != null) {
+                     clobberedOut.add(aliveVar);
+                     clobberProblem = true;
+                     continue;
+                  }
                   if(verbose) {
                      StringBuilder sb = new StringBuilder();
                      sb.append("Error! Generated ASM has register clobber problem. ");

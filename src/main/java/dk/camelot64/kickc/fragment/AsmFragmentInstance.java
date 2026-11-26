@@ -15,6 +15,7 @@ import dk.camelot64.kickc.parser.KickCParserBaseVisitor;
 import org.antlr.v4.runtime.tree.TerminalNode;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -32,6 +33,9 @@ public class AsmFragmentInstance {
 
    /** Binding of named values in the fragment to values (constants, variables, ...) . */
    private final Map<String, Value> bindings;
+
+   /** Lazily built map from 2-char short binding names to values. */
+   private volatile Map<String, Value> shortNameBindings;
 
    /** The scope containing the fragment. Used when referencing symbols defined in other scopes. */
    private final ScopeRef codeScopeRef;
@@ -60,18 +64,21 @@ public class AsmFragmentInstance {
     * @return The bound value to use in the generated ASM code
     */
    public AsmParameter getBoundValue(String name) {
-      Value boundValue = null;
-      if(name.length() == 2) {
+      Value boundValue = getBinding(name);
+      if(boundValue == null && name.length() == 2) {
          // Short name!
-         for(String boundName : bindings.keySet()) {
-            if(boundName.substring(boundName.length() - 2).equals(name)) {
-               boundValue = getBinding(boundName);
-               break;
+         Map<String, Value> shortMap = this.shortNameBindings;
+         if(shortMap == null) {
+            shortMap = new HashMap<>();
+            for(Map.Entry<String, Value> entry : bindings.entrySet()) {
+               String boundName = entry.getKey();
+               if(boundName.length() >= 2) {
+                  shortMap.putIfAbsent(boundName.substring(boundName.length() - 2), entry.getValue());
+               }
             }
+            this.shortNameBindings = shortMap;
          }
-      } else {
-         // Long name
-         boundValue = getBinding(name);
+         boundValue = shortMap.get(name);
       }
 
       if(boundValue == null) {

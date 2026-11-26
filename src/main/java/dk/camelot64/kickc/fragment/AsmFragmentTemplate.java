@@ -41,6 +41,8 @@ public class AsmFragmentTemplate {
    private volatile AsmFragmentClobber clobber;
    /** The cycles consumed by the ASM of the fragment. Initially null. Non-null after the template is used to generate ASM code.*/
    private volatile Double cycles;
+   /** The bytes consumed by the ASM of the fragment. Initially -1. Non-negative after the template is used to generate ASM code.*/
+   private volatile int bytes = -1;
 
    public AsmFragmentTemplate(String signature, String body, TargetCpu targetCpu) {
       this.signature = signature.intern();
@@ -88,10 +90,10 @@ public class AsmFragmentTemplate {
    }
 
    /**
-    * Initialize the fields that require parsing the ASM (bodyAsm, clobber, cycles).
+    * Initialize the fields that require parsing the ASM (bodyAsm, clobber, cycles, bytes).
     */
    private synchronized void initAsm() {
-      if(this.bodyAsm != null && this.clobber != null && this.cycles != null) {
+      if(this.bodyAsm != null && this.clobber != null && this.cycles != null && this.bytes >= 0) {
          return;
       }
       Map<VariableRef, Registers.Register> prevOverride = Variable.getThreadAllocationOverride();
@@ -142,6 +144,7 @@ public class AsmFragmentTemplate {
          this.clobber = new AsmFragmentClobber(cpuClobber);
          asm.addStash();
          this.cycles = asm.getCycles();
+         this.bytes = asm.getBytes();
          this.bodyAsm = parsedBodyAsm;
       } finally {
          if(prevOverride != null) {
@@ -181,6 +184,13 @@ public class AsmFragmentTemplate {
          initAsm();
       }
       return cycles;
+   }
+
+   public int getBytes() {
+      if(bodyAsm == null || bytes < 0) {
+         initAsm();
+      }
+      return bytes;
    }
 
    @Override

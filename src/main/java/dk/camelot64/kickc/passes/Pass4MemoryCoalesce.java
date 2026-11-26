@@ -12,10 +12,14 @@ import dk.camelot64.kickc.passes.utils.ProcedureUtils;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.WeakHashMap;
 
 /**
  * Coalesces memory registers where their live ranges do not overlap.
@@ -27,6 +31,19 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
       super(program);
    }
 
+   private static final class CachedThreads {
+      final Collection<ScopeRef> threadHeads;
+      final Set<ScopeRef> threads;
+
+      CachedThreads(Collection<ScopeRef> threadHeads, Set<ScopeRef> threads) {
+         this.threadHeads = threadHeads;
+         this.threads = threads;
+      }
+   }
+
+   private static final Map<LiveRangeEquivalenceClass, CachedThreads> STATIC_THREAD_CACHE =
+         Collections.synchronizedMap(new WeakHashMap<>());
+
    /**
     * Get all functions that represents a separate thread in the program.
     * Each interrupt function and the main() function are threads.
@@ -34,7 +51,7 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
     * @return The threads.
     */
    public static Collection<ScopeRef> getThreadHeads(Program program) {
-      ArrayList<ScopeRef> threadHeads = new ArrayList<>();
+      Set<ScopeRef> threadHeads = new LinkedHashSet<>();
       Set<ProcedureRef> addressOfProcedures = Pass2ConstantIdentification.getAllAddressOfProcedures(program);
       Collection<Procedure> procedures = program.getScope().getAllProcedures(true);
       for(Procedure procedure : procedures)
@@ -54,14 +71,18 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
     * @return True if the two equivalence classes can be coalesced into one without problems.
     */
    static boolean canCoalesce(LiveRangeEquivalenceClass ec1, LiveRangeEquivalenceClass ec2, Collection<ScopeRef> threadHeads, Set<String> unknownFragments, Program program) {
+      return canCoalesce(ec1, ec2, threadHeads, unknownFragments, program, false, null);
+   }
+
+   static boolean canCoalesce(LiveRangeEquivalenceClass ec1, LiveRangeEquivalenceClass ec2, Collection<ScopeRef> threadHeads, Set<String> unknownFragments, Program program, boolean skipClobberCheck, Map<LiveRangeEquivalenceClass, Set<ScopeRef>> threadCache) {
       return
             canCoalesceNotEqual(ec1, ec2) &&
                   canCoalesceCompatible(ec1, ec2, program) &&
                   canCoalesceSegments(ec1, ec2, program) &&
                   canCoalesceVolatile(ec1, ec2, program) &&
                   canCoalesceInterference(ec1, ec2, program) &&
-                  canCoalesceThreads(ec1, ec2, threadHeads, program) &&
-                  canCoalesceClobber(ec1, ec2, unknownFragments, program);
+                  canCoalesceThreads(ec1, ec2, threadHeads, program, threadCache) &&
+                  (skipClobberCheck || canCoalesceClobber(ec1, ec2, unknownFragments, program));
    }
 
    private static boolean canCoalesceInterference(LiveRangeEquivalenceClass ec1, LiveRangeEquivalenceClass ec2, Program program) {
@@ -110,17 +131,39 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
       return true;
    }
 
-   private static boolean canCoalesceThreads(LiveRangeEquivalenceClass ec1, LiveRangeEquivalenceClass ec2, Collection<ScopeRef> threadHeads, Program program) {
+   private static boolean canCoalesceThreads(LiveRangeEquivalenceClass ec1, LiveRangeEquivalenceClass ec2, Collection<ScopeRef> threadHeads, Program program, Map<LiveRangeEquivalenceClass, Set<ScopeRef>> threadCache) {
       if(threadHeads.size() <= 1) {
          return true;
       }
       CallGraph callGraph = program.getCallGraph();
-      Collection<ScopeRef> threads1 = getEquivalenceClassThreads(ec1, program, threadHeads, callGraph);
-      Collection<ScopeRef> threads2 = getEquivalenceClassThreads(ec2, program, threadHeads, callGraph);
+      Collection<ScopeRef> threads1 = getEquivalenceClassThreads(ec1, program, threadHeads, callGraph, threadCache);
+      Collection<ScopeRef> threads2 = getEquivalenceClassThreads(ec2, program, threadHeads, callGraph, threadCache);
       if(threads1.isEmpty() || threads2.isEmpty()) {
          return true;
       }
       return threads1.equals(threads2);
+   }
+
+   /**
+    * Find the threads for the variables in an equivalence class, using the provided cache if available.
+    */
+   private static Set<ScopeRef> getEquivalenceClassThreads(LiveRangeEquivalenceClass equivalenceClass, Program program, Collection<ScopeRef> threadHeads, CallGraph callGraph, Map<LiveRangeEquivalenceClass, Set<ScopeRef>> threadCache) {
+      if(threadCache != null) {
+         Set<ScopeRef> cached = threadCache.get(equivalenceClass);
+         if(cached != null) {
+            return cached;
+         }
+         Set<ScopeRef> threads = computeEquivalenceClassThreads(equivalenceClass, program, threadHeads, callGraph);
+         threadCache.put(equivalenceClass, threads);
+         return threads;
+      }
+      CachedThreads cached = STATIC_THREAD_CACHE.get(equivalenceClass);
+      if(cached != null && cached.threadHeads == threadHeads) {
+         return cached.threads;
+      }
+      Set<ScopeRef> threads = computeEquivalenceClassThreads(equivalenceClass, program, threadHeads, callGraph);
+      STATIC_THREAD_CACHE.put(equivalenceClass, new CachedThreads(threadHeads, threads));
+      return threads;
    }
 
    /**
@@ -132,7 +175,7 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
     * @param callGraph The call graph
     * @return All threads containing variables in the equivalence class.
     */
-   private static Set<ScopeRef> getEquivalenceClassThreads(LiveRangeEquivalenceClass equivalenceClass, Program program, Collection<ScopeRef> threadHeads, CallGraph callGraph) {
+   private static Set<ScopeRef> computeEquivalenceClassThreads(LiveRangeEquivalenceClass equivalenceClass, Program program, Collection<ScopeRef> threadHeads, CallGraph callGraph) {
       Set<ScopeRef> threads = new LinkedHashSet<>();
       VariableReferenceInfos refInfos = program.getVariableReferenceInfos();
       StatementInfos stmtInfos = program.getStatementInfos();
@@ -141,31 +184,29 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
          ScopeRef scopeRef = variable.getScope().getRef();
          if(scopeRef.equals(ScopeRef.ROOT)) {
             // SSA-05: Determine actual accessing threads via VariableReferenceInfos instead of blindly assigning main
-            Set<Integer> stmtIndices = new LinkedHashSet<>();
-            Collection<Integer> uses = refInfos.getVarUseStatements(varRef);
-            if(uses != null) stmtIndices.addAll(uses);
-            Collection<Integer> defs = refInfos.getVarDefineStatements(varRef);
-            if(defs != null) stmtIndices.addAll(defs);
+            Collection<Integer> stmtIndices = refInfos.getVarRefStatements(varRef);
             boolean foundAnyThread = false;
-            for(Integer stmtIdx : stmtIndices) {
-               Graph.Block block = stmtInfos.getBlock(stmtIdx);
-               if(block == null) continue;
-               ScopeRef blockScopeRef = block.getScope();
-               dk.camelot64.kickc.model.symbols.Scope blockScope = program.getScope().getScope(blockScopeRef);
-               while(blockScope != null && !(blockScope instanceof Procedure) && !blockScope.getRef().equals(ScopeRef.ROOT)) {
-                  blockScope = blockScope.getScope();
-               }
-               if(blockScope instanceof Procedure proc) {
-                  ScopeRef procRef = proc.getRef();
-                  if(threadHeads.contains(procRef)) {
-                     threads.add(procRef);
-                     foundAnyThread = true;
+            if(stmtIndices != null) {
+               for(Integer stmtIdx : stmtIndices) {
+                  Graph.Block block = stmtInfos.getBlock(stmtIdx);
+                  if(block == null) continue;
+                  ScopeRef blockScopeRef = block.getScope();
+                  dk.camelot64.kickc.model.symbols.Scope blockScope = program.getScope().getScope(blockScopeRef);
+                  while(blockScope != null && !(blockScope instanceof Procedure) && !blockScope.getRef().equals(ScopeRef.ROOT)) {
+                     blockScope = blockScope.getScope();
                   }
-                  Collection<ScopeRef> recursiveCallers = callGraph.getRecursiveCallerProcs(procRef);
-                  for(ScopeRef threadHead : threadHeads) {
-                     if(recursiveCallers.contains(threadHead)) {
-                        threads.add(threadHead);
+                  if(blockScope instanceof Procedure proc) {
+                     ScopeRef procRef = proc.getRef();
+                     if(threadHeads.contains(procRef)) {
+                        threads.add(procRef);
                         foundAnyThread = true;
+                     }
+                     Collection<ScopeRef> recursiveCallers = callGraph.getRecursiveCallerProcs(procRef);
+                     for(ScopeRef threadHead : threadHeads) {
+                        if(recursiveCallers.contains(threadHead)) {
+                           threads.add(threadHead);
+                           foundAnyThread = true;
+                        }
                      }
                   }
                }
@@ -191,6 +232,50 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
          }
       }
       return threads;
+   }
+
+   /**
+    * Collect all statement indices referencing any variable in an equivalence class.
+    */
+   static Set<Integer> getEquivalenceClassStatements(LiveRangeEquivalenceClass ec, Program program) {
+      VariableReferenceInfos refInfos = program.getVariableReferenceInfos();
+      Set<Integer> stmts = new HashSet<>();
+      for(VariableRef varRef : ec.getVariables()) {
+         Collection<Integer> varStmts = refInfos.getVarRefStatements(varRef);
+         if(varStmts != null) {
+            stmts.addAll(varStmts);
+         }
+      }
+      return stmts;
+   }
+
+   /**
+    * Determines if two equivalence classes share any referencing statement.
+    */
+   static boolean sharesAnyStatement(LiveRangeEquivalenceClass ec1, LiveRangeEquivalenceClass ec2, Program program) {
+      Set<Integer> ec1Stmts = getEquivalenceClassStatements(ec1, program);
+      return sharesAnyStatement(ec1Stmts, ec2, program);
+   }
+
+   /**
+    * Determines if a precomputed statement set for an equivalence class shares any statement with another equivalence class.
+    */
+   static boolean sharesAnyStatement(Set<Integer> ec1Stmts, LiveRangeEquivalenceClass ec2, Program program) {
+      if(ec1Stmts == null || ec1Stmts.isEmpty()) {
+         return false;
+      }
+      VariableReferenceInfos refInfos = program.getVariableReferenceInfos();
+      for(VariableRef varRef : ec2.getVariables()) {
+         Collection<Integer> varStmts = refInfos.getVarRefStatements(varRef);
+         if(varStmts != null) {
+            for(Integer stmtIdx : varStmts) {
+               if(ec1Stmts.contains(stmtIdx)) {
+                  return true;
+               }
+            }
+         }
+      }
+      return false;
    }
 
    /**
@@ -285,16 +370,43 @@ public abstract class Pass4MemoryCoalesce extends Pass2Base {
     * @return true if the coalescence succeeds and the program was updated. false otherwise.
     */
    public static boolean attemptCoalesce(LiveRangeEquivalenceClassCoalesceCandidate candidate, Collection<ScopeRef> threadHeads, Set<String> unknownFragments, Program program) {
+      return attemptCoalesce(candidate, threadHeads, unknownFragments, program, false, null);
+   }
+
+   public static boolean attemptCoalesce(LiveRangeEquivalenceClassCoalesceCandidate candidate, Collection<ScopeRef> threadHeads, Set<String> unknownFragments, Program program, boolean skipClobberCheck, Map<LiveRangeEquivalenceClass, Set<ScopeRef>> threadCache) {
       LiveRangeEquivalenceClassSet liveRangeEquivalenceClassSet = program.getLiveRangeEquivalenceClassSet();
-      if(liveRangeEquivalenceClassSet.contains(candidate.getEc1()) && liveRangeEquivalenceClassSet.contains(candidate.getEc2())) {
+      LiveRangeEquivalenceClass ec1 = candidate.getEc1();
+      LiveRangeEquivalenceClass ec2 = candidate.getEc2();
+      if(liveRangeEquivalenceClassSet.contains(ec1) && liveRangeEquivalenceClassSet.contains(ec2)) {
          // Both equivalence classes still exist
-         if(Pass4MemoryCoalesce.canCoalesce(candidate.getEc1(), candidate.getEc2(), threadHeads, unknownFragments, program)) {
+         if(Pass4MemoryCoalesce.canCoalesce(ec1, ec2, threadHeads, unknownFragments, program, skipClobberCheck, threadCache)) {
             String scoreString = (candidate.getScore() == null) ? "" : (" - score: " + candidate.getScore());
-            program.getLog().append("Coalescing zero page register [ " + candidate.getEc1() + " ] with [ " + candidate.getEc2() + " ]" + scoreString);
-            liveRangeEquivalenceClassSet.consolidate(candidate.getEc1(), candidate.getEc2());
-            // Reset the program register allocation
-            program.getLiveRangeEquivalenceClassSet().storeRegisterAllocation();
-            if(program.getLiveRangeInterference() != null) program.getLiveRangeInterference().consolidate(candidate.getEc1(), candidate.getEc2());
+            program.getLog().append("Coalescing zero page register [ " + ec1 + " ] with [ " + ec2 + " ]" + scoreString);
+            liveRangeEquivalenceClassSet.consolidate(ec1, ec2);
+            if(threadCache != null) {
+               Set<ScopeRef> t1 = threadCache.get(ec1);
+               Set<ScopeRef> t2 = threadCache.get(ec2);
+               if(t1 != null && t2 != null) {
+                  Set<ScopeRef> merged = new LinkedHashSet<>(t1);
+                  merged.addAll(t2);
+                  threadCache.put(ec1, merged);
+               } else {
+                  threadCache.remove(ec1);
+               }
+               threadCache.remove(ec2);
+            }
+            STATIC_THREAD_CACHE.remove(ec1);
+            STATIC_THREAD_CACHE.remove(ec2);
+            // Update the register allocation for the merged equivalence class's variables
+            Registers.Register register = ec1.getRegister();
+            SymbolInfos symbolInfos = program.getSymbolInfos();
+            for(VariableRef varRef : ec1.getVariables()) {
+               Variable var = symbolInfos.getVariable(varRef);
+               if(var != null) {
+                  var.setAllocation(register);
+               }
+            }
+            if(program.getLiveRangeInterference() != null) program.getLiveRangeInterference().consolidate(ec1, ec2);
             return true;
          }
       }
