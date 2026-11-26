@@ -19,9 +19,7 @@ public class Pass5RelabelLongLabels extends Pass5AsmOptimization {
    }
 
    public boolean optimize() {
-      boolean optimized = false;
-
-      // Find all labels
+      // Find all labels in dirty scopes
       // Scope->Set<Labels>
       Map<String, Set<String>> allLabels = new LinkedHashMap<>();
       String currentScope = "";
@@ -31,6 +29,8 @@ public class Pass5RelabelLongLabels extends Pass5AsmOptimization {
                currentScope = ((AsmScopeBegin) asmLine).getLabel();
             } else if(asmLine instanceof AsmScopeEnd) {
                currentScope = "";
+            } else if(!isScopeDirty(currentScope)) {
+               continue;
             } else if(asmLine instanceof AsmLabel) {
                AsmLabel asmLabel = (AsmLabel) asmLine;
                Set<String> scopeLabels = allLabels.get(currentScope);
@@ -40,21 +40,22 @@ public class Pass5RelabelLongLabels extends Pass5AsmOptimization {
                }
                scopeLabels.add(asmLabel.getLabel());
             }
-
          }
       }
-
 
       // Find relabels for all long labels
       // Scope->(Label->NewLabel)
       Map<String, Map<String, String>> relabels = new LinkedHashMap<>();
       Map<String, Set<String>> relabelsValues = new LinkedHashMap<>();
+      currentScope = "";
       for(AsmChunk asmChunk : getAsmProgram().getChunks()) {
          for(AsmLine asmLine : asmChunk.getLines()) {
             if(asmLine instanceof AsmScopeBegin) {
                currentScope = ((AsmScopeBegin) asmLine).getLabel();
             } else if(asmLine instanceof AsmScopeEnd) {
                currentScope = "";
+            } else if(!isScopeDirty(currentScope)) {
+               continue;
             } else if(asmLine instanceof AsmLabel) {
                AsmLabel asmLabel = (AsmLabel) asmLine;
                if(asmLabel.getLabel().contains("_from_")) {
@@ -81,13 +82,20 @@ public class Pass5RelabelLongLabels extends Pass5AsmOptimization {
          }
       }
 
+      if(relabels.isEmpty()) {
+         return false;
+      }
+
       // Execute relabelling
+      currentScope = "";
       for(AsmChunk asmChunk : getAsmProgram().getChunks()) {
          for(AsmLine asmLine : asmChunk.getLines()) {
             if(asmLine instanceof AsmScopeBegin) {
                currentScope = ((AsmScopeBegin) asmLine).getLabel();
             } else if(asmLine instanceof AsmScopeEnd) {
                currentScope = "";
+            } else if(!isScopeDirty(currentScope)) {
+               continue;
             } else if(asmLine instanceof AsmLabel) {
                AsmLabel asmLabel = (AsmLabel) asmLine;
                Map<String, String> scopeRelabels = relabels.get(currentScope);
@@ -112,6 +120,10 @@ public class Pass5RelabelLongLabels extends Pass5AsmOptimization {
             }
          }
       }
-      return relabels.size() > 0;
+      for(String dirtyScope : relabels.keySet()) {
+         markScopeDirty(dirtyScope);
+      }
+      invalidateRoundLabels();
+      return true;
    }
 }

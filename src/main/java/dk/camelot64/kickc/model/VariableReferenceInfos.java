@@ -196,6 +196,9 @@ public class VariableReferenceInfos {
             .collect(Collectors.toList()));
    }
 
+   /** Caches results for getReferencedVars(Statement). */
+   private final ConcurrentHashMap<Integer, Collection<VariableRef>> cachedReferencedVars = new ConcurrentHashMap<>();
+
    /**
     * Get the variables referenced (used or defined) in a statement
     *
@@ -203,12 +206,24 @@ public class VariableReferenceInfos {
     * @return The referenced variables
     */
    public Collection<VariableRef> getReferencedVars(Statement stmt) {
-      return statementVarReferences.get(stmt.getIndex())
-            .stream()
-            .filter(referenceToSymbolVar -> referenceToSymbolVar.getReferenced() instanceof VariableRef)
-            .map(ReferenceToSymbolVar::getReferenced)
-            .map(symbolVariableRef -> (VariableRef) symbolVariableRef)
-            .collect(Collectors.toList());
+      Integer stmtIndex = stmt.getIndex();
+      if(stmtIndex == null)
+         return Collections.emptyList();
+      Collection<VariableRef> result = cachedReferencedVars.get(stmtIndex);
+      if(result != null)
+         return result;
+      Collection<ReferenceToSymbolVar> referenceToSymbolVars = statementVarReferences.get(stmtIndex);
+      if(referenceToSymbolVars == null)
+         return Collections.emptyList();
+      return cachedReferencedVars.computeIfAbsent(stmtIndex, idx -> {
+         List<VariableRef> list = new ArrayList<>(referenceToSymbolVars.size());
+         for(ReferenceToSymbolVar ref : referenceToSymbolVars) {
+            if(ref.getReferenced() instanceof VariableRef varRef) {
+               list.add(varRef);
+            }
+         }
+         return Collections.unmodifiableList(list);
+      });
    }
 
    /**

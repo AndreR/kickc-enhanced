@@ -1,11 +1,21 @@
 package dk.camelot64.kickc.passes;
 
 import dk.camelot64.kickc.model.*;
+import dk.camelot64.kickc.model.iterator.ProgramValueIterator;
+import dk.camelot64.kickc.model.statements.Statement;
+import dk.camelot64.kickc.model.statements.StatementAsm;
 import dk.camelot64.kickc.model.symbols.*;
 import dk.camelot64.kickc.model.types.SymbolType;
 import dk.camelot64.kickc.model.types.SymbolTypePointer;
 import dk.camelot64.kickc.model.types.SymbolTypeStruct;
+import dk.camelot64.kickc.model.values.CastValue;
+import dk.camelot64.kickc.model.values.PointerDereference;
+import dk.camelot64.kickc.model.values.RValue;
+import dk.camelot64.kickc.model.values.SymbolRef;
+import dk.camelot64.kickc.model.values.Value;
 import dk.camelot64.kickc.model.values.VariableRef;
+import dk.camelot64.kickc.parser.KickCParser;
+import dk.camelot64.kickc.parser.KickCParserBaseVisitor;
 
 import java.util.*;
 
@@ -22,6 +32,13 @@ public class Pass4RegistersFinalize extends Pass2Base {
 
    /** All reserved zeropage addresses not available for the compiler. */
    private List<Integer> reservedZp;
+
+   /** True if zero-page overflow spilled at least one equivalence class to main memory. */
+   private boolean spilledToMainMem = false;
+
+   public boolean hasSpilledToMainMem() {
+      return spilledToMainMem;
+   }
 
    public Pass4RegistersFinalize(Program program) {
       super(program);
@@ -193,14 +210,22 @@ public class Pass4RegistersFinalize extends Pass2Base {
     * @param overflowToMainMem If true zeropage variables overflow into main memory if they do not fit on zeropage.
     */
    private void reallocateMemRegisters(LiveRangeEquivalenceClassSet equivalenceClassSet, boolean overflowToMainMem) {
-
+      spilledToMainMem = false;
       List<LiveRangeEquivalenceClass> equivalenceClasses = new ArrayList<>(equivalenceClassSet.getEquivalenceClasses());
       final VariableRegisterWeights registerWeights = getProgram().getVariableRegisterWeights();
+      final Set<VariableRef> dereferencedPointers = findDereferencedPointers();
+      final Set<VariableRef> asmPriorityVars = new LinkedHashSet<>();
+      final Set<VariableRef> asmIndirectVars = new LinkedHashSet<>();
+      findAsmReferencedVariables(asmPriorityVars, asmIndirectVars);
+      final Map<LiveRangeEquivalenceClass, Integer> zpPriorities = new HashMap<>(equivalenceClasses.size() * 2);
+      for(LiveRangeEquivalenceClass ec : equivalenceClasses) {
+         zpPriorities.put(ec, getZeroPageRetentionPriority(ec, asmPriorityVars, dereferencedPointers));
+      }
       Collections.sort(equivalenceClasses, (o1, o2) -> {
-         boolean o1Multi = hasMultipleDataSegments(o1);
-         boolean o2Multi = hasMultipleDataSegments(o2);
-         if(o1Multi != o2Multi) {
-            return o1Multi ? -1 : 1;
+         int p1 = zpPriorities.getOrDefault(o1, 0);
+         int p2 = zpPriorities.getOrDefault(o2, 0);
+         if(p1 != p2) {
+            return Integer.compare(p2, p1);
          }
          return Double.compare(registerWeights.getTotalWeight(o2), registerWeights.getTotalWeight(o1));
       });
@@ -229,23 +254,14 @@ public class Pass4RegistersFinalize extends Pass2Base {
                int sizeBytes = variable.getType().getSizeBytes();
                if(overflowToMainMem) {
                   if (zp + sizeBytes > 0x100) {
-                     VariableRef targetRef = variableRef;
-                     if(hasMultipleDataSegments(equivalenceClass)) {
-                        // Find a variable in the equivalence class that belongs to resident Data segment
-                        for(VariableRef vr : equivalenceClass.getVariables()) {
-                           Variable v = getProgram().getSymbolInfos().getVariable(vr);
-                           if(v != null && ("Data".equals(v.getDataSegment()) || v.getDataSegment() == null)) {
-                              targetRef = vr;
-                              break;
-                           }
-                        }
-                        Variable primary = getProgram().getSymbolInfos().getVariable(targetRef);
-                        if(primary != null && !"Data".equals(primary.getDataSegment())) {
-                           primary.setDataSegment("Data");
-                        }
+                     VariableRef requiredZpVar = findRequiredZpVariable(equivalenceClass, asmIndirectVars);
+                     if(requiredZpVar != null) {
+                        throw new CompileError("Error! Zero-page exhausted: cannot allocate explicit __zp or indirect-ASM variable '" + requiredZpVar.getFullName() + "' to zero page.");
                      }
-                     // Zero-page exhausted - move to main memory instead (TODO: prioritize!)
+                     VariableRef targetRef = selectMainMemTarget(equivalenceClass);
+                     // Zero-page exhausted - move to main memory instead
                      register = new Registers.RegisterMainMem(targetRef, variable.getType().getSizeBytes(), null, false);
+                     spilledToMainMem = true;
                      getLog().append("Zero-page exhausted. Moving allocation to main memory " + targetRef.toString());
                   }
                }
@@ -256,6 +272,264 @@ public class Pass4RegistersFinalize extends Pass2Base {
             }
          }
       }
+   }
+
+   /**
+    * Demote CPU-register-allocated equivalence classes that suffer register clobbers after a
+    * zero-page-to-main-memory spill (e.g. a spilled pointer whose main-memory dereference fragment
+    * clobbers an extra CPU register).
+    *
+    * @param clobberedVars Alive variables whose CPU register allocation was clobbered
+    * @return true if at least one equivalence class was demoted to memory
+    */
+   public boolean demoteClobberedRegistersToMemory(Collection<VariableRef> clobberedVars) {
+      LiveRangeEquivalenceClassSet equivalenceClassSet = getProgram().getLiveRangeEquivalenceClassSet();
+      Set<LiveRangeEquivalenceClass> toDemote = new LinkedHashSet<>();
+      for(VariableRef varRef : clobberedVars) {
+         LiveRangeEquivalenceClass ec = equivalenceClassSet.getEquivalenceClass(varRef);
+         if(ec != null && ec.getRegister() != null && ec.getRegister().isHardware()) {
+            toDemote.add(ec);
+         }
+      }
+      boolean demoted = false;
+      for(LiveRangeEquivalenceClass ec : toDemote) {
+         boolean hasDeclaredHardwareReg = false;
+         for(VariableRef vr : ec.getVariables()) {
+            Variable v = getProgram().getSymbolInfos().getVariable(vr);
+            if(v != null && v.getRegister() != null && v.getRegister().isHardware()) {
+               hasDeclaredHardwareReg = true;
+               break;
+            }
+         }
+         if(hasDeclaredHardwareReg) {
+            continue;
+         }
+         VariableRef targetRef = selectMainMemTarget(ec);
+         Variable primary = getProgram().getSymbolInfos().getVariable(targetRef);
+         int sizeBytes = primary.getType().getSizeBytes();
+         Registers.Register oldReg = ec.getRegister();
+         Registers.Register mainMemReg = new Registers.RegisterMainMem(targetRef, sizeBytes, null, false);
+         ec.setRegister(mainMemReg);
+         getLog().append("Post-spill clobber guard: demoted " + ec.toString() + " (was " + oldReg + ") to main memory " + targetRef);
+         demoted = true;
+      }
+      if(demoted) {
+         equivalenceClassSet.storeRegisterAllocation();
+         shortenAsmNames();
+      }
+      return demoted;
+   }
+
+   /**
+    * Select the primary variable to hold main-memory storage for a spilled or demoted equivalence class,
+    * ensuring it is placed in a writable RAM data segment.
+    */
+   private VariableRef selectMainMemTarget(LiveRangeEquivalenceClass equivalenceClass) {
+      VariableRef targetRef = equivalenceClass.getVariables().get(0);
+      if(hasMultipleDataSegments(equivalenceClass)) {
+         // Find a variable in the equivalence class that belongs to resident Data segment
+         for(VariableRef vr : equivalenceClass.getVariables()) {
+            Variable v = getProgram().getSymbolInfos().getVariable(vr);
+            if(v != null && (Scope.SEGMENT_DATA_DEFAULT.equals(v.getDataSegment()) || v.getDataSegment() == null)) {
+               targetRef = vr;
+               break;
+            }
+         }
+         Variable primary = getProgram().getSymbolInfos().getVariable(targetRef);
+         if(primary != null && !Scope.SEGMENT_DATA_DEFAULT.equals(primary.getDataSegment())) {
+            primary.setDataSegment(Scope.SEGMENT_DATA_DEFAULT);
+         }
+      } else {
+         Variable primary = getProgram().getSymbolInfos().getVariable(targetRef);
+         if(primary != null && getProgram().isSegmentRom(primary.getDataSegment())) {
+            primary.setDataSegment(Scope.SEGMENT_DATA_DEFAULT);
+         }
+      }
+      return targetRef;
+   }
+
+   /**
+    * Collect all variables used as the pointer operand of an indirect pointer dereference.
+    */
+   private Set<VariableRef> findDereferencedPointers() {
+      Set<VariableRef> derefPointers = new LinkedHashSet<>();
+      ProgramValueIterator.execute(getGraph(), (programValue, currentStmt, stmtIt, currentBlock) -> {
+         Value value = programValue.get();
+         if(value instanceof PointerDereference) {
+            RValue ptr = ((PointerDereference) value).getPointer();
+            while(ptr instanceof CastValue) {
+               ptr = ((CastValue) ptr).getValue();
+            }
+            if(ptr instanceof VariableRef) {
+               derefPointers.add((VariableRef) ptr);
+            }
+         }
+      });
+      return derefPointers;
+   }
+
+   /**
+    * Collect all variables referenced in inline ASM statements (StatementAsm) that require
+    * top zero-page retention priority:
+    * - Any pointer variable or explicit __zp variable referenced in StatementAsm
+    * - Any variable referenced inside a zero-page indirect addressing mode operand (e.g. lda (ptr),y)
+    */
+   private void findAsmReferencedVariables(Set<VariableRef> asmPriorityVars, Set<VariableRef> asmIndirectVars) {
+      for(Graph.Block block : getGraph().getAllBlocks()) {
+         for(Statement stmt : block.getStatements()) {
+            if(stmt instanceof StatementAsm stmtAsm) {
+               Map<String, SymbolRef> referenced = stmtAsm.getReferenced();
+               if(referenced == null || referenced.isEmpty()) {
+                  continue;
+               }
+               for(SymbolRef ref : referenced.values()) {
+                  if(ref instanceof VariableRef varRef) {
+                     Variable var = getProgram().getSymbolInfos().getVariable(varRef);
+                     if(var != null && (var.getType() instanceof SymbolTypePointer || var.isExplicitZp())) {
+                        asmPriorityVars.add(varRef);
+                     }
+                  }
+               }
+               if(stmtAsm.getAsmLines() != null) {
+                  collectAsmIndirectVariables(stmtAsm.getAsmLines(), referenced, asmPriorityVars, asmIndirectVars);
+               }
+            }
+         }
+      }
+   }
+
+   /**
+    * Walk inline ASM parse tree to identify variables used in zero-page indirect addressing modes
+    * (e.g., (ptr),y, (ptr,x), ((ptr)),z, ((ptr)), or non-JMP (ptr)).
+    */
+   private void collectAsmIndirectVariables(
+         KickCParser.AsmLinesContext asmLines,
+         Map<String, SymbolRef> referenced,
+         Set<VariableRef> asmPriorityVars,
+         Set<VariableRef> asmIndirectVars) {
+      KickCParserBaseVisitor<Void> visitor = new KickCParserBaseVisitor<>() {
+         private boolean inIndirectZpMode = false;
+
+         private void visitIndirectExpr(KickCParser.AsmExprContext exprCtx) {
+            if(exprCtx == null) return;
+            boolean prev = inIndirectZpMode;
+            inIndirectZpMode = true;
+            try {
+               visit(exprCtx);
+            } finally {
+               inIndirectZpMode = prev;
+            }
+         }
+
+         @Override
+         public Void visitAsmModeIndIdxXY(KickCParser.AsmModeIndIdxXYContext ctx) {
+            visitIndirectExpr(ctx.asmExpr());
+            return null;
+         }
+
+         @Override
+         public Void visitAsmModeIndLongIdxXY(KickCParser.AsmModeIndLongIdxXYContext ctx) {
+            visitIndirectExpr(ctx.asmExpr());
+            return null;
+         }
+
+         @Override
+         public Void visitAsmModeIdxIndXY(KickCParser.AsmModeIdxIndXYContext ctx) {
+            visitIndirectExpr(ctx.asmExpr());
+            return null;
+         }
+
+         @Override
+         public Void visitAsmModeIndLong(KickCParser.AsmModeIndLongContext ctx) {
+            visitIndirectExpr(ctx.asmExpr());
+            return null;
+         }
+
+         @Override
+         public Void visitAsmModeInd(KickCParser.AsmModeIndContext ctx) {
+            boolean isJmp = false;
+            if(ctx.getParent() instanceof KickCParser.AsmInstructionContext instrCtx) {
+               String mnemonic = instrCtx.ASM_MNEMONIC().getText();
+               isJmp = "jmp".equalsIgnoreCase(mnemonic);
+            }
+            if(!isJmp) {
+               visitIndirectExpr(ctx.asmExpr());
+            }
+            return null;
+         }
+
+         @Override
+         public Void visitAsmExprBinary(KickCParser.AsmExprBinaryContext ctx) {
+            if(".".equals(ctx.getChild(1).getText())) {
+               return null;
+            }
+            return super.visitAsmExprBinary(ctx);
+         }
+
+         @Override
+         public Void visitAsmExprLabel(KickCParser.AsmExprLabelContext ctx) {
+            if(inIndirectZpMode) {
+               String label = ctx.ASM_NAME().getText();
+               SymbolRef ref = referenced.get(label);
+               if(ref instanceof VariableRef varRef) {
+                  asmIndirectVars.add(varRef);
+                  asmPriorityVars.add(varRef);
+               }
+            }
+            return super.visitAsmExprLabel(ctx);
+         }
+      };
+      visitor.visit(asmLines);
+   }
+
+   /**
+    * Find a variable in the equivalence class that strictly requires zero-page allocation
+    * (explicitly declared __zp or used in inline ASM zero-page indirect addressing).
+    */
+   private VariableRef findRequiredZpVariable(LiveRangeEquivalenceClass equivalenceClass, Set<VariableRef> asmIndirectVars) {
+      for(VariableRef varRef : equivalenceClass.getVariables()) {
+         Variable var = getProgram().getSymbolInfos().getVariable(varRef);
+         if((var != null && var.isExplicitZp()) || asmIndirectVars.contains(varRef)) {
+            return varRef;
+         }
+      }
+      return null;
+   }
+
+   /**
+    * Compute zero-page retention priority for an equivalence class.
+    * Higher values are allocated to zero page first and spilled to main memory last:
+    * 4: Explicit __zp variables or pointers/variables referenced in inline ASM (StatementAsm)
+    * 3: Indirectly dereferenced pointers (spilling forces scratch ZP copying and may clobber CPU registers)
+    * 2: Multi-segment equivalence classes
+    * 1: Other pointer equivalence classes
+    * 0: Non-pointer scalars
+    */
+   private int getZeroPageRetentionPriority(
+         LiveRangeEquivalenceClass equivalenceClass,
+         Set<VariableRef> asmPriorityVars,
+         Set<VariableRef> dereferencedPointers) {
+      boolean isDereferenced = false;
+      boolean isPointer = false;
+      for(VariableRef varRef : equivalenceClass.getVariables()) {
+         Variable var = getProgram().getSymbolInfos().getVariable(varRef);
+         if(asmPriorityVars.contains(varRef) || (var != null && var.isExplicitZp())) {
+            return 4;
+         }
+         if(dereferencedPointers.contains(varRef)) {
+            isDereferenced = true;
+         }
+         if(var != null && var.getType() instanceof SymbolTypePointer) {
+            isPointer = true;
+         }
+      }
+      if(isDereferenced) {
+         return 3;
+      }
+      if(hasMultipleDataSegments(equivalenceClass)) {
+         return 2;
+      }
+      return isPointer ? 1 : 0;
    }
 
    /**

@@ -90,6 +90,9 @@ public class KickC implements Callable<Integer> {
    @CommandLine.Option(names = {"-Onouplift"}, description = "Optimization Option. Disable the register uplift allocation phase. This will be much faster but produce significantly slower ASM.")
    private boolean optimizeNoUplift = false;
 
+   @CommandLine.Option(names = {"-Olocalsearch"}, description = "Optimization Option. Use statement-local cost-delta 1-opt/2-opt local-search register allocator in Pass 4.")
+   private boolean optimizeUpliftLocalSearch = false;
+
    @CommandLine.Option(names = {"-Onolongbranchfix"}, description = "Optimization Option. Disable the pass that fixes long branches. This is relevant when using the PCEAS assembler.")
    private boolean optimizeDisableLongBranchFix = false;
 
@@ -326,6 +329,10 @@ public class KickC implements Callable<Integer> {
 
          if(optimizeUpliftCombinations != null)
             compiler.setUpliftCombinations(optimizeUpliftCombinations);
+
+         if(optimizeUpliftLocalSearch) {
+            compiler.setUpliftLocalSearch(true);
+         }
 
          if(optimizeZeroPageCoalesce)
             compiler.enableZeroPageCoalesce();

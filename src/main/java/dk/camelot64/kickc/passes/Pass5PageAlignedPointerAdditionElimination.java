@@ -318,31 +318,31 @@ public class Pass5PageAlignedPointerAdditionElimination extends Pass5AsmOptimiza
                         if(Pass5RedundantStoreAndReloadElimination.isSameLocation(srcLo, dstLo, localAliases, globalAliasMap)) {
                            // Case 1: Self-Addition: lda SRC_LO; clc; adc #<0; sta SRC_LO; lda SRC_HI; adc #>C; sta DST_HI
                            // Remove lda SRC_LO, adc #<0, sta SRC_LO. clc remains in place right before lda SRC_HI!
-                           allLines.get(idxPrev2).chunk.getLines().remove(instPrev2);
-                           allLines.get(i).chunk.getLines().remove(instAdcLo);
-                           allLines.get(idxStaLo).chunk.getLines().remove(instStaLo);
+                           tombstoneLine(allLines, idxPrev2);
+                           tombstoneLine(allLines, i);
+                           tombstoneLine(allLines, idxStaLo);
                            getLog().append("Eliminating redundant low-byte self-addition with 0 for " + srcLo + " (high-byte constant " + opHi + ")");
                            passModified = true;
                            overallModified = true;
-                           break;
+                           continue;
                         } else {
                            // Case 2: Different Destination: lda SRC_LO; clc; adc #<0; sta DST_LO
-                           allLines.get(i).chunk.getLines().remove(instAdcLo);
+                           tombstoneLine(allLines, i);
                            getLog().append("Eliminating redundant ADC #<0 in pointer copy/addition to " + dstLo);
                            passModified = true;
                            overallModified = true;
-                           break;
+                           continue;
                         }
                      }
                   }
                }
 
                // Pattern C: clc; adc #<0; sta DST_LO (Accumulator already held SRC_LO)
-               allLines.get(i).chunk.getLines().remove(instAdcLo);
+               tombstoneLine(allLines, i);
                getLog().append("Eliminating redundant ADC #<0 in pointer addition to " + dstLo);
                passModified = true;
                overallModified = true;
-               break;
+               continue;
 
             } else if(mnem1.equals("lda")) {
                // Pattern B: [idxPrev2: clc] -> [idxPrev1: lda SRC_LO] -> [i: adc #<]
@@ -355,20 +355,20 @@ public class Pass5PageAlignedPointerAdditionElimination extends Pass5AsmOptimiza
                         if(Pass5RedundantStoreAndReloadElimination.isSameLocation(srcLo, dstLo, localAliases, globalAliasMap)) {
                            // Case 1: Self-Addition: clc; lda SRC_LO; adc #<0; sta SRC_LO; lda SRC_HI; adc #>C; sta DST_HI
                            // Remove lda SRC_LO, adc #<0, sta SRC_LO. clc remains in place directly before lda SRC_HI!
-                           allLines.get(idxPrev1).chunk.getLines().remove(instPrev1);
-                           allLines.get(i).chunk.getLines().remove(instAdcLo);
-                           allLines.get(idxStaLo).chunk.getLines().remove(instStaLo);
+                           tombstoneLine(allLines, idxPrev1);
+                           tombstoneLine(allLines, i);
+                           tombstoneLine(allLines, idxStaLo);
                            getLog().append("Eliminating redundant low-byte self-addition with 0 for " + srcLo + " (high-byte constant " + opHi + ")");
                            passModified = true;
                            overallModified = true;
-                           break;
+                           continue;
                         } else {
                            // Case 2: Different Destination: clc; lda SRC_LO; adc #<0; sta DST_LO
-                           allLines.get(i).chunk.getLines().remove(instAdcLo);
+                           tombstoneLine(allLines, i);
                            getLog().append("Eliminating redundant ADC #<0 in pointer copy/addition to " + dstLo);
                            passModified = true;
                            overallModified = true;
-                           break;
+                           continue;
                         }
                      }
                   }

@@ -1,8 +1,9 @@
 package dk.camelot64.kickc.passes;
 
 import dk.camelot64.kickc.model.ConstantNotLiteral;
-import dk.camelot64.kickc.model.ControlFlowBlock;
+import dk.camelot64.kickc.model.ControlFlowGraph;
 import dk.camelot64.kickc.model.Graph;
+import dk.camelot64.kickc.model.ProcedureCompilation;
 import dk.camelot64.kickc.model.Program;
 import dk.camelot64.kickc.model.operators.Operator;
 import dk.camelot64.kickc.model.operators.OperatorBinary;
@@ -19,9 +20,14 @@ import dk.camelot64.kickc.model.DominatorsBlock;
 import dk.camelot64.kickc.model.DominatorsGraph;
 import dk.camelot64.kickc.model.symbols.Variable;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.ListIterator;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Compiler Pass identifying constant if() conditions
@@ -30,6 +36,64 @@ public class Pass2ConstantIfs extends Pass2SsaOptimization {
 
    public Pass2ConstantIfs(Program program) {
       super(program);
+   }
+
+   /** Per-procedure lazy caches for dominance-based constant condition folding. */
+   private static class ProcDominanceContext {
+      final List<Graph.Block> procBlocks;
+      Map<LabelRef, Graph.Block> localBlockMap;
+      Map<LabelRef, List<Graph.Block>> localPredMap;
+      Set<VariableRef> writtenVars;
+
+      ProcDominanceContext(List<Graph.Block> procBlocks) {
+         this.procBlocks = procBlocks;
+      }
+
+      Map<LabelRef, Graph.Block> getBlockMap() {
+         if(localBlockMap == null) {
+            localBlockMap = new HashMap<>(procBlocks.size() * 2);
+            for(Graph.Block b : procBlocks) {
+               localBlockMap.put(b.getLabel(), b);
+            }
+         }
+         return localBlockMap;
+      }
+
+      Map<LabelRef, List<Graph.Block>> getPredMap() {
+         if(localPredMap == null) {
+            localPredMap = new HashMap<>(procBlocks.size() * 2);
+            for(Graph.Block other : procBlocks) {
+               if(other.getDefaultSuccessor() != null) {
+                  localPredMap.computeIfAbsent(other.getDefaultSuccessor(), k -> new ArrayList<>()).add(other);
+               }
+               if(other.getConditionalSuccessor() != null) {
+                  localPredMap.computeIfAbsent(other.getConditionalSuccessor(), k -> new ArrayList<>()).add(other);
+               }
+               if(other.getCallSuccessor() != null) {
+                  localPredMap.computeIfAbsent(other.getCallSuccessor(), k -> new ArrayList<>()).add(other);
+               }
+            }
+         }
+         return localPredMap;
+      }
+
+      Set<VariableRef> getWrittenVars() {
+         if(writtenVars == null) {
+            writtenVars = new HashSet<>();
+            for(Graph.Block b : procBlocks) {
+               for(Statement stmt : b.getStatements()) {
+                  if(stmt instanceof StatementLValue sa && sa.getlValue() instanceof VariableRef vr) {
+                     writtenVars.add(vr);
+                  }
+               }
+            }
+         }
+         return writtenVars;
+      }
+
+      void invalidatePreds() {
+         localPredMap = null;
+      }
    }
 
    /**
@@ -41,42 +105,70 @@ public class Pass2ConstantIfs extends Pass2SsaOptimization {
    public boolean step() {
       boolean modified = false;
 
-      for(var block : getGraph().getAllBlocks()) {
-         ListIterator<Statement> stmtIt = block.getStatements().listIterator();
-         while(stmtIt.hasNext()) {
-            Statement statement = stmtIt.next();
-            if(statement instanceof StatementConditionalJump) {
-               StatementConditionalJump conditional = (StatementConditionalJump) statement;
-               ConstantLiteral literal = findConditionLiteral(conditional);
-               if(literal == null) {
-                  literal = findConditionLiteralInterval(conditional);
-               }
-               if(literal == null) {
-                  literal = findConditionLiteralDominance(block, conditional);
-               }
-               if(literal != null && literal instanceof ConstantBool) {
-                  // Condition is a constant boolean
-                  if(((ConstantBool) literal).getBool()) {
-                     // Always true - replace default successor and drop conditional jump
-                     Pass2EliminateUnusedBlocks.removePhiRValues(block.getLabel(), getGraph().getDefaultSuccessor(block), getLog());
-                     block.setDefaultSuccessor(conditional.getDestination());
-                     getLog().append("if() condition always true - replacing block destination " + conditional.toString(getProgram(), false));
-                     stmtIt.remove();
-                     block.setConditionalSuccessor(null);
-                     modified = true;
-                  } else {
-                     // Always false - drop the conditional jump
-                     Pass2EliminateUnusedBlocks.removePhiRValues(block.getLabel(), getGraph().getConditionalSuccessor(block), getLog());
-                     getLog().append("if() condition always false - eliminating " + conditional.toString(getProgram(), false));
-                     stmtIt.remove();
-                     block.setConditionalSuccessor(null);
-                     modified = true;
+      for(ProcedureCompilation procComp : getProgram().getProcedureCompilations()) {
+         ControlFlowGraph procGraph = procComp.getGraph();
+         if(procGraph == null) continue;
+         List<Graph.Block> procBlocks = procGraph.getAllBlocks();
+         ProcDominanceContext ctx = null;
+
+         for(var block : procBlocks) {
+            ListIterator<Statement> stmtIt = block.getStatements().listIterator();
+            while(stmtIt.hasNext()) {
+               Statement statement = stmtIt.next();
+               if(statement instanceof StatementConditionalJump conditional) {
+                  if(ctx == null) {
+                     ctx = new ProcDominanceContext(procBlocks);
+                  }
+                  ConstantLiteral literal = findConditionLiteral(conditional);
+                  if(literal == null) {
+                     literal = findConditionLiteralInterval(conditional);
+                  }
+                  if(literal == null) {
+                     literal = findConditionLiteralDominance(block, conditional, ctx);
+                  }
+                  if(literal instanceof ConstantBool) {
+                     // Condition is a constant boolean
+                     if(((ConstantBool) literal).getBool()) {
+                        // Always true - replace default successor and drop conditional jump
+                        Graph.Block defSuccBlock = resolveLocalOrGlobalBlock(block.getDefaultSuccessor(), ctx);
+                        if(defSuccBlock != null) {
+                           Pass2EliminateUnusedBlocks.removePhiRValues(block.getLabel(), defSuccBlock, getLog());
+                        }
+                        block.setDefaultSuccessor(conditional.getDestination());
+                        getLog().append("if() condition always true - replacing block destination " + conditional.toString(getProgram(), false));
+                        stmtIt.remove();
+                        block.setConditionalSuccessor(null);
+                        ctx.invalidatePreds();
+                        modified = true;
+                     } else {
+                        // Always false - drop the conditional jump
+                        Graph.Block condSuccBlock = resolveLocalOrGlobalBlock(block.getConditionalSuccessor(), ctx);
+                        if(condSuccBlock != null) {
+                           Pass2EliminateUnusedBlocks.removePhiRValues(block.getLabel(), condSuccBlock, getLog());
+                        }
+                        getLog().append("if() condition always false - eliminating " + conditional.toString(getProgram(), false));
+                        stmtIt.remove();
+                        block.setConditionalSuccessor(null);
+                        ctx.invalidatePreds();
+                        modified = true;
+                     }
                   }
                }
             }
          }
       }
       return modified;
+   }
+
+   private Graph.Block resolveLocalOrGlobalBlock(LabelRef label, ProcDominanceContext ctx) {
+      if(label == null || SymbolRef.PROCEXIT_BLOCK_NAME.equals(label.getFullName())) {
+         return null;
+      }
+      Graph.Block b = ctx.getBlockMap().get(label);
+      if(b == null) {
+         b = getGraph().getBlock(label);
+      }
+      return b;
    }
 
    /**
@@ -214,28 +306,31 @@ public class Pass2ConstantIfs extends Pass2SsaOptimization {
       return null;
    }
 
-   private ConstantLiteral findConditionLiteralDominance(Graph.Block blockB, StatementConditionalJump conditionalB) {
-      if(!isImmutableCondition(blockB, conditionalB)) return null;
-
+   private ConstantLiteral findConditionLiteralDominance(Graph.Block blockB, StatementConditionalJump conditionalB, ProcDominanceContext ctx) {
       DominatorsGraph dominators = getProgram().getDominators();
       if(dominators == null) return null;
       DominatorsBlock bDoms = dominators.getDominators(blockB.getLabel());
       if(bDoms == null) return null;
 
-      for(Graph.Block blockA : getGraph().getAllBlocks()) {
+      if(!isImmutableCondition(blockB, conditionalB, ctx)) return null;
+
+      Map<LabelRef, Graph.Block> localBlockMap = ctx.getBlockMap();
+      Map<LabelRef, List<Graph.Block>> localPredMap = ctx.getPredMap();
+
+      for(Graph.Block blockA : ctx.procBlocks) {
          if(blockA.equals(blockB)) continue;
          StatementConditionalJump conditionalA = getConditionalJump(blockA);
-         if(conditionalA == null || !isImmutableCondition(blockA, conditionalA)) continue;
+         if(conditionalA == null || !isImmutableCondition(blockA, conditionalA, ctx)) continue;
 
          LabelRef condSuccA = conditionalA.getDestination();
          LabelRef defaultSuccA = blockA.getDefaultSuccessor();
 
          // Check true branch of A
          if(condSuccA != null && bDoms.contains(condSuccA)) {
-            Graph.Block condBlock = getGraph().getBlock(condSuccA);
+            Graph.Block condBlock = localBlockMap.get(condSuccA);
             if(condBlock != null) {
-               List<Graph.Block> preds = getGraph().getPredecessors(condBlock);
-               if(preds.size() == 1 && preds.get(0).equals(blockA)) {
+               List<Graph.Block> preds = localPredMap.get(condSuccA);
+               if(preds != null && preds.size() == 1 && preds.get(0).equals(blockA)) {
                   if(areConditionsIdentical(conditionalA, conditionalB)) {
                      getLog().append("RCE: Condition in " + blockB.getLabel() + " identical to " + blockA.getLabel() + " on true branch -> folding TRUE");
                      return new ConstantBool(true);
@@ -249,10 +344,10 @@ public class Pass2ConstantIfs extends Pass2SsaOptimization {
 
          // Check false branch of A
          if(defaultSuccA != null && bDoms.contains(defaultSuccA)) {
-            Graph.Block defaultBlock = getGraph().getBlock(defaultSuccA);
+            Graph.Block defaultBlock = localBlockMap.get(defaultSuccA);
             if(defaultBlock != null) {
-               List<Graph.Block> preds = getGraph().getPredecessors(defaultBlock);
-               if(preds.size() == 1 && preds.get(0).equals(blockA)) {
+               List<Graph.Block> preds = localPredMap.get(defaultSuccA);
+               if(preds != null && preds.size() == 1 && preds.get(0).equals(blockA)) {
                   if(areConditionsIdentical(conditionalA, conditionalB)) {
                      getLog().append("RCE: Condition in " + blockB.getLabel() + " identical to " + blockA.getLabel() + " on false branch -> folding FALSE");
                      return new ConstantBool(false);
@@ -276,11 +371,11 @@ public class Pass2ConstantIfs extends Pass2SsaOptimization {
       return null;
    }
 
-   private boolean isImmutableCondition(Graph.Block block, StatementConditionalJump conditional) {
-      return isImmutableValue(block, conditional.getrValue1()) && isImmutableValue(block, conditional.getrValue2());
+   private boolean isImmutableCondition(Graph.Block block, StatementConditionalJump conditional, ProcDominanceContext ctx) {
+      return isImmutableValue(block, conditional.getrValue1(), ctx) && isImmutableValue(block, conditional.getrValue2(), ctx);
    }
 
-   private boolean isImmutableValue(Graph.Block block, RValue val) {
+   private boolean isImmutableValue(Graph.Block block, RValue val, ProcDominanceContext ctx) {
       if(val == null) return true;
       if(val instanceof ConstantValue) return true;
       if(val instanceof VariableRef varRef) {
@@ -294,21 +389,7 @@ public class Pass2ConstantIfs extends Pass2SsaOptimization {
          dk.camelot64.kickc.model.symbols.Scope blockScope = getProgramScope().getScope(block.getScope());
          dk.camelot64.kickc.model.symbols.Procedure proc = blockScope != null ? blockScope.getContainingProcedure() : null;
          if(proc != null) {
-            return !isVariableWrittenInProcedure(varRef, proc);
-         }
-      }
-      return false;
-   }
-
-   private boolean isVariableWrittenInProcedure(VariableRef varRef, dk.camelot64.kickc.model.symbols.Procedure proc) {
-      ScopeRef procScope = proc.getScope().getRef();
-      for(var b : getGraph().getAllBlocks()) {
-         if(procScope.equals(b.getScope())) {
-            for(Statement stmt : b.getStatements()) {
-               if(stmt instanceof StatementLValue sa) {
-                  if(varRef.equals(sa.getlValue())) return true;
-               }
-            }
+            return !ctx.getWrittenVars().contains(varRef);
          }
       }
       return false;

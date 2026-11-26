@@ -24,14 +24,14 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
 
    @Override
    public LiveRangeVariables calculate() {
-      long tStart = System.currentTimeMillis();
-      long t0 = System.currentTimeMillis();
       final Map<ProcedureRef, Collection<VariableRef>> procedureReferencedVars = calculateProcedureReferencedVars(getProgram());
-      long t1 = System.currentTimeMillis();
       LiveRangeVariables liveRanges = new LiveRangeVariables(getProgram());
 
+      Graph graph = getProgram().getGraph();
+      List<Statement> allStatements = graph.getAllStatements();
+
       int maxStmtIdx = 0;
-      for(Statement nextStmt : getProgram().getGraph().getAllStatements()) {
+      for(Statement nextStmt : allStatements) {
          if(nextStmt.getIndex() > maxStmtIdx) {
             maxStmtIdx = nextStmt.getIndex();
          }
@@ -40,21 +40,12 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
       PreviousStatement[][] previousStatementsByStmtIdx = new PreviousStatement[maxStmtIdx + 1][];
       @SuppressWarnings("unchecked")
       Collection<VariableRef>[] definedVarsByStmtIdx = new Collection[maxStmtIdx + 1];
-      @SuppressWarnings("unchecked")
-      Collection<VariableRef>[] callProcReferencedByStmtIdx = new Collection[maxStmtIdx + 1];
-      @SuppressWarnings("unchecked")
-      Collection<VariableRef>[] beforeMethodProcReferencedByStmtIdx = new Collection[maxStmtIdx + 1];
-      @SuppressWarnings("unchecked")
-      LinkedHashSet<VariableRef>[] aliveByStatement = new LinkedHashSet[maxStmtIdx + 1];
-
-      for(int i = 0; i <= maxStmtIdx; i++) {
-         aliveByStatement[i] = new LinkedHashSet<>();
-      }
+      ProcedureRef[] callProcByStmtIdx = new ProcedureRef[maxStmtIdx + 1];
+      ProcedureRef[] beforeMethodProcByStmtIdx = new ProcedureRef[maxStmtIdx + 1];
 
       VariableReferenceInfos referenceInfo = getProgram().getVariableReferenceInfos();
       StatementInfos statementInfos = getProgram().getStatementInfos();
       dk.camelot64.kickc.model.symbols.ProgramScope scope = getProgram().getScope();
-      Graph graph = getProgram().getGraph();
 
       List<Graph.Block> allBlocks = graph.getAllBlocks();
       Map<LabelRef, List<Graph.Block>> predecessorMap = new HashMap<>(allBlocks.size() * 2);
@@ -73,7 +64,7 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
          }
       }
 
-      for(Statement nextStmt : graph.getAllStatements()) {
+      for(Statement nextStmt : allStatements) {
          int idx = nextStmt.getIndex();
          Collection<PreviousStatement> prevs = getPreviousStatements(nextStmt, graph, statementInfos, predecessorMap, prevInBlockByStmtIdx);
          previousStatementsByStmtIdx[idx] = prevs.toArray(new PreviousStatement[prevs.size()]);
@@ -82,7 +73,7 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
          if(nextStmt instanceof StatementCalling) {
             ProcedureRef procedure = ((StatementCalling) nextStmt).getProcedure();
             if(procedure != null) {
-               callProcReferencedByStmtIdx[idx] = procedureReferencedVars.get(procedure);
+               callProcByStmtIdx[idx] = procedure;
             }
          }
 
@@ -90,33 +81,117 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
          if(procBlock != null && procBlock.getLabel() != null) {
             Symbol sym = scope.getSymbol(procBlock.getLabel());
             if(sym instanceof Procedure) {
-               beforeMethodProcReferencedByStmtIdx[idx] = procedureReferencedVars.get(((Procedure) sym).getRef());
+               beforeMethodProcByStmtIdx[idx] = ((Procedure) sym).getRef();
             }
          }
       }
-      long t2 = System.currentTimeMillis();
 
-      initializeLiveRanges(liveRanges, previousStatementsByStmtIdx, definedVarsByStmtIdx, aliveByStatement);
+      Map<VariableRef, Integer> varIdMap = new HashMap<>();
+      List<VariableRef> varsByIdList = new ArrayList<>();
+      BitSet[] aliveBitsByStmtIdx = new BitSet[maxStmtIdx + 1];
+      for(int i = 0; i <= maxStmtIdx; i++) {
+         aliveBitsByStmtIdx[i] = new BitSet();
+      }
 
+      initializeLiveRanges(liveRanges, allStatements, previousStatementsByStmtIdx, definedVarsByStmtIdx, aliveBitsByStmtIdx, referenceInfo, statementInfos, varIdMap, varsByIdList);
+
+      int numVars = varsByIdList.size();
+      VariableRef[] varsById = varsByIdList.toArray(new VariableRef[0]);
+
+      BitSet[] definedBitsByStmtIdx = new BitSet[maxStmtIdx + 1];
+      for(Statement nextStmt : allStatements) {
+         int idx = nextStmt.getIndex();
+         Collection<VariableRef> defined = definedVarsByStmtIdx[idx];
+         if(defined != null && !defined.isEmpty()) {
+            BitSet bs = new BitSet(numVars);
+            for(VariableRef v : defined) {
+               Integer id = varIdMap.get(v);
+               if(id != null) {
+                  bs.set(id);
+               }
+            }
+            if(!bs.isEmpty()) {
+               definedBitsByStmtIdx[idx] = bs;
+            }
+         }
+      }
+
+      Map<ProcedureRef, BitSet> procReferencedBits = new HashMap<>(procedureReferencedVars.size() * 2);
+      for(Map.Entry<ProcedureRef, Collection<VariableRef>> entry : procedureReferencedVars.entrySet()) {
+         Collection<VariableRef> refs = entry.getValue();
+         if(refs != null && !refs.isEmpty()) {
+            BitSet bs = new BitSet(numVars);
+            for(VariableRef v : refs) {
+               Integer id = varIdMap.get(v);
+               if(id != null) {
+                  bs.set(id);
+               }
+            }
+            procReferencedBits.put(entry.getKey(), bs);
+         } else {
+            procReferencedBits.put(entry.getKey(), new BitSet(0));
+         }
+      }
+
+      BitSet[] callProcReferencedBitsByStmtIdx = new BitSet[maxStmtIdx + 1];
+      BitSet[] beforeMethodProcReferencedBitsByStmtIdx = new BitSet[maxStmtIdx + 1];
+      for(Statement nextStmt : allStatements) {
+         int idx = nextStmt.getIndex();
+         if(callProcByStmtIdx[idx] != null) {
+            callProcReferencedBitsByStmtIdx[idx] = procReferencedBits.get(callProcByStmtIdx[idx]);
+         }
+         if(beforeMethodProcByStmtIdx[idx] != null) {
+            beforeMethodProcReferencedBitsByStmtIdx[idx] = procReferencedBits.get(beforeMethodProcByStmtIdx[idx]);
+         }
+      }
+
+      BitSet scratch = new BitSet(numVars);
+      boolean verbose = getLog().isVerboseLiveRanges();
       boolean propagating;
-      int iter = 0;
       do {
-         iter++;
          propagating = calculateLiveRanges(
-               liveRanges,
+               allStatements,
                previousStatementsByStmtIdx,
-               definedVarsByStmtIdx,
-               callProcReferencedByStmtIdx,
-               beforeMethodProcReferencedByStmtIdx,
-               aliveByStatement);
-         getProgram().setLiveRangeVariables(liveRanges);
-         if(getLog().isVerboseLiveRanges()) {
+               definedBitsByStmtIdx,
+               callProcReferencedBitsByStmtIdx,
+               beforeMethodProcReferencedBitsByStmtIdx,
+               aliveBitsByStmtIdx,
+               varsById,
+               scratch,
+               verbose);
+         if(verbose) {
+            materializeLiveRanges(liveRanges, aliveBitsByStmtIdx, varsById);
+            getProgram().setLiveRangeVariables(liveRanges);
             getLog().append("Propagating live ranges...");
             getLog().append("CONTROL FLOW GRAPH - LIVE RANGES IN PROGRESS");
             getLog().append(getProgram().getGraph().toString(getProgram()));
          }
       } while(propagating);
+
+      materializeLiveRanges(liveRanges, aliveBitsByStmtIdx, varsById);
+      getProgram().setLiveRangeVariables(liveRanges);
       return liveRanges;
+   }
+
+   private static int getOrAssignVarId(VariableRef var, Map<VariableRef, Integer> varIdMap, List<VariableRef> varsById) {
+      Integer id = varIdMap.get(var);
+      if(id == null) {
+         id = varsById.size();
+         varIdMap.put(var, id);
+         varsById.add(var);
+      }
+      return id;
+   }
+
+   private static void materializeLiveRanges(LiveRangeVariables liveRanges, BitSet[] aliveBitsByStmtIdx, VariableRef[] varsById) {
+      for(int stmtIdx = 0; stmtIdx < aliveBitsByStmtIdx.length; stmtIdx++) {
+         BitSet alive = aliveBitsByStmtIdx[stmtIdx];
+         if(alive != null && !alive.isEmpty()) {
+            for(int varId = alive.nextSetBit(0); varId >= 0; varId = alive.nextSetBit(varId + 1)) {
+               liveRanges.addAlive(varsById[varId], stmtIdx);
+            }
+         }
+      }
    }
 
    /**
@@ -162,18 +237,23 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
     */
    private void initializeLiveRanges(
          LiveRangeVariables liveRanges,
+         List<Statement> allStatements,
          PreviousStatement[][] previousStatementsByStmtIdx,
          Collection<VariableRef>[] definedVarsByStmtIdx,
-         LinkedHashSet<VariableRef>[] aliveByStatement) {
-      for(Statement nextStmt : getProgram().getGraph().getAllStatements()) {
+         BitSet[] aliveBitsByStmtIdx,
+         VariableReferenceInfos referenceInfo,
+         StatementInfos statementInfos,
+         Map<VariableRef, Integer> varIdMap,
+         List<VariableRef> varsByIdList) {
+      for(Statement nextStmt : allStatements) {
          int nextIdx = nextStmt.getIndex();
          Collection<VariableRef> definedNextStmt = definedVarsByStmtIdx[nextIdx];
-         initLiveRange(liveRanges, definedNextStmt);
+         initLiveRange(liveRanges, definedNextStmt, varIdMap, varsByIdList);
          PreviousStatement[] previousStmts = previousStatementsByStmtIdx[nextIdx];
          if(previousStmts != null) {
             for(PreviousStatement previousStmt : previousStmts) {
                if(PreviousStatement.Type.NORMAL.equals(previousStmt.getType()) || PreviousStatement.Type.BEFORE_METHOD.equals(previousStmt.getType())) {
-                  initUsedVars(liveRanges, nextStmt, previousStmt, aliveByStatement);
+                  initUsedVars(liveRanges, nextStmt, previousStmt, aliveBitsByStmtIdx, referenceInfo, statementInfos, varIdMap, varsByIdList);
                }
             }
          }
@@ -181,18 +261,20 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
    }
 
    private boolean calculateLiveRanges(
-         LiveRangeVariables liveRanges,
+         List<Statement> allStatements,
          PreviousStatement[][] previousStatementsByStmtIdx,
-         Collection<VariableRef>[] definedVarsByStmtIdx,
-         Collection<VariableRef>[] callProcReferencedByStmtIdx,
-         Collection<VariableRef>[] beforeMethodProcReferencedByStmtIdx,
-         LinkedHashSet<VariableRef>[] aliveByStatement) {
+         BitSet[] definedBitsByStmtIdx,
+         BitSet[] callProcReferencedBitsByStmtIdx,
+         BitSet[] beforeMethodProcReferencedBitsByStmtIdx,
+         BitSet[] aliveBitsByStmtIdx,
+         VariableRef[] varsById,
+         BitSet scratch,
+         boolean verbose) {
       boolean modified = false;
-      List<Statement> allStatements = getProgram().getGraph().getAllStatements();
       for(int i = allStatements.size() - 1; i >= 0; i--) {
          Statement nextStmt = allStatements.get(i);
          int nextIdx = nextStmt.getIndex();
-         LinkedHashSet<VariableRef> aliveNextStmt = aliveByStatement[nextIdx];
+         BitSet aliveNextStmt = aliveBitsByStmtIdx[nextIdx];
          if(aliveNextStmt == null || aliveNextStmt.isEmpty()) {
             continue;
          }
@@ -200,87 +282,95 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
          if(previousStmts == null || previousStmts.length == 0) {
             continue;
          }
-         Collection<VariableRef> definedNextStmt = definedVarsByStmtIdx[nextIdx];
-         Collection<VariableRef> callProcReferenced = callProcReferencedByStmtIdx[nextIdx];
-         Collection<VariableRef> beforeMethodProcReferenced = beforeMethodProcReferencedByStmtIdx[nextIdx];
+         BitSet definedNextStmt = definedBitsByStmtIdx[nextIdx];
+         BitSet callProcReferenced = callProcReferencedBitsByStmtIdx[nextIdx];
+         BitSet beforeMethodProcReferenced = beforeMethodProcReferencedBitsByStmtIdx[nextIdx];
 
-         for (PreviousStatement previousStmt : previousStmts) {
+         for(PreviousStatement previousStmt : previousStmts) {
             int prevIdx = previousStmt.getStatementIdx();
-            if (prevIdx == nextIdx) continue;
-            LinkedHashSet<VariableRef> prevAlive = aliveByStatement[prevIdx];
-            if (prevAlive == null) continue;
+            if(prevIdx == nextIdx) continue;
+            BitSet prevAlive = aliveBitsByStmtIdx[prevIdx];
+            if(prevAlive == null) continue;
 
             PreviousStatement.Type prevType = previousStmt.getType();
-            if (PreviousStatement.Type.NORMAL.equals(prevType)) {
+            if(PreviousStatement.Type.NORMAL.equals(prevType)) {
                // Add all vars alive in the next statement
-               for (VariableRef aliveVar : aliveNextStmt) {
-                  if (definedNextStmt == null || !definedNextStmt.contains(aliveVar)) {
-                     if (prevAlive.add(aliveVar)) {
-                        liveRanges.addAlive(aliveVar, prevIdx);
-                        modified = true;
-                        if (getLog().isVerboseLiveRanges()) {
-                            getLog().append("Propagated alive var " + aliveVar + " to "
-                                + previousStmt.getStatement());
-                        }
-                     }
-                  }
+               BitSet candidates;
+               if(definedNextStmt == null) {
+                  candidates = aliveNextStmt;
+               } else {
+                  scratch.clear();
+                  scratch.or(aliveNextStmt);
+                  scratch.andNot(definedNextStmt);
+                  candidates = scratch;
                }
-            } else if (PreviousStatement.Type.LAST_IN_METHOD.equals(prevType)) {
+               if(propagateBits(prevAlive, candidates, verbose, varsById, previousStmt, "Propagated alive var ")) {
+                  modified = true;
+               }
+            } else if(PreviousStatement.Type.LAST_IN_METHOD.equals(prevType)) {
                // Add all vars that are referenced in the method
-               if (callProcReferenced != null) {
-                  for (VariableRef aliveVar : aliveNextStmt) {
-                     if (callProcReferenced.contains(aliveVar)) {
-                        if (prevAlive.add(aliveVar)) {
-                           liveRanges.addAlive(aliveVar, prevIdx);
-                           modified = true;
-                           if (getLog().isVerboseLiveRanges()) {
-                              getLog().append(
-                                  "Propagated alive var used in method into method " + aliveVar + " to "
-                                      + previousStmt.getStatement());
-                           }
-                        }
-                     }
+               if(callProcReferenced != null) {
+                  scratch.clear();
+                  scratch.or(aliveNextStmt);
+                  scratch.and(callProcReferenced);
+                  if(propagateBits(prevAlive, scratch, verbose, varsById, previousStmt, "Propagated alive var used in method into method ")) {
+                     modified = true;
                   }
                }
-            } else if (PreviousStatement.Type.SKIP_METHOD.equals(prevType)) {
+            } else if(PreviousStatement.Type.SKIP_METHOD.equals(prevType)) {
                // Add all vars from next statement that the method does not use
-               for (VariableRef aliveVar : aliveNextStmt) {
-                  if ((callProcReferenced == null || !callProcReferenced.contains(aliveVar))
-                        && (definedNextStmt == null || !definedNextStmt.contains(aliveVar))) {
-                     if (prevAlive.add(aliveVar)) {
-                        liveRanges.addAlive(aliveVar, prevIdx);
-                        modified = true;
-                        if (getLog().isVerboseLiveRanges()) {
-                           getLog().append(
-                               "Propagated alive var unused in method by skipping call " + aliveVar
-                                   + " to " + previousStmt.getStatement());
-                        }
-                     }
-                  }
+               scratch.clear();
+               scratch.or(aliveNextStmt);
+               if(callProcReferenced != null) {
+                  scratch.andNot(callProcReferenced);
                }
-            } else if (PreviousStatement.Type.BEFORE_METHOD.equals(prevType)) {
+               if(definedNextStmt != null) {
+                  scratch.andNot(definedNextStmt);
+               }
+               if(propagateBits(prevAlive, scratch, verbose, varsById, previousStmt, "Propagated alive var unused in method by skipping call ")) {
+                  modified = true;
+               }
+            } else if(PreviousStatement.Type.BEFORE_METHOD.equals(prevType)) {
                // Add all alive variables to previous that are used inside the method
-               if (beforeMethodProcReferenced != null) {
-                  for (VariableRef aliveVar : aliveNextStmt) {
-                     if (beforeMethodProcReferenced.contains(aliveVar)) {
-                        if (definedNextStmt == null || !definedNextStmt.contains(aliveVar)) {
-                           if (prevAlive.add(aliveVar)) {
-                              liveRanges.addAlive(aliveVar, prevIdx);
-                              modified = true;
-                              if (getLog().isVerboseLiveRanges()) {
-                                 getLog().append(
-                                     "Propagated alive used in method out of method " + aliveVar + " to "
-                                         + previousStmt.getStatement());
-                              }
-                           }
-                        }
-                     }
+               if(beforeMethodProcReferenced != null) {
+                  scratch.clear();
+                  scratch.or(aliveNextStmt);
+                  scratch.and(beforeMethodProcReferenced);
+                  if(definedNextStmt != null) {
+                     scratch.andNot(definedNextStmt);
+                  }
+                  if(propagateBits(prevAlive, scratch, verbose, varsById, previousStmt, "Propagated alive used in method out of method ")) {
+                     modified = true;
                   }
                }
             }
          }
       }
       return modified;
+   }
+
+   private boolean propagateBits(
+         BitSet prevAlive,
+         BitSet candidates,
+         boolean verbose,
+         VariableRef[] varsById,
+         PreviousStatement previousStmt,
+         String verbosePrefix) {
+      if(verbose) {
+         BitSet newlyAdded = (BitSet) candidates.clone();
+         newlyAdded.andNot(prevAlive);
+         if(!newlyAdded.isEmpty()) {
+            for(int id = newlyAdded.nextSetBit(0); id >= 0; id = newlyAdded.nextSetBit(id + 1)) {
+               getLog().append(verbosePrefix + varsById[id] + " to " + previousStmt.getStatement());
+            }
+            prevAlive.or(newlyAdded);
+            return true;
+         }
+         return false;
+      }
+      int before = prevAlive.cardinality();
+      prevAlive.or(candidates);
+      return prevAlive.cardinality() != before;
    }
 
    /**
@@ -295,23 +385,27 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
          LiveRangeVariables liveRanges,
          Statement nextStmt,
          PreviousStatement previousStmt,
-         LinkedHashSet<VariableRef>[] aliveByStatement) {
+         BitSet[] aliveBitsByStmtIdx,
+         VariableReferenceInfos referenceInfo,
+         StatementInfos statementInfos,
+         Map<VariableRef, Integer> varIdMap,
+         List<VariableRef> varsByIdList) {
       boolean modified = false;
-      VariableReferenceInfos referenceInfo = getProgram().getVariableReferenceInfos();
       Collection<VariableRef> usedNextStmt = referenceInfo.getUsedVars(nextStmt);
       int prevIdx = previousStmt.getStatementIdx();
-      LinkedHashSet<VariableRef> prevAlive = aliveByStatement[prevIdx];
+      BitSet prevAlive = aliveBitsByStmtIdx[prevIdx];
       if(nextStmt instanceof StatementPhiBlock) {
          // If next statement is a phi add the used variables to previous based on the phi entries
          StatementPhiBlock phi = (StatementPhiBlock) nextStmt;
-         Graph.Block previousBlock =
-               getProgram().getStatementInfos().getBlock(previousStmt.getStatementIdx());
+         Graph.Block previousBlock = statementInfos.getBlock(previousStmt.getStatementIdx());
          for(StatementPhiBlock.PhiVariable phiVariable : phi.getPhiVariables()) {
             for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
                if(phiRValue.getPredecessor().equals(previousBlock.getLabel())) {
                   if(phiRValue.getrValue() instanceof VariableRef) {
                      VariableRef usedVar = (VariableRef) phiRValue.getrValue();
-                     if(prevAlive.add(usedVar)) {
+                     int varId = getOrAssignVarId(usedVar, varIdMap, varsByIdList);
+                     if(!prevAlive.get(varId)) {
+                        prevAlive.set(varId);
                         liveRanges.addAlive(usedVar, prevIdx);
                         modified = true;
                         if(getLog().isVerboseLiveRanges()) {
@@ -325,7 +419,9 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
       } else {
          // Not a phi block - add used vars to all previous blocks
          for(VariableRef usedVar : usedNextStmt) {
-            if(prevAlive.add(usedVar)) {
+            int varId = getOrAssignVarId(usedVar, varIdMap, varsByIdList);
+            if(!prevAlive.get(varId)) {
+               prevAlive.set(varId);
                liveRanges.addAlive(usedVar, prevIdx);
                modified = true;
                if(getLog().isVerboseLiveRanges()) {
@@ -426,9 +522,11 @@ public class PassNCalcLiveRangeVariables extends PassNCalcBase<LiveRangeVariable
     * @param liveRanges The live ranges
     * @param defined The variables to init live ranges for
     */
-   private void initLiveRange(LiveRangeVariables liveRanges, Collection<VariableRef> defined) {
+   private void initLiveRange(LiveRangeVariables liveRanges, Collection<VariableRef> defined,
+                              Map<VariableRef, Integer> varIdMap, List<VariableRef> varsByIdList) {
       if(defined != null) {
          for(VariableRef variableRef : defined) {
+            getOrAssignVarId(variableRef, varIdMap, varsByIdList);
             LiveRange lValLiveRange = liveRanges.getLiveRange(variableRef);
             if(lValLiveRange == null) {
                liveRanges.addEmptyAlive(variableRef);

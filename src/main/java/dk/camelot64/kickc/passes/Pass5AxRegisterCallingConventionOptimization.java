@@ -205,6 +205,22 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
       return false;
    }
 
+   private static void checkQualReturnRef(String target, int lineIdx, String refScope,
+                                          Set<String> checkProcs,
+                                          Map<String, Set<Integer>> handledCallerReadIndices,
+                                          Set<String> unsafeAxReturnProcs) {
+      if(target != null && target.endsWith(".return")) {
+         String candProc = target.substring(0, target.length() - 7); // ".return".length() == 7
+         if(checkProcs.contains(candProc) && !candProc.equals(refScope)) {
+            Set<Integer> handled = handledCallerReadIndices.getOrDefault(candProc, Collections.emptySet());
+            if(!handled.contains(lineIdx)) {
+               unsafeAxReturnProcs.add(candProc);
+               checkProcs.remove(candProc);
+            }
+         }
+      }
+   }
+
    @Override
    public boolean optimize() {
       if(performed) {
@@ -365,23 +381,29 @@ public class Pass5AxRegisterCallingConventionOptimization extends Pass5AsmOptimi
             }
          }
          // Verify no caller reads procName.return or procName.return+1 outside handled Step 4 patterns (e.g. high-byte-only readers)
-         for(String candProc : new ArrayList<>(axReturnProcs)) {
+         Set<String> checkProcs = new HashSet<>();
+         for(String candProc : axReturnProcs) {
             if(unsafeAxReturnProcs.contains(candProc)) continue;
             Procedure p = procByName.get(candProc);
             if(p != null && p.isAxConvention()) continue; // Explicitly annotated __ax
-            String qualRet = candProc + ".return";
-            Set<Integer> handled = handledCallerReadIndices.getOrDefault(candProc, Collections.emptySet());
-            for(int i = 0; i < allLines.size(); i++) {
+            checkProcs.add(candProc);
+         }
+         if(!checkProcs.isEmpty()) {
+            for(int i = 0; i < allLines.size() && !checkProcs.isEmpty(); i++) {
                LineRef ref = allLines.get(i);
-               if(candProc.equals(ref.scope)) continue;
                if(ref.line instanceof AsmInstruction inst && inst.getOperand1() != null) {
                   Map<String, String> callerAliases = scopeAliases.get(ref.scope);
                   String op = inst.getOperand1().trim();
-                  boolean refsQualLo = matchesVarLo(op, qualRet, null, callerAliases);
-                  boolean refsQualHi = matchesVarHi(op, qualRet, null, callerAliases);
-                  if((refsQualLo || refsQualHi) && !handled.contains(i)) {
-                     unsafeAxReturnProcs.add(candProc);
-                     break;
+                  checkQualReturnRef(op, i, ref.scope, checkProcs, handledCallerReadIndices, unsafeAxReturnProcs);
+                  if(callerAliases != null) {
+                     checkQualReturnRef(callerAliases.get(op), i, ref.scope, checkProcs, handledCallerReadIndices, unsafeAxReturnProcs);
+                  }
+                  String stripped = stripPlus1(op);
+                  if(stripped != null) {
+                     checkQualReturnRef(stripped, i, ref.scope, checkProcs, handledCallerReadIndices, unsafeAxReturnProcs);
+                     if(callerAliases != null) {
+                        checkQualReturnRef(callerAliases.get(stripped), i, ref.scope, checkProcs, handledCallerReadIndices, unsafeAxReturnProcs);
+                     }
                   }
                }
             }

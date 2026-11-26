@@ -75,6 +75,8 @@ public class Pass2ConditionalJumpSimplification extends Pass2SsaOptimization {
     */
    private List<SimpleCondition> getSimpleConditionTodos() {
       final VariableReferenceInfos variableReferenceInfos = getProgram().getVariableReferenceInfos();
+      StatementInfos statementInfos = null;
+      boolean refreshedStatementInfos = false;
       List<SimpleCondition> todos = new ArrayList<>();
       for(var statement : getGraph().getAllStatements()) {
          if(statement instanceof StatementConditionalJump conditionalJump) {
@@ -84,7 +86,21 @@ public class Pass2ConditionalJumpSimplification extends Pass2SsaOptimization {
                   final Collection<Integer> conditionRvalueUsages = variableReferenceInfos.getVarUseStatements(conditionVar);
                   final Integer conditionDefineStmtIdx = variableReferenceInfos.getVarDefineStatement(conditionVar);
                   if(conditionRvalueUsages.size() == 1 && conditionDefineStmtIdx != null) {
-                     final Statement conditionDefineStmt = getGraph().getStatementByIndex(conditionDefineStmtIdx);
+                     if(statementInfos == null) {
+                        statementInfos = getProgram().getStatementInfos();
+                     }
+                     Statement conditionDefineStmt = (statementInfos != null)
+                           ? statementInfos.getStatement(conditionDefineStmtIdx)
+                           : getGraph().getStatementByIndex(conditionDefineStmtIdx);
+                     if(statementInfos != null && ((conditionDefineStmt != null && !conditionDefineStmtIdx.equals(conditionDefineStmt.getIndex()))
+                           || (conditionDefineStmt == null && !refreshedStatementInfos))) {
+                        getProgram().clearStatementInfos();
+                        statementInfos = getProgram().getStatementInfos();
+                        refreshedStatementInfos = true;
+                        conditionDefineStmt = (statementInfos != null)
+                              ? statementInfos.getStatement(conditionDefineStmtIdx)
+                              : getGraph().getStatementByIndex(conditionDefineStmtIdx);
+                     }
                      if(conditionDefineStmt instanceof StatementAssignment conditionAssignment
                          && ((StatementAssignment) conditionDefineStmt).getOperator() != null) {
                         switch(conditionAssignment.getOperator().getOperator()) {

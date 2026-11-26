@@ -2,6 +2,7 @@ package dk.camelot64.kickc.passes;
 
 import dk.camelot64.kickc.model.Graph;
 import dk.camelot64.kickc.model.Program;
+import dk.camelot64.kickc.model.StatementInfos;
 import dk.camelot64.kickc.model.VariableBuilder;
 import dk.camelot64.kickc.model.VariableReferenceInfos;
 import dk.camelot64.kickc.model.operators.OperatorUnary;
@@ -36,6 +37,8 @@ public class Pass2BitShiftCanonicalization extends Pass2SsaOptimization {
    public boolean step() {
       boolean modified = false;
       VariableReferenceInfos refInfos = getProgram().getVariableReferenceInfos();
+      StatementInfos statementInfos = null;
+      boolean refreshedStatementInfos = false;
 
       for(Graph.Block block : getGraph().getAllBlocks()) {
          ListIterator<Statement> it = block.getStatements().listIterator();
@@ -62,7 +65,21 @@ public class Pass2BitShiftCanonicalization extends Pass2SsaOptimization {
             if(uses == null || uses.size() != 1) continue;
             Integer defIdx = refInfos.getVarDefineStatement(shiftVarRef);
             if(defIdx == null) continue;
-            Statement defStmt = getGraph().getStatementByIndex(defIdx);
+            if(statementInfos == null) {
+               statementInfos = getProgram().getStatementInfos();
+            }
+            Statement defStmt = (statementInfos != null)
+                  ? statementInfos.getStatement(defIdx)
+                  : getGraph().getStatementByIndex(defIdx);
+            if(statementInfos != null && ((defStmt != null && !defIdx.equals(defStmt.getIndex()))
+                  || (defStmt == null && !refreshedStatementInfos))) {
+               getProgram().clearStatementInfos();
+               statementInfos = getProgram().getStatementInfos();
+               refreshedStatementInfos = true;
+               defStmt = (statementInfos != null)
+                     ? statementInfos.getStatement(defIdx)
+                     : getGraph().getStatementByIndex(defIdx);
+            }
             if(!(defStmt instanceof StatementAssignment shiftAssign)) continue;
             if(!Operators.SHIFT_RIGHT.equals(shiftAssign.getOperator())) continue;
             if(!(shiftAssign.getrValue2() instanceof ConstantValue shiftConst)) continue;

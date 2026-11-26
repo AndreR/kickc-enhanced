@@ -204,8 +204,8 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
       while(passModified) {
          passModified = false;
 
-         List<LineRef> allLines = flattenLines(getAsmProgram());
-         Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
+         List<LineRef> allLines = getSharedAllLines();
+         Map<String, CanonicalResolver> scopeResolvers = getSharedScopeResolvers(allLines);
          Map<String, String> asmConstants = new HashMap<>();
          for(LineRef ref : allLines) {
             if(ref.line instanceof AsmConstant c && c.getName() != null && c.getValue() != null) {
@@ -222,6 +222,7 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
          // Scan for Pattern B (Branch Byte-Skipping)
          for(int i = 0; i < allLines.size(); i++) {
             LineRef ref1 = allLines.get(i);
+            if(ref1.scope != null && !isScopeDirty(ref1.scope)) continue;
             if(!(ref1.line instanceof AsmInstruction)) continue;
             AsmInstruction inst1 = (AsmInstruction) ref1.line;
             if(!isImmediateLoad(inst1) || inst1.isNoOptimize()) continue;
@@ -306,6 +307,8 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
             if(chunkIdx != -1) {
                refJmp.chunk.getLines().set(chunkIdx, byteSkipper);
                allLines.set(idxJmp, new LineRef(idxJmp, refJmp.chunk, byteSkipper, refJmp.scope));
+               markScopeDirty(refJmp.scope);
+               invalidateRoundStructure();
                passModified = true;
                overallModified = true;
             }
@@ -343,6 +346,7 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
          for(int p = 0; p < procedures.size() - 1; p++) {
             ProcedureData p1 = procedures.get(p);
             ProcedureData p2 = procedures.get(p + 1);
+            if(!(isScopeDirty(p1.name) || isScopeDirty(p2.name))) continue;
 
             // CF-04: Strict chunk adjacency — no intervening global/data/segment chunks between p1 and p2
             int[] r1 = procChunkRange.get(p1);
@@ -472,6 +476,9 @@ public class Pass5MultiEntryByteSkipping extends Pass5AsmOptimization {
                }
             }
 
+            markScopeDirty(p1.name);
+            markScopeDirty(p2.name);
+            invalidateRoundStructure();
             passModified = true;
             overallModified = true;
             break;

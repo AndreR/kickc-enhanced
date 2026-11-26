@@ -62,6 +62,8 @@ public class Pass2ConditionalAndOrRewriting extends Pass2SsaOptimization {
     */
    private VariableRef findAndRewriteBooleanCondition(Graph graph) {
       final VariableReferenceInfos variableReferenceInfos = getProgram().getVariableReferenceInfos();
+      StatementInfos statementInfos = null;
+      boolean refreshedStatementInfos = false;
       for(var block : graph.getAllBlocks()) {
          for(Statement statement : block.getStatements()) {
             if(statement instanceof StatementConditionalJump conditional) {
@@ -73,7 +75,21 @@ public class Pass2ConditionalAndOrRewriting extends Pass2SsaOptimization {
                         VariableRef conditionVar = (VariableRef) conditionRValue;
                         final Integer conditionDefineStatementIdx = variableReferenceInfos.getVarDefineStatement(conditionVar);
                         if(conditionDefineStatementIdx != null) {
-                           final Statement conditionDefineStatement = graph.getStatementByIndex(conditionDefineStatementIdx);
+                           if(statementInfos == null) {
+                              statementInfos = getProgram().getStatementInfos();
+                           }
+                           Statement conditionDefineStatement = (statementInfos != null)
+                                 ? statementInfos.getStatement(conditionDefineStatementIdx)
+                                 : graph.getStatementByIndex(conditionDefineStatementIdx);
+                           if(statementInfos != null && ((conditionDefineStatement != null && !conditionDefineStatementIdx.equals(conditionDefineStatement.getIndex()))
+                                 || (conditionDefineStatement == null && !refreshedStatementInfos))) {
+                              getProgram().clearStatementInfos();
+                              statementInfos = getProgram().getStatementInfos();
+                              refreshedStatementInfos = true;
+                              conditionDefineStatement = (statementInfos != null)
+                                    ? statementInfos.getStatement(conditionDefineStatementIdx)
+                                    : graph.getStatementByIndex(conditionDefineStatementIdx);
+                           }
                            if(conditionDefineStatement instanceof StatementAssignment conditionAssignment) {
                               if(Operators.LOGIC_AND.equals(conditionAssignment.getOperator())) {
                                  // Found if() with logical && condition - rewrite to if(c1) if(c2) { xx }

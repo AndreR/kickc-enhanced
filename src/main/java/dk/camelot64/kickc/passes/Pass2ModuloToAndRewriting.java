@@ -34,6 +34,7 @@ public class Pass2ModuloToAndRewriting extends Pass2SsaOptimization {
    @Override
    public boolean step() {
       boolean optimized = false;
+      VarAssignments.Index varAssignmentsIndex = null;
 
       for(var block : getGraph().getAllBlocks()) {
          Scope scope = getProgramScope().getScope(block.getScope());
@@ -89,7 +90,10 @@ public class Pass2ModuloToAndRewriting extends Pass2SsaOptimization {
                         } else if(cVal == 1L && SymbolType.BOOLEAN.equals(xType)) {
                            isSafe = true;
                         } else if(xVal instanceof VariableRef xVarRef && xType.getSizeBytes() == 1) {
-                           isSafe = isVariableBoundedByConstant(xVarRef, cVal);
+                           if(varAssignmentsIndex == null) {
+                              varAssignmentsIndex = new VarAssignments.Index(getGraph());
+                           }
+                           isSafe = isVariableBoundedByConstant(xVarRef, cVal, varAssignmentsIndex);
                         }
                         if(isSafe) {
                            assignment.setrValue1(xVal);
@@ -111,13 +115,13 @@ public class Pass2ModuloToAndRewriting extends Pass2SsaOptimization {
       return val > 0 && ((val + 1) & val) == 0;
    }
 
-   private boolean isVariableBoundedByConstant(VariableRef varRef, long cVal) {
-      return isVariableBoundedByConstant(varRef, cVal, new java.util.HashSet<>());
+   private boolean isVariableBoundedByConstant(VariableRef varRef, long cVal, VarAssignments.Index varAssignmentsIndex) {
+      return isVariableBoundedByConstant(varRef, cVal, new java.util.HashSet<>(), varAssignmentsIndex);
    }
 
-   private boolean isVariableBoundedByConstant(VariableRef varRef, long cVal, java.util.Set<VariableRef> visited) {
+   private boolean isVariableBoundedByConstant(VariableRef varRef, long cVal, java.util.Set<VariableRef> visited, VarAssignments.Index varAssignmentsIndex) {
       if(!visited.add(varRef)) return true;
-      List<VarAssignments.VarAssignment> assigns = VarAssignments.get(varRef, getGraph(), getProgramScope());
+      List<VarAssignments.VarAssignment> assigns = varAssignmentsIndex.get(varRef, getProgramScope());
       if(assigns == null || assigns.isEmpty()) return false;
       for(VarAssignments.VarAssignment va : assigns) {
          if(VarAssignments.VarAssignment.Type.INIT_VALUE.equals(va.type)) {
@@ -134,7 +138,7 @@ public class Pass2ModuloToAndRewriting extends Pass2SsaOptimization {
          } else if(VarAssignments.VarAssignment.Type.STATEMENT_PHI.equals(va.type)) {
             if(va.statementPhiVariable != null) {
                for(StatementPhiBlock.PhiRValue phiRVal : va.statementPhiVariable.getValues()) {
-                  if(!isRValueBoundedByConstant(phiRVal.getrValue(), cVal, visited)) {
+                  if(!isRValueBoundedByConstant(phiRVal.getrValue(), cVal, visited, varAssignmentsIndex)) {
                      return false;
                   }
                }
@@ -144,14 +148,14 @@ public class Pass2ModuloToAndRewriting extends Pass2SsaOptimization {
          } else if(VarAssignments.VarAssignment.Type.STATEMENT_LVALUE.equals(va.type)) {
             if(va.statementLValue instanceof StatementAssignment sa) {
                if(sa.getOperator() == null && sa.getrValue1() == null) {
-                  if(!isRValueBoundedByConstant(sa.getrValue2(), cVal, visited)) {
+                  if(!isRValueBoundedByConstant(sa.getrValue2(), cVal, visited, varAssignmentsIndex)) {
                      return false;
                   }
                } else if(Operators.MINUS.equals(sa.getOperator())) {
                   if(sa.getrValue1() instanceof ConstantValue cv) {
                      ConstantLiteral lit = getConstantLiteral(cv);
                      if(lit instanceof ConstantInteger ci && ci.getValue() == cVal) {
-                        if(isRValueBoundedByConstant(sa.getrValue2(), cVal, visited)) {
+                        if(isRValueBoundedByConstant(sa.getrValue2(), cVal, visited, varAssignmentsIndex)) {
                            continue;
                         }
                      }
@@ -161,7 +165,7 @@ public class Pass2ModuloToAndRewriting extends Pass2SsaOptimization {
                   if(sa.getrValue2() instanceof ConstantValue cv) {
                      ConstantLiteral lit = getConstantLiteral(cv);
                      if(lit instanceof ConstantInteger ci && ci.getValue() == cVal) {
-                        if(isRValueBoundedByConstant(sa.getrValue1(), cVal, visited)) {
+                        if(isRValueBoundedByConstant(sa.getrValue1(), cVal, visited, varAssignmentsIndex)) {
                            continue;
                         }
                      }
@@ -180,7 +184,7 @@ public class Pass2ModuloToAndRewriting extends Pass2SsaOptimization {
       return true;
    }
 
-   private boolean isRValueBoundedByConstant(RValue rVal, long cVal, java.util.Set<VariableRef> visited) {
+   private boolean isRValueBoundedByConstant(RValue rVal, long cVal, java.util.Set<VariableRef> visited, VarAssignments.Index varAssignmentsIndex) {
       if(rVal == null) return false;
       if(rVal instanceof ConstantValue cv) {
          ConstantLiteral lit = getConstantLiteral(cv);
@@ -189,7 +193,7 @@ public class Pass2ModuloToAndRewriting extends Pass2SsaOptimization {
          }
          return false;
       } else if(rVal instanceof VariableRef vr) {
-         return isVariableBoundedByConstant(vr, cVal, visited);
+         return isVariableBoundedByConstant(vr, cVal, visited, varAssignmentsIndex);
       }
       return false;
    }

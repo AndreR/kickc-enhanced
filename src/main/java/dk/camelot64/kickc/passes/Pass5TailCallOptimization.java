@@ -86,7 +86,7 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
       return callerType.getSizeBytes() == calleeType.getSizeBytes();
    }
 
-   private boolean areReturnConventionsCompatible(Procedure caller, Procedure callee, Map<String, List<AsmLine>> scopeLinesMap) {
+   private boolean areReturnConventionsCompatible(Procedure caller, Procedure callee, Map<String, List<LineRef>> scopeLinesMap) {
       if(caller.getReturnType() == null || callee.getReturnType() == null) {
          return false;
       }
@@ -150,11 +150,11 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
    }
 
    private boolean isNonVoidCallerToVoidCalleeSafe(Procedure caller, Procedure callee,
-                                                     Map<String, List<AsmLine>> scopeLinesMap) {
+                                                     Map<String, List<LineRef>> scopeLinesMap) {
       if(caller.getReturnType() instanceof SymbolTypeStruct) {
          return false;
       }
-      List<AsmLine> calleeLines = findScopeLines(callee, scopeLinesMap);
+      List<LineRef> calleeLines = findScopeLines(callee, scopeLinesMap);
       if(calleeLines == null || calleeLines.isEmpty()) {
          return false;
       }
@@ -173,7 +173,7 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
       }
 
       Set<String> protectedAddrs = new HashSet<>();
-      List<AsmLine> callerLines = findScopeLines(caller, scopeLinesMap);
+      List<LineRef> callerLines = findScopeLines(caller, scopeLinesMap);
       if(callerLines != null) {
          String retVal = findLabelValue(callerLines, "return");
          if(retVal != null) {
@@ -190,13 +190,14 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
       }
 
       Map<String, String> calleeLabels = new HashMap<>();
-      for(AsmLine line : calleeLines) {
-         if(line instanceof AsmLabelDecl decl) {
+      for(LineRef ref : calleeLines) {
+         if(ref.line instanceof AsmLabelDecl decl) {
             calleeLabels.put(decl.getName().trim(), decl.getValue().trim());
          }
       }
 
-      for(AsmLine line : calleeLines) {
+      for(LineRef ref : calleeLines) {
+         AsmLine line = ref.line;
          if(line instanceof AsmInlineKickAsm) {
             return false;
          }
@@ -239,18 +240,18 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
       return true;
    }
 
-   private static List<AsmLine> findScopeLines(Procedure proc, Map<String, List<AsmLine>> scopeLinesMap) {
+   private static List<LineRef> findScopeLines(Procedure proc, Map<String, List<LineRef>> scopeLinesMap) {
       if(proc == null) return null;
-      List<AsmLine> lines = scopeLinesMap.get(proc.getFullName());
+      List<LineRef> lines = scopeLinesMap.get(proc.getFullName());
       if(lines != null) return lines;
       lines = scopeLinesMap.get(proc.getLocalName());
       if(lines != null) return lines;
       return scopeLinesMap.get(proc.getLabel().getLocalName());
    }
 
-   private static String findLabelValue(List<AsmLine> lines, String labelName) {
-      for(AsmLine line : lines) {
-         if(line instanceof AsmLabelDecl decl && decl.getName().trim().equals(labelName)) {
+   private static String findLabelValue(List<LineRef> lines, String labelName) {
+      for(LineRef ref : lines) {
+         if(ref.line instanceof AsmLabelDecl decl && decl.getName().trim().equals(labelName)) {
             return decl.getValue().trim();
          }
       }
@@ -267,7 +268,7 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
       return null;
    }
 
-   private boolean isTailCallCompatible(Procedure caller, Procedure callee, Map<String, List<AsmLine>> scopeLinesMap) {
+   private boolean isTailCallCompatible(Procedure caller, Procedure callee, Map<String, List<LineRef>> scopeLinesMap) {
       if(caller == null || callee == null) {
          return false;
       }
@@ -307,28 +308,8 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
       while(passModified) {
          passModified = false;
 
-         // Build sequential line list across all chunks tracking active scope
-         List<LineRef> allLines = new ArrayList<>();
-         Map<String, List<AsmLine>> scopeLinesMap = new HashMap<>();
-         String currentScope = null;
-         for(AsmChunk chunk : getAsmProgram().getChunks()) {
-            String chunkScope = chunk.getScopeLabel();
-            if(chunkScope != null) currentScope = chunkScope;
-            List<AsmLine> lines = chunk.getLines();
-            for(int i = 0; i < lines.size(); i++) {
-               AsmLine line = lines.get(i);
-               if(line instanceof AsmScopeBegin) {
-                  currentScope = ((AsmScopeBegin) line).getLabel();
-               }
-               allLines.add(new LineRef(chunk, i, line, currentScope));
-               if(currentScope != null && !(line instanceof AsmScopeBegin) && !(line instanceof AsmScopeEnd)) {
-                  scopeLinesMap.computeIfAbsent(currentScope, k -> new ArrayList<>()).add(line);
-               }
-               if(line instanceof AsmScopeEnd) {
-                  currentScope = null;
-               }
-            }
-         }
+         List<LineRef> allLines = getSharedAllLines();
+         Map<String, List<LineRef>> scopeLinesMap = getSharedScopeLinesMap(allLines);
 
          for(int i = 0; i < allLines.size(); i++) {
             LineRef ref1 = allLines.get(i);
@@ -341,7 +322,10 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
 
             // Exclude root scope and calls to main
             if(ref1.scope != null && ref1.scope.equals(ScopeRef.ROOT.getFullName())) continue;
-            if(inst1.getOperand1() != null && inst1.getOperand1().equals(SymbolRef.MAIN_PROC_NAME)) continue;
+            String calleeName = inst1.getOperand1() != null ? inst1.getOperand1().trim() : null;
+            if(calleeName != null && calleeName.equals(SymbolRef.MAIN_PROC_NAME)) continue;
+
+            if(!isScopeDirty(ref1.scope) && (calleeName == null || !isScopeDirty(calleeName))) continue;
 
             // Verify tail call compatibility (same segment/bank, identical return calling conventions)
             Procedure caller = findProcedure(ref1.scope, null, procMap);
@@ -352,6 +336,7 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
 
             // Find next executable instruction
             LineRef ref2 = null;
+            int rtsIdx = -1;
             boolean blocked = false;
             boolean hasInterveningLabel = false;
             for(int j = i + 1; j < allLines.size(); j++) {
@@ -371,6 +356,7 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
                }
                if(candidate.line instanceof AsmInstruction) {
                   ref2 = candidate;
+                  rtsIdx = j;
                   break;
                }
                // Any other construct (e.g. data, inline asm) blocks tail call
@@ -387,11 +373,12 @@ public class Pass5TailCallOptimization extends Pass5AsmOptimization {
                getLog().append("Tail Call Optimization: Replacing " + inst1.getAsm() + "; rts with jmp " + inst1.getOperand1());
                inst1.setCpuOpcode(jmpOpcode);
                if(!hasInterveningLabel) {
-                  ref2.chunk.getLines().remove(inst2);
+                  tombstoneLine(allLines, rtsIdx);
                }
+               markScopeDirty(ref1.scope != null ? ref1.scope : "");
+               invalidateRoundStructure();
                passModified = true;
                overallModified = true;
-               break; // Restart scan after list modification
             }
          }
       }

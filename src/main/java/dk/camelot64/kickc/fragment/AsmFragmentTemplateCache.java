@@ -1,7 +1,6 @@
 package dk.camelot64.kickc.fragment;
 
 import dk.camelot64.kickc.CompileLog;
-import dk.camelot64.kickc.fragment.synthesis.AsmFragmentTemplateSynthesizer;
 import dk.camelot64.kickc.model.InternalError;
 import dk.camelot64.kickc.model.TargetCpu;
 
@@ -131,8 +130,15 @@ public class AsmFragmentTemplateCache {
             return diskCache(cacheFolder, cpu, fragmentSystemHash, new ConcurrentHashMap<>());
          }
          Map<String, AsmFragmentTemplate> cache = new ConcurrentHashMap<>();
-         try(BufferedReader fragmentCacheReader = new BufferedReader(new FileReader(cacheFile))) {
+         try(BufferedReader fragmentCacheReader = new BufferedReader(new FileReader(cacheFile), 65536)) {
             String hashLine = fragmentCacheReader.readLine();
+            if(hashLine == null || !hashLine.startsWith(HASH_HEADER)) {
+               if(log.isVerboseFragmentLog())
+                  log.append("Deleting invalid fragment cache file " + cacheFile.getAbsolutePath());
+               fragmentCacheReader.close();
+               cacheFile.delete();
+               return diskCache(cacheFolder, cpu, fragmentSystemHash, new ConcurrentHashMap<>());
+            }
             final String hashPayload = hashLine.substring(HASH_HEADER.length());
             final String[] hashes = hashPayload.split(" ");
             final String hashLF = hashes[0];
@@ -149,20 +155,20 @@ public class AsmFragmentTemplateCache {
             }
             // Read the first "real" line
             String cacheLine = fragmentCacheReader.readLine();
-            StringBuilder body = null;
+            StringBuilder body = new StringBuilder(128);
             String signature = null;
             while(cacheLine != null) {
                // Determine if the line is a new fragment or the continuation of the current fragment body
                if(cacheLine.startsWith(FRAGMENT_HEADER)) {
                   // New fragment - first put the current one into the cache
-                  if(signature != null)
+                  if(signature != null) {
                      addFragment(cache, signature, body, cpu);
-                  // Clear body and initialize signature
-                  body = new StringBuilder();
+                     body.setLength(0);
+                  }
                   signature = cacheLine.substring(FRAGMENT_HEADER.length());
-               } else {
+               } else if(signature != null) {
                   // Continuation of body
-                  body.append(cacheLine).append("\n");
+                  body.append(cacheLine).append('\n');
                }
                cacheLine = fragmentCacheReader.readLine();
             }
@@ -183,12 +189,18 @@ public class AsmFragmentTemplateCache {
    }
 
    private static void addFragment(Map<String, AsmFragmentTemplate> cache, String signature, StringBuilder body, TargetCpu targetCpu) {
+      int len = body.length();
+      while(len > 0 && body.charAt(len - 1) == '\n') {
+         len--;
+      }
+      body.setLength(len);
       final String bodyString = body.toString();
+      final String internedSignature = signature.intern();
       if(bodyString.startsWith(NO_SYNTHESIS.getBody())) {
-         cache.put(signature.intern(), NO_SYNTHESIS);
+         cache.put(internedSignature, NO_SYNTHESIS);
       } else {
-         AsmFragmentTemplate template = new AsmFragmentTemplate(signature, AsmFragmentTemplateSynthesizer.fixNewlines(bodyString), targetCpu);
-         cache.put(signature.intern(), template);
+         AsmFragmentTemplate template = new AsmFragmentTemplate(internedSignature, bodyString, targetCpu);
+         cache.put(internedSignature, template);
       }
    }
 
@@ -205,23 +217,32 @@ public class AsmFragmentTemplateCache {
       Date before = new Date();
       // Calculate a new hash which handles all systems
       final AsmFragmentSystemHash newFragmentSystemHash = AsmFragmentSystemHash.calculate(baseFragmentFolder, true);
+      if(newFragmentSystemHash.getHashStringLF() == null || newFragmentSystemHash.getHashStringCRLF() == null)
+         throw new InternalError("Error saving ASM fragment cache file. Not calculated for all systems!");
       File cacheFile = this.cacheFolder.resolve(getCacheFileName(cpu)).toFile();
-      try {
-         PrintStream fragmentFilePrint = new PrintStream(cacheFile);
-         if(newFragmentSystemHash.getHashStringLF() == null || newFragmentSystemHash.getHashStringCRLF() == null)
-            throw new InternalError("Error saving ASM fragment cache file. Not calculated for all systems!");
-         fragmentFilePrint.println(HASH_HEADER + newFragmentSystemHash.getHashStringLF() + " " + newFragmentSystemHash.getHashStringCRLF());
-         for(String signature : this.cache.keySet()) {
-            AsmFragmentTemplate fragmentTemplate = this.cache.get(signature);
-            fragmentFilePrint.println(FRAGMENT_HEADER + signature);
+      try(BufferedWriter fragmentFileWriter = new BufferedWriter(new FileWriter(cacheFile), 65536)) {
+         fragmentFileWriter.write(HASH_HEADER);
+         fragmentFileWriter.write(newFragmentSystemHash.getHashStringLF());
+         fragmentFileWriter.write(' ');
+         fragmentFileWriter.write(newFragmentSystemHash.getHashStringCRLF());
+         fragmentFileWriter.newLine();
+         for(Map.Entry<String, AsmFragmentTemplate> entry : this.cache.entrySet()) {
+            String signature = entry.getKey();
+            AsmFragmentTemplate fragmentTemplate = entry.getValue();
+            fragmentFileWriter.write(FRAGMENT_HEADER);
+            fragmentFileWriter.write(signature);
+            fragmentFileWriter.newLine();
             if(fragmentTemplate == NO_SYNTHESIS) {
-               fragmentFilePrint.println(NO_SYNTHESIS.getBody());
+               fragmentFileWriter.write(NO_SYNTHESIS.getBody());
+               fragmentFileWriter.newLine();
             } else {
-               if(fragmentTemplate.getBody() != null)
-                  fragmentFilePrint.println(fragmentTemplate.getBody());
+               String templateBody = fragmentTemplate.getBody();
+               if(templateBody != null) {
+                  fragmentFileWriter.write(templateBody);
+                  fragmentFileWriter.newLine();
+               }
             }
          }
-         fragmentFilePrint.close();
          final Date after = new Date();
          final long millis = after.getTime() - before.getTime();
          if(log.isVerboseFragmentLog())

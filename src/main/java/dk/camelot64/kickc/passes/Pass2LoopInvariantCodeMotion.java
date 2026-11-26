@@ -50,22 +50,28 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
          }
       }
 
+      boolean anyModified = false;
+      Set<LabelRef> newPreheaderHeads = new HashSet<>();
       for(NaturalLoop loop : loopSet.getLoops()) {
          if(loop.getBlocks() == null || loop.getBlocks().isEmpty()) continue;
-         if(optimizeLoop(loop, varRefInfos, statementInfos, blockMap, predMap)) {
-            getProgram().clearVariableReferenceInfos();
-            getProgram().clearControlFlowBlockSuccessorClosure();
-            getProgram().clearStatementInfos();
-            getProgram().clearLoopSet();
-            getProgram().clearDominators();
-            return true;
+         if(newPreheaderHeads.contains(loop.getHead())) continue;
+         if(optimizeLoop(loop, varRefInfos, statementInfos, blockMap, predMap, newPreheaderHeads)) {
+            anyModified = true;
          }
       }
-      return false;
+      if(anyModified) {
+         getProgram().clearVariableReferenceInfos();
+         getProgram().clearControlFlowBlockSuccessorClosure();
+         getProgram().clearStatementInfos();
+         getProgram().clearLoopSet();
+         getProgram().clearDominators();
+      }
+      return anyModified;
    }
 
    private boolean optimizeLoop(NaturalLoop loop, VariableReferenceInfos varRefInfos, StatementInfos statementInfos,
-                                Map<LabelRef, Graph.Block> blockMap, Map<LabelRef, List<Graph.Block>> predMap) {
+                                Map<LabelRef, Graph.Block> blockMap, Map<LabelRef, List<Graph.Block>> predMap,
+                                Set<LabelRef> newPreheaderHeads) {
       LabelRef headRef = loop.getHead();
       Graph.Block headBlock = blockMap.get(headRef);
       if(headBlock == null) return false;
@@ -79,6 +85,8 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
       }
       if(entryPreds.isEmpty()) return false;
 
+      Graph.Block preheader = null;
+      boolean loopModified = false;
       for(LabelRef blockRef : loop.getBlocks()) {
          Graph.Block block = blockMap.get(blockRef);
          if(block == null) continue;
@@ -87,18 +95,20 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
             if(stmt instanceof StatementAssignment) {
                StatementAssignment assignment = (StatementAssignment) stmt;
                if(isHoistable(assignment, loop, headBlock, varRefInfos, statementInfos, blockMap)) {
-                  Graph.Block preheader = getOrCreatePreheader(loop, headBlock, entryPreds);
-                  if(preheader == null) return false;
+                  if(preheader == null) {
+                     preheader = getOrCreatePreheader(loop, headBlock, entryPreds, blockMap, predMap, newPreheaderHeads);
+                     if(preheader == null) return loopModified;
+                  }
 
                   block.getStatements().remove(assignment);
                   preheader.getStatements().add(assignment);
                   getLog().append("LICM: Hoisted statement " + assignment.toString(getProgram(), false) + " out of loop " + headRef);
-                  return true;
+                  loopModified = true;
                }
             }
          }
       }
-      return false;
+      return loopModified;
    }
 
    private boolean isHoistable(StatementAssignment assignment, NaturalLoop loop, Graph.Block headBlock,
@@ -221,7 +231,9 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
       return false;
    }
 
-   private Graph.Block getOrCreatePreheader(NaturalLoop loop, Graph.Block headBlock, List<Graph.Block> entryPreds) {
+   private Graph.Block getOrCreatePreheader(NaturalLoop loop, Graph.Block headBlock, List<Graph.Block> entryPreds,
+                                              Map<LabelRef, Graph.Block> blockMap, Map<LabelRef, List<Graph.Block>> predMap,
+                                              Set<LabelRef> newPreheaderHeads) {
       if(entryPreds.size() == 1) {
          Graph.Block singlePred = entryPreds.get(0);
          if(singlePred.getConditionalSuccessor() == null && loop.getHead().equals(singlePred.getDefaultSuccessor())) {
@@ -274,6 +286,20 @@ public class Pass2LoopInvariantCodeMotion extends Pass2SsaOptimization {
             }
          }
       }
+
+      // Keep blockMap and predMap consistent for subsequent loops in this step
+      blockMap.put(preheaderBlock.getLabel(), preheaderBlock);
+      predMap.put(preheaderBlock.getLabel(), new ArrayList<>(entryPreds));
+      List<Graph.Block> headPreds = predMap.get(loop.getHead());
+      if(headPreds != null) {
+         Set<LabelRef> redirectedLabels = new HashSet<>();
+         for(Graph.Block ep : entryPreds) {
+            redirectedLabels.add(ep.getLabel());
+         }
+         headPreds.removeIf(p -> redirectedLabels.contains(p.getLabel()));
+         headPreds.add(preheaderBlock);
+      }
+      newPreheaderHeads.add(loop.getHead());
 
       return preheaderBlock;
    }

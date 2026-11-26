@@ -30,6 +30,7 @@ public class Pass1EarlyConstantIdentification extends Pass1Base {
    public boolean step() {
       HashMap<SymbolRef, RValue> aliases = new HashMap<>();
       List<Statement> removeStmt = new ArrayList<>();
+      VarAssignments.Index varAssignmentsIndex = new VarAssignments.Index(getGraph());
       for(Variable variable : getProgram().getScope().getAllVariables(true)) {
          SymbolVariableRef variableRef = variable.getRef();
          if(!variable.isKindConstant() && !variable.isVolatile() && !variableRef.isIntermediate() ) {
@@ -40,7 +41,7 @@ public class Pass1EarlyConstantIdentification extends Pass1Base {
                // Skip variables allocated into memory
                continue;
             if(!isParameter(variableRef)) {
-               final List<VarAssignments.VarAssignment> varAssignments = VarAssignments.get(variableRef, getGraph(), getProgramScope());
+               final List<VarAssignments.VarAssignment> varAssignments = varAssignmentsIndex.get(variableRef, getProgramScope());
                if(varAssignments.size() == 1) {
                   final VarAssignments.VarAssignment varAssignment = varAssignments.get(0);
                   if(varAssignment.type.equals(VarAssignments.VarAssignment.Type.STATEMENT_LVALUE)) {

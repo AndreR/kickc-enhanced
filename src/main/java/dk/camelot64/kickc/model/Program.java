@@ -80,6 +80,10 @@ public class Program {
 
    /** The procedures being compiled. PASS 1-5 (DYNAMIC)*/
    private List<ProcedureCompilation> procedureCompilations;
+   /** O(1) lookup index for procedure compilations by reference. */
+   private volatile Map<ProcedureRef, ProcedureCompilation> procedureCompilationMap;
+   /** Cached set of procedures whose address is taken. */
+   private volatile Set<ProcedureRef> addressOfProceduresCache;
 
    /** Variables modified inside procedures. PASS 1 (STATIC) */
    private ProcedureModifiedVars procedureModifiedVars;
@@ -139,6 +143,7 @@ public class Program {
       this.asmResourceFiles = new ArrayList<>();
       this.reservedZps = new ArrayList<>();
       this.procedureCompilations = new ArrayList<>();
+      this.procedureCompilationMap = new HashMap<>();
    }
 
    /**
@@ -149,6 +154,7 @@ public class Program {
       this.targetPlatformPaths = null;
       this.loadedFiles = null;
       this.structVariableMemberUnwinding = null;
+      clearAddressOfProceduresCache();
    }
 
    /**
@@ -169,12 +175,53 @@ public class Program {
       this.registerPotentials = null;
       this.registerUpliftProgram = null;
       this.asmVarLookupIndex = null;
+      clearAddressOfProceduresCache();
    }
 
    private final Graph totalGraph = new Graph() {
       @Override
       public Block getBlock(LabelRef symbol) {
+         if(symbol == null) {
+            return null;
+         }
+         Map<ProcedureRef, ProcedureCompilation> procMap = procedureCompilationMap;
+         ProcedureCompilation ownerPc = procMap.get(new ProcedureRef(symbol.getFullName()));
+         if(ownerPc != null) {
+            ControlFlowGraph g = ownerPc.getGraph();
+            if(g != null) {
+               Block b = g.getBlock(symbol);
+               if(b != null) return b;
+            }
+         }
+         ProcedureCompilation scopePc = null;
+         ProcedureCompilation rootPc = null;
+         String scopeName = symbol.getScopeNames();
+         if(!scopeName.isEmpty()) {
+            scopePc = procMap.get(new ProcedureRef(scopeName));
+            if(scopePc != null && scopePc != ownerPc) {
+               ControlFlowGraph g = scopePc.getGraph();
+               if(g != null) {
+                  Block b = g.getBlock(symbol);
+                  if(b != null) return b;
+               }
+            }
+            int sep = scopeName.indexOf("::");
+            if(sep > 0) {
+               String rootProc = scopeName.substring(0, sep);
+               rootPc = procMap.get(new ProcedureRef(rootProc));
+               if(rootPc != null && rootPc != ownerPc && rootPc != scopePc) {
+                  ControlFlowGraph g = rootPc.getGraph();
+                  if(g != null) {
+                     Block b = g.getBlock(symbol);
+                     if(b != null) return b;
+                  }
+               }
+            }
+         }
          for(ProcedureCompilation pc : procedureCompilations) {
+            if(pc == ownerPc || pc == scopePc || pc == rootPc) {
+               continue;
+            }
             ControlFlowGraph g = pc.getGraph();
             if(g != null) {
                Block b = g.getBlock(symbol);
@@ -216,6 +263,11 @@ public class Program {
 
    public void setProcedureCompilations(List<ProcedureCompilation> procedureCompilations) {
       this.procedureCompilations = procedureCompilations;
+      Map<ProcedureRef, ProcedureCompilation> map = new HashMap<>(Math.max(16, procedureCompilations.size() * 2));
+      for(ProcedureCompilation pc : procedureCompilations) {
+         map.put(pc.getProcedureRef(), pc);
+      }
+      this.procedureCompilationMap = map;
    }
 
    /**
@@ -352,11 +404,15 @@ public class Program {
          throw new CompileError("Error! Procedure already defined "+procedureRef.getFullName());
       final ProcedureCompilation procedureCompilation = new ProcedureCompilation(procedureRef);
       procedureCompilations.add(procedureCompilation);
+      procedureCompilationMap.put(procedureRef, procedureCompilation);
       return procedureCompilation;
    }
 
    public ProcedureCompilation getProcedureCompilation(ProcedureRef procedureRef) {
-      return procedureCompilations.stream().filter(pc -> pc.getProcedureRef().equals(procedureRef)).findFirst().orElse(null);
+      if(procedureRef == null) {
+         return null;
+      }
+      return procedureCompilationMap.get(procedureRef);
    }
 
    public ProgramScope getScope() {
@@ -429,6 +485,7 @@ public class Program {
     */
    public void clearCallGraph() {
       this.callGraph = null;
+      clearAddressOfProceduresCache();
    }
 
    public VariableReferenceInfos getVariableReferenceInfos() {
@@ -447,6 +504,19 @@ public class Program {
 
    public void clearVariableReferenceInfos() {
       this.variableReferenceInfos = null;
+      clearAddressOfProceduresCache();
+   }
+
+   public Set<ProcedureRef> getAddressOfProceduresCache() {
+      return addressOfProceduresCache;
+   }
+
+   public void setAddressOfProceduresCache(Set<ProcedureRef> addressOfProceduresCache) {
+      this.addressOfProceduresCache = addressOfProceduresCache;
+   }
+
+   public void clearAddressOfProceduresCache() {
+      this.addressOfProceduresCache = null;
    }
 
    public ControlFlowBlockSuccessorClosure getControlFlowBlockSuccessorClosure() {
@@ -812,7 +882,10 @@ public class Program {
    public void removeProcedure(ProcedureRef procedureRef) {
       Procedure procedure = getScope().getProcedure(procedureRef);
       procedure.getScope().remove(procedure);
-      procedureCompilations.remove(getProcedureCompilation(procedureRef));
+      ProcedureCompilation removed = procedureCompilationMap.remove(procedureRef);
+      if(removed != null) {
+         procedureCompilations.remove(removed);
+      }
    }
 
    /**

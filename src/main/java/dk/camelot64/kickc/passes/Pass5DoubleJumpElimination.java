@@ -34,6 +34,8 @@ public class Pass5DoubleJumpElimination extends Pass5AsmOptimization {
             } else if(line instanceof AsmScopeEnd) {
                currentScope = "";
                currentLabels.clear();
+            } else if(!isScopeDirty(currentScope)) {
+               continue;
             } else if(line instanceof AsmLabel) {
                currentLabels.add(((AsmLabel) line).getLabel());
             } else if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) {
@@ -71,6 +73,9 @@ public class Pass5DoubleJumpElimination extends Pass5AsmOptimization {
             } else if(line instanceof AsmScopeEnd) {
                currentScope = "";
             } else if(line instanceof AsmInstruction) {
+               if(!isScopeDirty(currentScope)) {
+                  continue;
+               }
                AsmInstruction asmInstruction = (AsmInstruction) line;
                if(asmInstruction.getCpuOpcode().isJump()) {
                   String jumpTarget = immediateJumps.get(currentScope + "::" + asmInstruction.getOperandJumpTarget());
@@ -81,6 +86,7 @@ public class Pass5DoubleJumpElimination extends Pass5AsmOptimization {
                      asmInstruction.setCpuOpcode(rtsOpcode);
                      asmInstruction.setOperand1(null);
                      asmInstruction.setOperand2(null);
+                     markScopeDirty(currentScope);
                      optimized = true;
                   } else if(jumpTarget != null && !"rts".equals(jumpTarget) && !jumpTarget.equals(asmInstruction.getOperandJumpTarget())) {
                      // Do not redirect 2-byte conditional relative branches to tail-called procedure names,
@@ -88,6 +94,7 @@ public class Pass5DoubleJumpElimination extends Pass5AsmOptimization {
                      if(isUnconditionalJmp || jumpTarget.startsWith("__b")) {
                         getLog().append("Skipping double jump to " + jumpTarget + " in " + asmInstruction.toString());
                         asmInstruction.setOperandJumpTarget(jumpTarget);
+                        markScopeDirty(currentScope);
                         optimized = true;
                      }
                   }

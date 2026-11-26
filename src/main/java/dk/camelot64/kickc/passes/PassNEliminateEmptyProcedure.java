@@ -29,15 +29,18 @@ public class PassNEliminateEmptyProcedure extends Pass2SsaOptimization {
       boolean optimized = false;
       for(Procedure procedure : allProcedures) {
          if(procedure.isDeclaredIntrinsic()) continue;
-         if(hasEmptyBody(procedure.getRef())) {
-            if(!hasExternalUsages(procedure.getRef(), getProgram()) && !SymbolRef.MAIN_PROC_NAME.equals(procedure.getLabel().getLocalName())) {
-               // TODO: Entry point procedures include isAddressOfUsed!
-               // Remove all calls
-               removeAllCalls(procedure.getRef(), getGraph().getAllBlocks(), getLog());
-               // Remove the procedure
-               Pass2EliminateUnusedBlocks.removeProcedure(procedure.getRef(), new HashSet<>(), getProgram());
-               optimized = true;
-            }
+         if(SymbolRef.MAIN_PROC_NAME.equals(procedure.getLabel().getLocalName())) continue;
+         if(!hasEmptyBody(procedure.getRef())) continue;
+         if(!hasExternalUsages(procedure.getRef(), getProgram())) {
+            // TODO: Entry point procedures include isAddressOfUsed!
+            // Remove all calls
+            removeAllCalls(procedure.getRef(), getGraph().getAllBlocks(), getLog());
+            // Remove the procedure
+            Pass2EliminateUnusedBlocks.removeProcedure(procedure.getRef(), new HashSet<>(), getProgram());
+            getProgram().clearVariableReferenceInfos();
+            getProgram().clearStatementInfos();
+            getProgram().clearStatementIndices();
+            optimized = true;
          }
       }
       return optimized;
@@ -50,14 +53,22 @@ public class PassNEliminateEmptyProcedure extends Pass2SsaOptimization {
     * @return
     */
    protected static boolean hasExternalUsages(ProcedureRef procedureRef, Program program) {
-      program.clearVariableReferenceInfos();
-      program.clearStatementInfos();
-      new PassNStatementIndices(program).execute();
+      final Procedure startProc = program.getScope().getProcedure(procedureRef);
+      if(startProc == null) {
+         return false;
+      }
+      final Collection<Variable> startConsts = startProc.getAllConstants(true);
+      if(startConsts.isEmpty()) {
+         return false;
+      }
+
+      if(!hasValidStatementIndicesAndInfos(program)) {
+         program.clearVariableReferenceInfos();
+         program.clearStatementInfos();
+         new PassNStatementIndices(program).execute();
+      }
       final VariableReferenceInfos variableReferenceInfos = program.getVariableReferenceInfos();
       final StatementInfos statementInfos = program.getStatementInfos();
-
-      final Procedure startProc = program.getScope().getProcedure(procedureRef);
-      final Collection<Variable> startConsts = startProc.getAllConstants(true);
       for(Variable startConst : startConsts) {
          final Collection<VariableReferenceInfos.ReferenceToSymbolVar> uses = variableReferenceInfos.getConstRefAllUses(startConst.getConstantRef());
          for(VariableReferenceInfos.ReferenceToSymbolVar use : uses) {
@@ -81,6 +92,34 @@ public class PassNEliminateEmptyProcedure extends Pass2SsaOptimization {
          }
       }
       return false;
+   }
+
+   private static boolean hasValidStatementIndicesAndInfos(Program program) {
+      for(ProcedureCompilation pc : program.getProcedureCompilations()) {
+         ControlFlowGraph g = pc.getGraph();
+         if(g == null) continue;
+         for(Graph.Block block : g.getAllBlocks()) {
+            for(Statement stmt : block.getStatements()) {
+               if(stmt.getIndex() == null) {
+                  return false;
+               }
+            }
+         }
+      }
+      StatementInfos statementInfos = program.getStatementInfos();
+      for(ProcedureCompilation pc : program.getProcedureCompilations()) {
+         ControlFlowGraph g = pc.getGraph();
+         if(g == null) continue;
+         for(Graph.Block block : g.getAllBlocks()) {
+            for(Statement stmt : block.getStatements()) {
+               Integer idx = stmt.getIndex();
+               if(statementInfos.getBlock(idx) != block || statementInfos.getStatement(idx) != stmt) {
+                  return false;
+               }
+            }
+         }
+      }
+      return true;
    }
 
 

@@ -38,6 +38,8 @@ public class Procedure extends Scope {
    private List<Integer> reservedZps;
    /** The code segment to put the procedure code into. When null the procedure is not assigned to the code segment. */
    private String segmentCode;
+   /** The data segment for immutable constant data (such as inline string literals) declared for this procedure. */
+   private String segmentConstData;
    /** The list of constructor procedures for this procedure. The constructor procedures are called during program initialization. */
    private final List<ProcedureRef> constructorRefs;
    /** Is this procedure declared as a constructor procedure. */
@@ -118,6 +120,7 @@ public class Procedure extends Scope {
       this.interruptType = null;
       this.comments = new ArrayList<>();
       this.segmentCode = Objects.requireNonNull(segmentCode);
+      this.segmentConstData = Objects.requireNonNull(segmentData);
       this.callingConvention = callingConvention;
       this.constructorRefs = new ArrayList<>();
       this.isConstructor = false;
@@ -145,6 +148,15 @@ public class Procedure extends Scope {
 
    public void setSegmentCode(String segmentCode) {
       this.segmentCode = segmentCode;
+   }
+
+   @Override
+   public String getSegmentConstData() {
+      return segmentConstData != null ? segmentConstData : getSegmentData();
+   }
+
+   public void setSegmentConstData(String segmentConstData) {
+      this.segmentConstData = segmentConstData;
    }
 
    public List<String> getParameterNames() {

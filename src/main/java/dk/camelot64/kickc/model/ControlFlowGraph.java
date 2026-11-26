@@ -12,39 +12,90 @@ import java.util.*;
 public class ControlFlowGraph implements Graph {
 
    private List<Graph.Block> blocks;
-   private volatile Map<LabelRef, Graph.Block> blockMap = new HashMap<>();
+   private volatile BlockIndex blockIndex;
 
    /**
     * Sequence of blocks used when generating ASM
     */
    private List<LabelRef> sequence;
 
+   private static final class BlockIndex {
+      final Map<LabelRef, Graph.Block> map;
+      final LabelRef[] labels;
+
+      BlockIndex(List<Graph.Block> blocks) {
+         int size = blocks.size();
+         Map<LabelRef, Graph.Block> m = new HashMap<>(Math.max(4, size * 2));
+         LabelRef[] l = new LabelRef[size];
+         int i = 0;
+         for(Graph.Block block : blocks) {
+            LabelRef label = block.getLabel();
+            l[i++] = label;
+            m.put(label, block);
+         }
+         this.map = m;
+         this.labels = l;
+      }
+
+      boolean isConsistent(List<Graph.Block> blocks) {
+         if(blocks.size() != labels.length) {
+            return false;
+         }
+         int i = 0;
+         for(Graph.Block block : blocks) {
+            if(!Objects.equals(block.getLabel(), labels[i++])) {
+               return false;
+            }
+         }
+         return true;
+      }
+   }
+
    public ControlFlowGraph(List<Graph.Block> blocks) {
       this.blocks = blocks;
-      Map<LabelRef, Graph.Block> map = new HashMap<>(blocks.size() * 2);
-      for(Graph.Block block : blocks) {
-         map.put(block.getLabel(), block);
-      }
-      this.blockMap = map;
+      this.blockIndex = new BlockIndex(blocks);
    }
 
    public Graph.Block getBlock(LabelRef symbol) {
-      Map<LabelRef, Graph.Block> current = this.blockMap;
-      Graph.Block block = current.get(symbol);
-      if(block != null && Objects.equals(block.getLabel(), symbol)) {
-         return block;
+      if(symbol == null) {
+         return null;
       }
-      Map<LabelRef, Graph.Block> rebuilt = new HashMap<>(blocks.size() * 2);
-      for(Graph.Block b : blocks) {
-         rebuilt.put(b.getLabel(), b);
+      BlockIndex current = this.blockIndex;
+      if(current != null) {
+         Graph.Block block = current.map.get(symbol);
+         if(block != null) {
+            if(Objects.equals(block.getLabel(), symbol)) {
+               return block;
+            }
+         } else if(current.isConsistent(blocks)) {
+            return null;
+         }
       }
-      this.blockMap = rebuilt;
-      return rebuilt.get(symbol);
+      synchronized(this) {
+         current = this.blockIndex;
+         if(current != null) {
+            Graph.Block block = current.map.get(symbol);
+            if(block != null) {
+               if(Objects.equals(block.getLabel(), symbol)) {
+                  return block;
+               }
+            } else if(current.isConsistent(blocks)) {
+               return null;
+            }
+         }
+         BlockIndex rebuilt = new BlockIndex(blocks);
+         this.blockIndex = rebuilt;
+         return rebuilt.map.get(symbol);
+      }
+   }
+
+   public void invalidateBlockMap() {
+      this.blockIndex = null;
    }
 
    public void addBlock(Graph.Block block) {
       blocks.add(block);
-      blockMap.put(block.getLabel(), block);
+      this.blockIndex = null;
    }
 
    public List<Block> getAllBlocks() {
@@ -52,7 +103,7 @@ public class ControlFlowGraph implements Graph {
    }
 
    public void remove(LabelRef label) {
-      blockMap.remove(label);
+      this.blockIndex = null;
       ListIterator<Graph.Block> blocksIt = blocks.listIterator();
       while(blocksIt.hasNext()) {
          var block = blocksIt.next();

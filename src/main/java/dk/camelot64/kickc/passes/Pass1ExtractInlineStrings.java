@@ -96,7 +96,7 @@ public class Pass1ExtractInlineStrings extends Pass1Base {
          if(value instanceof ConstantString && currentStmt != null) {
             // String in statement expression
             Scope blockScope = Pass1ExtractInlineStrings.this.getProgram().getScope().getScope(currentBlock.getScope());
-            Variable strConst = Pass1ExtractInlineStrings.this.createStringConstantVar(blockScope, (ConstantString) programValue.get(), nameHint, blockScope.getSegmentData());
+            Variable strConst = Pass1ExtractInlineStrings.this.createStringConstantVar(blockScope, (ConstantString) programValue.get(), nameHint, blockScope.getSegmentConstData());
             programValue.set(strConst.getRef());
          }
       });
@@ -116,7 +116,7 @@ public class Pass1ExtractInlineStrings extends Pass1Base {
       }
       final long stringLength = constantString.getStringLength();
       final ConstantInteger arraySize = new ConstantInteger(stringLength, stringLength < 256 ? SymbolType.BYTE : SymbolType.WORD);
-      String seg = dataSegment != null ? dataSegment : blockScope.getSegmentData();
+      String seg = dataSegment != null ? dataSegment : blockScope.getSegmentConstData();
       Variable strConst = Variable.createConstant(name, new SymbolTypePointer(SymbolType.BYTE, new ArraySpec(arraySize), false, false), blockScope, constantString, seg);
       blockScope.add(strConst);
       if(getLog().isVerbosePass1CreateSsa()) {

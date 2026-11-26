@@ -6,6 +6,7 @@ import dk.camelot64.kickc.model.statements.StatementAssignment;
 import dk.camelot64.kickc.model.symbols.Procedure;
 import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.values.CastValue;
+import dk.camelot64.kickc.model.values.LabelRef;
 import dk.camelot64.kickc.model.values.ProcedureRef;
 import dk.camelot64.kickc.model.values.RValue;
 import dk.camelot64.kickc.model.values.VariableRef;
@@ -30,6 +31,35 @@ public class PassNCalcLiveRangesEffectiveSimple extends PassNCalcBase<LiveRangeV
       final LiveRangeVariables.LiveRangeVariablesByStatement liveRangeVariablesByStatement = liveRangeVariables.getLiveRangeVariablesByStatement();
       final Map<ProcedureRef, Collection<VariableRef>> procedureReferencedVars = PassNCalcLiveRangeVariables.calculateProcedureReferencedVars(getProgram());
 
+      // Precompute predecessor map and intra-block previous statements once in O(B + S)
+      final List<Graph.Block> allBlocks = getGraph().getAllBlocks();
+      final StatementInfos statementInfos = getProgram().getStatementInfos();
+      int maxStmtIdx = 0;
+      for(Graph.Block b : allBlocks) {
+         for(Statement s : b.getStatements()) {
+            if(s.getIndex() != null && s.getIndex() > maxStmtIdx) {
+               maxStmtIdx = s.getIndex();
+            }
+         }
+      }
+      final Map<LabelRef, List<Graph.Block>> predMap = new HashMap<>(allBlocks.size() * 2);
+      final Statement[] prevInBlockByStmtIdx = new Statement[maxStmtIdx + 1];
+      for(Graph.Block b : allBlocks) {
+         if(b.getDefaultSuccessor() != null)
+            predMap.computeIfAbsent(b.getDefaultSuccessor(), k -> new ArrayList<>()).add(b);
+         if(b.getConditionalSuccessor() != null)
+            predMap.computeIfAbsent(b.getConditionalSuccessor(), k -> new ArrayList<>()).add(b);
+         if(b.getCallSuccessor() != null)
+            predMap.computeIfAbsent(b.getCallSuccessor(), k -> new ArrayList<>()).add(b);
+         Statement prev = null;
+         for(Statement s : b.getStatements()) {
+            if(s.getIndex() != null) {
+               prevInBlockByStmtIdx[s.getIndex()] = prev;
+            }
+            prev = s;
+         }
+      }
+
       // All variables alive outside a call. This is variables that are alive across the call that are not touched by the procedure (or any sub-procedure).
       Map<CallGraph.CallBlock.Call, Collection<VariableRef>> aliveOutsideCalls = new LinkedHashMap<>();
       // All variables alive outside all calls to a procedure. This is variables that are alive across a call that are not touched by the procedure (or any sub-procedure).
@@ -43,8 +73,8 @@ public class PassNCalcLiveRangesEffectiveSimple extends PassNCalcBase<LiveRangeV
             Collection<VariableRef> rawAlive = rawAliveOutsideCaller.get(caller);
             if(rawAlive == null) {
                final Integer callStatementIdx = caller.getCallStatementIdx();
-               final Statement callStatement = getGraph().getStatementByIndex(callStatementIdx);
-               final Collection<Statement> precedingStatements = PassNCalcLiveRangeVariables.getPrecedingStatement(callStatement, getGraph(), getProgram().getStatementInfos());
+               final Statement callStatement = statementInfos.getStatement(callStatementIdx);
+               final Collection<Statement> precedingStatements = PassNCalcLiveRangeVariables.getPrecedingStatement(callStatement, statementInfos, predMap, prevInBlockByStmtIdx);
                rawAlive = new LinkedHashSet<>();
                for(Statement precedingStatement : precedingStatements) {
                   final List<VariableRef> precedingStatementAlive = liveRangeVariablesByStatement.getAlive(precedingStatement.getIndex());
@@ -68,7 +98,7 @@ public class PassNCalcLiveRangesEffectiveSimple extends PassNCalcBase<LiveRangeV
 
       // Find all alive variables for all statements by adding everything alive outside each call (not including variables from the called scope)
       final LinkedHashMap<Integer, Collection<VariableRef>> statementAliveEffective = new LinkedHashMap<>();
-      for(var block : getGraph().getAllBlocks()) {
+      for(var block : allBlocks) {
          final Procedure procedure = getProgram().getProcedure(block);
          for(Statement statement : block.getStatements()) {
             final Collection<VariableRef> aliveStmt = new LinkedHashSet<>();
@@ -84,7 +114,7 @@ public class PassNCalcLiveRangesEffectiveSimple extends PassNCalcBase<LiveRangeV
 
       // Find aliases inside each block
       Map<Integer, Pass2AliasElimination.Aliases> statementAliases = new LinkedHashMap<>();
-      for(var block : getGraph().getAllBlocks()) {
+      for(var block : allBlocks) {
          Pass2AliasElimination.Aliases blockAliases = new Pass2AliasElimination.Aliases();
          for(Statement statement : block.getStatements()) {
             if(statement instanceof StatementAssignment) {

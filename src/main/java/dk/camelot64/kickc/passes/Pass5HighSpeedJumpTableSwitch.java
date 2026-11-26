@@ -58,24 +58,16 @@ public class Pass5HighSpeedJumpTableSwitch extends Pass5AsmOptimization {
       while(true) {
          // Flatten all lines across chunks
          Map<String, Integer> labelLineMap = new HashMap<>();
-         List<LineRef> allLines = new ArrayList<>();
-         String currentScope = null;
-         int lineIdx = 0;
+         List<LineRef> allLines = getSharedAllLines();
 
-         for(AsmChunk chunk : getAsmProgram().getChunks()) {
-            for(AsmLine line : chunk.getLines()) {
-               if(line instanceof AsmScopeBegin) {
-                  currentScope = ((AsmScopeBegin) line).getLabel();
-               } else if(line instanceof AsmScopeEnd) {
-                  currentScope = null;
-               } else if(line instanceof AsmLabel) {
-                  String lbl = ((AsmLabel) line).getLabel();
-                  if(lbl != null && !lbl.startsWith("!")) {
-                     String key = (currentScope != null ? currentScope : "") + "::" + lbl;
-                     labelLineMap.put(key, lineIdx);
-                  }
+         for(int idx = 0; idx < allLines.size(); idx++) {
+            LineRef ref = allLines.get(idx);
+            if(ref.line instanceof AsmLabel lblLine) {
+               String lbl = lblLine.getLabel();
+               if(lbl != null && !lbl.startsWith("!")) {
+                  String sc = ref.scope != null ? ref.scope : "";
+                  labelLineMap.put(sc + "::" + lbl, idx);
                }
-               allLines.add(new LineRef(lineIdx++, chunk, line, currentScope));
             }
          }
 
@@ -83,6 +75,8 @@ public class Pass5HighSpeedJumpTableSwitch extends Pass5AsmOptimization {
 
          // Scan allLines for contiguous chains of CMP #imm; BEQ target
          for(int i = 0; i < allLines.size(); i++) {
+            String curScope = allLines.get(i).scope != null ? allLines.get(i).scope : "";
+            if(!isScopeDirty(curScope)) continue;
             List<CaseBranch> chain = matchCaseChain(allLines, i);
             if(chain != null && chain.size() >= 4) {
                String chainScope = allLines.get(i).scope != null ? allLines.get(i).scope : "";
@@ -281,6 +275,8 @@ public class Pass5HighSpeedJumpTableSwitch extends Pass5AsmOptimization {
                      }
 
                      getLog().append("Pass 5: Converted switch with " + chain.size() + " cases (span=" + span + ") to Jump Table " + tableLoName);
+                     markScopeDirty(chainScope);
+                     invalidateRoundStructure();
                      roundModified = true;
                      modified = true;
                      break; // Break and rebuild allLines

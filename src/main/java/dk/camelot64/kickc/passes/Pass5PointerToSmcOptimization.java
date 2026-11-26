@@ -172,6 +172,16 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
       if(performed) return false;
       performed = true;
 
+      Scope rootScope = getProgram().getScope();
+      Map<String, Procedure> procsByFullName = new HashMap<>();
+      Map<String, Procedure> procsByLocalName = new HashMap<>();
+      for(Procedure p : rootScope.getAllProcedures(true)) {
+         if(p != null) {
+            procsByFullName.putIfAbsent(p.getFullName(), p);
+            procsByLocalName.putIfAbsent(p.getLocalName(), p);
+         }
+      }
+
       boolean overallModified = false;
       boolean passModified = true;
 
@@ -194,19 +204,52 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
             }
          }
 
-         // Group lines by scope and collect aliases
+         // Group lines by scope, collect aliases, and pre-index operand references across allLines
          Map<String, Map<String, String>> scopeAliases = new LinkedHashMap<>();
+         Map<String, Map<String, List<String>>> scopeReverseAliases = new HashMap<>();
          Map<String, List<LineRef>> scopeLines = new LinkedHashMap<>();
+         Map<String, List<LineRef>> operandRefIndex = new HashMap<>();
+         List<LineRef> inlineKickAsmRefs = new ArrayList<>();
          for(LineRef ref : allLines) {
             if(ref.scope != null) {
                scopeLines.computeIfAbsent(ref.scope, k -> new ArrayList<>()).add(ref);
                if(ref.line instanceof AsmLabelDecl decl) {
-                  scopeAliases.computeIfAbsent(ref.scope, k -> new LinkedHashMap<>()).put(decl.getName(), decl.getValue());
+                  String dName = decl.getName();
+                  String dVal = decl.getValue();
+                  scopeAliases.computeIfAbsent(ref.scope, k -> new LinkedHashMap<>()).put(dName, dVal);
+                  if(dVal != null) {
+                     scopeReverseAliases
+                        .computeIfAbsent(ref.scope, k -> new HashMap<>())
+                        .computeIfAbsent(stripZp(dVal), k -> new ArrayList<>())
+                        .add(dName);
+                  }
+               }
+            }
+            if(ref.line instanceof AsmInlineKickAsm) {
+               inlineKickAsmRefs.add(ref);
+            } else if(ref.line instanceof AsmInstruction inst) {
+               String op = inst.getOperand1();
+               if(op != null) {
+                  String t = stripZp(op);
+                  operandRefIndex.computeIfAbsent(t, k -> new ArrayList<>()).add(ref);
+                  if(t.endsWith("+1")) {
+                     String base = stripZp(t.substring(0, t.length() - 2));
+                     operandRefIndex.computeIfAbsent(base, k -> new ArrayList<>()).add(ref);
+                  } else {
+                     try {
+                        int numVal = Integer.parseInt(t);
+                        operandRefIndex.computeIfAbsent(String.valueOf(numVal - 1), k -> new ArrayList<>()).add(ref);
+                     } catch(NumberFormatException ignored) {}
+                  }
+                  if(inst.getCpuOpcode() != null && CpuAddressingMode.IZY.equals(inst.getCpuOpcode().getAddressingMode())) {
+                     String indPtr = extractPtrFromIndY(op);
+                     if(indPtr != null && !indPtr.equals(t)) {
+                        operandRefIndex.computeIfAbsent(indPtr, k -> new ArrayList<>()).add(ref);
+                     }
+                  }
                }
             }
          }
-
-         Scope rootScope = getProgram().getScope();
 
          // Process each procedure scope
          for(Map.Entry<String, List<LineRef>> entry : scopeLines.entrySet()) {
@@ -214,20 +257,9 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
             List<LineRef> linesInScope = entry.getValue();
 
             // Verify procedure is in writable RAM (never ROM) — prefer exact fullName match over localName (CF-16)
-            Procedure proc = null;
-            for(Procedure p : rootScope.getAllProcedures(true)) {
-               if(p.getFullName().equals(scopeName)) {
-                  proc = p;
-                  break;
-               }
-            }
+            Procedure proc = procsByFullName.get(scopeName);
             if(proc == null) {
-               for(Procedure p : rootScope.getAllProcedures(true)) {
-                  if(p.getLocalName().equals(scopeName)) {
-                     proc = p;
-                     break;
-                  }
-               }
+               proc = procsByLocalName.get(scopeName);
             }
 
             if(proc != null) {
@@ -312,23 +344,54 @@ public class Pass5PointerToSmcOptimization extends Pass5AsmOptimization {
 
                // Safety: Never apply Pointer-to-SMC to variables referenced outside the current procedure scope!
                boolean referencedOutsideScope = false;
-               for(LineRef outsideRef : allLines) {
+               for(LineRef outsideRef : inlineKickAsmRefs) {
                   if(outsideRef.scope == null || !outsideRef.scope.equals(scopeName)) {
-                     if(outsideRef.line instanceof AsmInstruction outsideInst) {
-                        String op = outsideInst.getOperand1();
-                        if(op != null) {
+                     AsmInlineKickAsm inlineAsm = (AsmInlineKickAsm) outsideRef.line;
+                     if(inlineAsm.getAsm().contains(ptrVar) || (ptrAddr != null && inlineAsm.getAsm().contains(ptrAddr))) {
+                        referencedOutsideScope = true;
+                        break;
+                     }
+                  }
+               }
+               if(!referencedOutsideScope) {
+                  Set<String> candidateKeys = new LinkedHashSet<>();
+                  candidateKeys.add(ptrVar);
+                  if(ptrAddr != null) {
+                     candidateKeys.add(ptrAddr);
+                     candidateKeys.add(stripZp(ptrAddr));
+                     try {
+                        candidateKeys.add(String.valueOf(Integer.parseInt(ptrAddr)));
+                     } catch(NumberFormatException ignored) {}
+                  }
+                  Map<String, List<String>> revAliases = scopeReverseAliases.get(scopeName);
+                  if(revAliases != null) {
+                     List<String> keysForVar = revAliases.get(ptrVar);
+                     if(keysForVar != null) candidateKeys.addAll(keysForVar);
+                     if(ptrAddr != null) {
+                        List<String> keysForAddr = revAliases.get(ptrAddr);
+                        if(keysForAddr != null) candidateKeys.addAll(keysForAddr);
+                        String strippedAddr = stripZp(ptrAddr);
+                        if(!strippedAddr.equals(ptrAddr)) {
+                           List<String> keysForStrippedAddr = revAliases.get(strippedAddr);
+                           if(keysForStrippedAddr != null) candidateKeys.addAll(keysForStrippedAddr);
+                        }
+                     }
+                  }
+                  for(String key : candidateKeys) {
+                     List<LineRef> matchingRefs = operandRefIndex.get(key);
+                     if(matchingRefs == null) continue;
+                     for(LineRef outsideRef : matchingRefs) {
+                        if(outsideRef.scope == null || !outsideRef.scope.equals(scopeName)) {
+                           AsmInstruction outsideInst = (AsmInstruction) outsideRef.line;
+                           String op = outsideInst.getOperand1();
                            String indPtr = (CpuAddressingMode.IZY.equals(outsideInst.getCpuOpcode() != null ? outsideInst.getCpuOpcode().getAddressingMode() : null)) ? extractPtrFromIndY(op) : null;
                            if(matchesVarLo(op, ptrVar, ptrAddr, aliases) || matchesVarHi(op, ptrVar, ptrAddr, aliases) || (indPtr != null && matchesVarLo(indPtr, ptrVar, ptrAddr, aliases))) {
                               referencedOutsideScope = true;
                               break;
                            }
                         }
-                     } else if(outsideRef.line instanceof AsmInlineKickAsm inlineAsm) {
-                        if(inlineAsm.getAsm().contains(ptrVar) || (ptrAddr != null && inlineAsm.getAsm().contains(ptrAddr))) {
-                           referencedOutsideScope = true;
-                           break;
-                        }
                      }
+                     if(referencedOutsideScope) break;
                   }
                }
                if(referencedOutsideScope) {

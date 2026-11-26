@@ -83,6 +83,7 @@ public class PassNCastSimplification extends Pass2SsaOptimization {
       });
 
       // Narrow binary expressions whose result is cast to a 1-byte type
+      VarAssignments.Index varAssignmentsIndex = null;
       for(var block : getGraph().getAllBlocks()) {
          ListIterator<Statement> stmtIt = block.getStatements().listIterator();
          while(stmtIt.hasNext()) {
@@ -103,7 +104,10 @@ public class PassNCastSimplification extends Pass2SsaOptimization {
                   if(innerType.getSizeBytes() > 1) {
                      Collection<Integer> uses = getProgram().getVariableReferenceInfos().getVarUseStatements(innerVarRef);
                      if(uses != null && uses.size() <= 1) {
-                        List<VarAssignments.VarAssignment> varAssignments = VarAssignments.get(innerVarRef, getGraph(), getProgramScope());
+                        if(varAssignmentsIndex == null) {
+                           varAssignmentsIndex = new VarAssignments.Index(getGraph());
+                        }
+                        List<VarAssignments.VarAssignment> varAssignments = varAssignmentsIndex.get(innerVarRef, getProgramScope());
                         if(varAssignments.size() == 1 && VarAssignments.VarAssignment.Type.STATEMENT_LVALUE.equals(varAssignments.get(0).type)) {
                            StatementLValue defStmt = varAssignments.get(0).statementLValue;
                            if(defStmt instanceof StatementAssignment defAssignment) {

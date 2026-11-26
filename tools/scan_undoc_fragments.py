@@ -150,29 +150,38 @@ def discover_dynamic_axs(paths):
                     if not arg.startswith('#') and not arg.endswith(',x'):
                         candidates[f] = f'lax {arg}\naxs #-[{adc_imm}]'
 
-        # 3. Inverted Subtraction: eor #$ff, adc #<imm>
+        # 3. Inverted Subtraction: eor #$ff, (clc|sec), adc #<imm>
         if any(i == 'eor #$ff' for i in instrs) and any(i.startswith('adc #') for i in instrs):
             adc_imm = [i[5:].strip() for i in instrs if i.startswith('adc #')][0]
-            if base.startswith('vbuaa='):
+            has_clc = 'clc' in instrs
+            has_sec = 'sec' in instrs
+            if base.startswith('vbuaa=') and (has_clc or has_sec):
                 tgt = f'vbuxx={base[6:]}.asm'
-                candidates[tgt] = f'eor #$ff\ntax\naxs #-{adc_imm}-1'
+                if has_sec and not has_clc:
+                    candidates[tgt] = f'eor #$ff\ntax\naxs #-{adc_imm}-1'
+                else:
+                    # clc; adc #<imm> adds <imm> -> AXS subtracts -<imm>
+                    norm_imm = '1' if adc_imm in ('$01', '$1', '1') else adc_imm
+                    candidates[tgt] = f'eor #$ff\ntax\naxs #-{norm_imm}'
 
         # 4. Multiple DEX instructions in sequence -> AXS #N with TXA
         # CRITICAL: AXS performs `X = (A AND X) - imm`.
         # Therefore, TXA is strictly mandatory to copy X into A first,
         # otherwise arbitrary bits in register A would corrupt X!
-        if all(i == 'dex' for i in instrs) and len(instrs) >= 2:
+        # Only profitable for N >= 3 (N=2 is `dex; dex`: 2 bytes, 4 cycles, preserves A;
+        # whereas `txa; axs #2` is 3 bytes, 4 cycles, clobbers A).
+        if all(i == 'dex' for i in instrs) and len(instrs) >= 3:
             candidates[f] = f'txa\naxs #{len(instrs)}'
-
-    # Numeric constant decrements from X (for N >= 2):
-    # (Note: for N=1, dex in mos6502-common is 1 byte, 2 cycles and preserves A - strictly superior)
-    for n in range(2, 9):
-        candidates[f'vbuxx=vbuxx_minus_{n}.asm'] = f'txa\naxs #{n}'
-        candidates[f'vbsxx=vbsxx_minus_{n}.asm'] = f'txa\naxs #{n}'
 
         # 5. Stack padding via repeated PLA -> single AXS on stack pointer
         if base.startswith('_stackpullpadding_') and all(i == 'pla' for i in instrs) and len(instrs) >= 3:
             candidates[f] = f'tsx\ntxa\naxs #-{len(instrs)}\ntxs'
+
+    # Numeric constant decrements from X (for N >= 3):
+    # (For N=1,2 `dex` / `dex; dex` in mos6502-common is strictly smaller and preserves A)
+    for n in range(3, 9):
+        candidates[f'vbuxx=vbuxx_minus_{n}.asm'] = f'txa\naxs #{n}'
+        candidates[f'vbsxx=vbsxx_minus_{n}.asm'] = f'txa\naxs #{n}'
 
     # AXS Identity Bitwise AND with zero-subtraction: (A AND X) - 0 -> X
     candidates['vbuxx=vbuxx_band_vbuaa.asm'] = 'axs #0'
@@ -197,22 +206,34 @@ def discover_dynamic_sax(paths):
 
         if instrs[-1].startswith('sta ') or instrs[-1].startswith('stx '):
             dst = instrs[-1][4:].strip()
+            # SAX only supports ZP, ZP,Y, ABS, and (ZP,X) — NOT indexed ,x or (),y
+            if dst.endswith(',x') or dst.endswith(',y') and '(' in dst:
+                continue
             and_instrs = [i for i in instrs if i.startswith('and ')]
             if and_instrs and 'vbuxx' in base:
                 and_op = and_instrs[0][4:].strip()
                 if 'vbuaa' in base:
                     candidates[f] = f'sax {dst}'
                 else:
-                    candidates[f] = f'lda {and_op}\nsax {dst}'
+                    # Handle scratch-ZP pattern: stx $fe; lda <src>; and $fe; sta <dst>
+                    stx_instrs = [i for i in instrs if i.startswith('stx ')]
+                    lda_instrs = [i for i in instrs if i.startswith('lda ')]
+                    if stx_instrs and lda_instrs and stx_instrs[0][4:].strip() == and_op:
+                        src_op = lda_instrs[0][4:].strip()
+                        candidates[f] = f'lda {src_op}\nsax {dst}'
+                    elif and_op not in ('$fe', '$ff'):
+                        candidates[f] = f'lda {and_op}\nsax {dst}'
 
     return candidates
 
 def discover_dynamic_anc(paths):
     """
-    Dynamically identifies 7-bit rotations that can use ANC #$80.
+    Dynamically identifies 7-bit shifts using ALR / ANC:
+    - rol_7 (a << 7): bit 0 -> C via ALR #$01, then ROR -> bit 7 (0 in bits 6..0)
+    - ror_7 (a >> 7): bit 7 -> C via ANC #$80, then ROL -> bit 0 (0 in bits 7..1)
     """
     candidates = {}
-    candidates['vbuaa=vbuaa_rol_7.asm'] = 'anc #$80\nasl'
+    candidates['vbuaa=vbuaa_rol_7.asm'] = 'alr #$01\nror'
     candidates['vbuaa=vbuaa_ror_7.asm'] = 'anc #$80\nrol'
     return candidates
 

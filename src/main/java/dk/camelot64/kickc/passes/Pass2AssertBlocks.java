@@ -25,9 +25,12 @@ public class Pass2AssertBlocks extends Pass2SsaAssertion {
 
       Set<LabelRef> seenBlocks = blockReferenceFinder.getSeenBlocks();
       Collection<Graph.Block> allBlocks = getGraph().getAllBlocks();
+      Set<LabelRef> allBlockLabels = new HashSet<>(allBlocks.size() * 2);
+      for(Graph.Block b : allBlocks) {
+         allBlockLabels.add(b.getLabel());
+      }
       for(LabelRef seenBlock : seenBlocks) {
-         Graph.Block block = getGraph().getBlock(seenBlock);
-         if(!allBlocks.contains(block)) {
+         if(!allBlockLabels.contains(seenBlock)) {
             throw new AssertionFailed("Compilation Process Error! A block in the program is not contained in the allBocks list (probably a block sequence problem). " + seenBlock);
          }
       }

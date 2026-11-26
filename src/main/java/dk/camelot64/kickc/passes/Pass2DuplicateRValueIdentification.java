@@ -32,6 +32,9 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
       final List<Graph.Block> blocks;
       private Map<LabelRef, Graph.Block> blockMap;
       private Map<LabelRef, List<LabelRef>> predMap;
+      private Set<LabelRef> globalClobberBlocks;
+      private Map<ScopeRef, Set<LabelRef>> globalClobberBlocksByScope;
+      private Map<VariableRef, Set<LabelRef>> varWriteBlocks;
 
       ProcCfgCache(List<Graph.Block> blocks) {
          this.blocks = blocks;
@@ -53,6 +56,34 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
          }
       }
 
+      private void ensureWriteInfoBuilt() {
+         if(globalClobberBlocks != null) return;
+         globalClobberBlocks = new HashSet<>();
+         globalClobberBlocksByScope = new HashMap<>();
+         varWriteBlocks = new HashMap<>();
+         for(Graph.Block b : blocks) {
+            LabelRef lbl = b.getLabel();
+            ScopeRef bScope = b.getScope();
+            for(Statement s : b.getStatements()) {
+               if(s instanceof StatementAssignment sa) {
+                  LValue lVal = sa.getlValue();
+                  if(lVal instanceof VariableRef vr) {
+                     varWriteBlocks.computeIfAbsent(vr, k -> new HashSet<>()).add(lbl);
+                  } else if(lVal instanceof PointerDereference) {
+                     if(globalClobberBlocks.add(lbl)) {
+                        globalClobberBlocksByScope.computeIfAbsent(bScope, k -> new HashSet<>()).add(lbl);
+                     }
+                  }
+               } else if(s instanceof StatementCall || s instanceof StatementCallExecute || s instanceof StatementCalling || s instanceof StatementCallPointer
+                     || s instanceof StatementAsm || s instanceof StatementKickAsm) {
+                  if(globalClobberBlocks.add(lbl)) {
+                     globalClobberBlocksByScope.computeIfAbsent(bScope, k -> new HashSet<>()).add(lbl);
+                  }
+               }
+            }
+         }
+      }
+
       Graph.Block getBlock(LabelRef label) {
          ensureBuilt();
          return blockMap.get(label);
@@ -61,6 +92,49 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
       List<LabelRef> getPredecessors(LabelRef label) {
          ensureBuilt();
          return predMap.getOrDefault(label, Collections.emptyList());
+      }
+
+      boolean hasOtherWriteCandidate(ScopeRef scope, LabelRef firstLabel, LabelRef secondLabel, Set<VariableRef> operands) {
+         ensureWriteInfoBuilt();
+         Set<LabelRef> scopeClobbers = globalClobberBlocksByScope.get(scope);
+         if(scopeClobbers != null && !scopeClobbers.isEmpty()) {
+            if(scopeClobbers.size() > 2) {
+               return true;
+            }
+            for(LabelRef lbl : scopeClobbers) {
+               if(!lbl.equals(firstLabel) && !lbl.equals(secondLabel)) {
+                  return true;
+               }
+            }
+         }
+         for(VariableRef vr : operands) {
+            Set<LabelRef> vrBlocks = varWriteBlocks.get(vr);
+            if(vrBlocks != null) {
+               for(LabelRef lbl : vrBlocks) {
+                  if(!lbl.equals(firstLabel) && !lbl.equals(secondLabel)) {
+                     Graph.Block b = getBlock(lbl);
+                     if(b != null && scope.equals(b.getScope())) {
+                        return true;
+                     }
+                  }
+               }
+            }
+         }
+         return false;
+      }
+
+      boolean blockMayModify(LabelRef blockLabel, Set<VariableRef> operands) {
+         ensureWriteInfoBuilt();
+         if(globalClobberBlocks.contains(blockLabel)) {
+            return true;
+         }
+         for(VariableRef vr : operands) {
+            Set<LabelRef> vrBlocks = varWriteBlocks.get(vr);
+            if(vrBlocks != null && vrBlocks.contains(blockLabel)) {
+               return true;
+            }
+         }
+         return false;
       }
    }
 
@@ -438,9 +512,10 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
          }
       }
 
-      // Collect all blocks in the procedure that may modify operands (including second.block after idx2 for loops!)
+      // Check precomputed per-procedure clobber/write blocks (and second.block after idx2 for loops)
       ScopeRef scope = first.block.getScope();
-      Set<LabelRef> writeBlocks = new HashSet<>();
+      LabelRef firstLabel = first.block.getLabel();
+      LabelRef secondLabel = second.block.getLabel();
       boolean secondModifiesAfterIdx2 = false;
       if(idx2 >= 0) {
          for(int i = idx2 + 1; i < secondStmts.size(); i++) {
@@ -450,27 +525,15 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
             }
          }
       }
-      for(Graph.Block b : cfgCache.blocks) {
-         if(!b.equals(first.block) && !b.equals(second.block) && scope.equals(b.getScope())) {
-            for(Statement s : b.getStatements()) {
-               if(statementMayModifyOperands(s, operands, hasLoadStore)) {
-                  writeBlocks.add(b.getLabel());
-                  break;
-               }
-            }
-         }
-      }
 
-      if(writeBlocks.isEmpty() && !secondModifiesAfterIdx2) {
+      if(!secondModifiesAfterIdx2 && !cfgCache.hasOtherWriteCandidate(scope, firstLabel, secondLabel, operands)) {
          return true;
       }
 
       // SSA-03: Check ALL paths from first.block to second.block INCLUDING loop back-edges returning to second.block
-      // without re-executing first.block! Uses O(1) procedure-local blockMap & predMap.
+      // without re-executing first.block! Uses O(1) procedure-local blockMap, predMap & write info.
       Set<LabelRef> forwardFromFirst = new HashSet<>();
       Queue<LabelRef> fwdQueue = new ArrayDeque<>();
-      LabelRef firstLabel = first.block.getLabel();
-      LabelRef secondLabel = second.block.getLabel();
       Graph.Block firstBlock = cfgCache.getBlock(firstLabel);
       if(firstBlock != null) {
          for(LabelRef succ : firstBlock.getSuccessors()) {
@@ -496,6 +559,11 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
       for(LabelRef predLbl : cfgCache.getPredecessors(secondLabel)) {
          Graph.Block predBlock = cfgCache.getBlock(predLbl);
          if(predBlock != null && !predLbl.equals(firstLabel) && scope.equals(predBlock.getScope()) && backwardToSecond.add(predLbl)) {
+            if(predLbl.equals(secondLabel)) {
+               if(secondModifiesAfterIdx2) return false;
+            } else if(forwardFromFirst.contains(predLbl) && cfgCache.blockMayModify(predLbl, operands)) {
+               return false;
+            }
             bwdQueue.add(predLbl);
          }
       }
@@ -504,18 +572,13 @@ public class Pass2DuplicateRValueIdentification extends Pass2SsaOptimization {
          for(LabelRef predLbl : cfgCache.getPredecessors(cur)) {
             Graph.Block predBlock = cfgCache.getBlock(predLbl);
             if(predBlock != null && !predLbl.equals(firstLabel) && scope.equals(predBlock.getScope()) && backwardToSecond.add(predLbl)) {
+               if(predLbl.equals(secondLabel)) {
+                  if(secondModifiesAfterIdx2) return false;
+               } else if(forwardFromFirst.contains(predLbl) && cfgCache.blockMayModify(predLbl, operands)) {
+                  return false;
+               }
                bwdQueue.add(predLbl);
             }
-         }
-      }
-
-      if(secondModifiesAfterIdx2 && backwardToSecond.contains(secondLabel)) {
-         return false;
-      }
-
-      for(LabelRef wb : writeBlocks) {
-         if(forwardFromFirst.contains(wb) && backwardToSecond.contains(wb)) {
-            return false;
          }
       }
 

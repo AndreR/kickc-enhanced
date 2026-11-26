@@ -1,7 +1,5 @@
-pha
-lda {m1}
-sta $fe
-lda {m1}+1
-sta $ff
-pla
+ldx {m1}
+stx $fe
+ldx {m1}+1
+stx $ff
 sta ($fe),y

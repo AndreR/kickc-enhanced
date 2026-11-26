@@ -3,11 +3,14 @@ package dk.camelot64.kickc.passes.calcs;
 import dk.camelot64.kickc.model.*;
 import dk.camelot64.kickc.model.statements.Statement;
 import dk.camelot64.kickc.model.statements.StatementAssignment;
+import dk.camelot64.kickc.model.statements.StatementCalling;
 import dk.camelot64.kickc.model.statements.StatementConditionalJump;
 import dk.camelot64.kickc.model.statements.StatementPhiBlock;
 import dk.camelot64.kickc.model.values.*;
 
 import java.util.Collection;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Finds register weights for all variables.
@@ -65,6 +68,22 @@ public class PassNCalcVariableRegisterWeight extends PassNCalcBase<VariableRegis
             }
          }
       }
+      // Precompute procedures containing call statements once in O(B)
+      Set<ScopeRef> nonLeafProcedures = new HashSet<>();
+      for(ProcedureCompilation procComp : getProgram().getProcedureCompilations()) {
+         ControlFlowGraph graph = procComp.getGraph();
+         if(graph == null) continue;
+         for(Graph.Block block : graph.getAllBlocks()) {
+            ScopeRef blockScope = block.getScope();
+            if(blockScope == null || nonLeafProcedures.contains(blockScope)) continue;
+            for(Statement stmt : block.getStatements()) {
+               if(stmt instanceof StatementCalling) {
+                  nonLeafProcedures.add(blockScope);
+                  break;
+               }
+            }
+         }
+      }
       // Boost register weight of leaf procedure parameters so they are prioritized for register passing
       for(dk.camelot64.kickc.model.symbols.Procedure procedure : getProgram().getScope().getAllProcedures(true)) {
          if(procedure.getInterruptType() != null || procedure.isDeclaredIntrinsic()) continue;
@@ -73,19 +92,7 @@ public class PassNCalcVariableRegisterWeight extends PassNCalcBase<VariableRegis
          if("main".equals(procName) || "__start".equals(procName)) continue;
          CallGraph.CallBlock callBlock = callGraph.getCallBlock(procedure.getRef());
          if(callBlock != null && callBlock.getCalls() != null && !callBlock.getCalls().isEmpty()) continue;
-         boolean hasCalls = false;
-         for(var block : getProgram().getGraph().getAllBlocks()) {
-            if(procedure.getRef().equals(block.getScope())) {
-               for(Statement stmt : block.getStatements()) {
-                  if(stmt instanceof dk.camelot64.kickc.model.statements.StatementCalling) {
-                     hasCalls = true;
-                     break;
-                  }
-               }
-            }
-            if(hasCalls) break;
-         }
-         if(hasCalls) continue;
+         if(nonLeafProcedures.contains(procedure.getRef())) continue;
          java.util.List<dk.camelot64.kickc.model.symbols.Variable> params = procedure.getParameters();
          if(params != null && !params.isEmpty() && params.size() <= 3) {
             for(int i = 0; i < params.size(); i++) {

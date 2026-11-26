@@ -149,12 +149,16 @@ public class Pass5LoopRegisterPinning extends Pass5AsmOptimization {
          return cur;
       };
 
-      // 2. Flatten all lines across chunks (preserving scope metadata)
-      List<LineRef> allLines = flattenLines(getAsmProgram());
+      boolean pinned;
+      do {
+         pinned = false;
 
-      // 3. Scan for loop head: L_head followed by LDY var; LDA arr,y
-      String currentScope = null;
-      for(int i = 0; i < allLines.size(); i++) {
+         // 2. Flatten all lines across chunks (preserving scope metadata)
+         List<LineRef> allLines = flattenLines(getAsmProgram());
+
+         // 3. Scan for loop head: L_head followed by LDY var; LDA arr,y
+         String currentScope = null;
+         for(int i = 0; i < allLines.size(); i++) {
          LineRef headRef = allLines.get(i);
          if(headRef.line instanceof AsmScopeBegin) {
             currentScope = ((AsmScopeBegin) headRef.line).getLabel();
@@ -438,10 +442,12 @@ public class Pass5LoopRegisterPinning extends Pass5AsmOptimization {
          int inChunkLaxIdx = laxRef.chunk.getLines().indexOf(laxRef.line);
          laxRef.chunk.getLines().set(inChunkLaxIdx, txaInst);
 
+         pinned = true;
          overallModified = true;
          // Restart search
          break;
       }
+      } while(pinned);
 
       return overallModified;
    }

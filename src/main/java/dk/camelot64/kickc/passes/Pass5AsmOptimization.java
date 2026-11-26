@@ -11,6 +11,7 @@ import dk.camelot64.kickc.model.symbols.Symbol;
 import dk.camelot64.kickc.model.symbols.Variable;
 import dk.camelot64.kickc.model.types.SymbolType;
 
+import java.lang.ref.WeakReference;
 import java.util.*;
 
 /**
@@ -79,14 +80,32 @@ public abstract class Pass5AsmOptimization {
     * Resolves .label alias chains and folds numeric offsets for ASM operands.
     */
    public static class CanonicalResolver {
+      private final CanonicalResolver parent;
       private final Map<String, String> aliasMap = new HashMap<>();
 
-      public CanonicalResolver() {}
+      public CanonicalResolver() {
+         this.parent = null;
+      }
+
+      public CanonicalResolver(CanonicalResolver parent) {
+         this.parent = parent;
+      }
 
       public CanonicalResolver(Map<String, String> initialAliases) {
+         this.parent = null;
          if(initialAliases != null) {
             aliasMap.putAll(initialAliases);
          }
+      }
+
+      private String lookupExact(String key) {
+         CanonicalResolver cur = this;
+         while(cur != null) {
+            String val = cur.aliasMap.get(key);
+            if(val != null) return val;
+            cur = cur.parent;
+         }
+         return null;
       }
 
       public void addAlias(String name, String value) {
@@ -127,11 +146,11 @@ public abstract class Pass5AsmOptimization {
          Set<String> visited = new HashSet<>();
          visited.add(base);
          for(int i = 0; i < 20; i++) {
-            String next = aliasMap.get(base);
+            String next = lookupExact(base);
             if(next == null) {
                int dotIdx = base.lastIndexOf('.');
                if(dotIdx != -1) {
-                  next = aliasMap.get(base.substring(dotIdx + 1));
+                  next = lookupExact(base.substring(dotIdx + 1));
                }
             }
             if(next == null) break;
@@ -179,9 +198,72 @@ public abstract class Pass5AsmOptimization {
    }
 
    private Program program;
+   private Pass5RoundContext roundContext;
 
    public Pass5AsmOptimization(Program program) {
       this.program = program;
+   }
+
+   public void setRoundContext(Pass5RoundContext ctx) {
+      this.roundContext = ctx;
+   }
+
+   public Pass5RoundContext getRoundContext() {
+      return this.roundContext;
+   }
+
+   protected List<LineRef> getSharedAllLines() {
+      if(roundContext != null) {
+         return roundContext.getAllLines();
+      }
+      return flattenLines(getAsmProgram());
+   }
+
+   protected Map<String, CanonicalResolver> getSharedScopeResolvers(List<LineRef> allLines) {
+      if(roundContext != null) {
+         return roundContext.getScopeResolvers();
+      }
+      return buildScopeResolvers(allLines);
+   }
+
+   protected Map<String, List<LineRef>> getSharedScopeLinesMap(List<LineRef> allLines) {
+      if(roundContext != null) {
+         return roundContext.getScopeLinesMap();
+      }
+      Map<String, List<LineRef>> map = new LinkedHashMap<>();
+      for(LineRef ref : allLines) {
+         String scope = ref.scope != null ? ref.scope : "";
+         map.computeIfAbsent(scope, k -> new ArrayList<>()).add(ref);
+      }
+      return map;
+   }
+
+   protected boolean isScopeDirty(String scope) {
+      return roundContext == null || roundContext.isScopeDirty(scope);
+   }
+
+   protected void markScopeDirty(String scope) {
+      if(roundContext != null) {
+         roundContext.markScopeDirty(scope);
+      }
+   }
+
+   protected void markAllScopesDirty() {
+      if(roundContext != null) {
+         roundContext.markAllScopesDirty();
+      }
+   }
+
+   protected void invalidateRoundStructure() {
+      if(roundContext != null) {
+         roundContext.invalidateStructure();
+      }
+   }
+
+   protected void invalidateRoundLabels() {
+      if(roundContext != null) {
+         roundContext.invalidateLabels();
+      }
    }
 
    /**
@@ -286,10 +368,7 @@ public abstract class Pass5AsmOptimization {
       resolvers.put("", rootResolver);
 
       for(Map.Entry<String, Map<String, String>> entry : perScopeAliases.entrySet()) {
-         CanonicalResolver sr = new CanonicalResolver();
-         for(Map.Entry<String, String> ge : globalAliases.entrySet()) {
-            sr.addAlias(ge.getKey(), ge.getValue());
-         }
+         CanonicalResolver sr = new CanonicalResolver(rootResolver);
          for(Map.Entry<String, String> le : entry.getValue().entrySet()) {
             sr.addAlias(le.getKey(), le.getValue());
          }
@@ -341,6 +420,63 @@ public abstract class Pass5AsmOptimization {
    public static int findLabelIndex(List<LineRef> allLines, String labelName, int fromIdx) {
       String currentScope = (fromIdx >= 0 && fromIdx < allLines.size()) ? allLines.get(fromIdx).scope : "";
       return findLabelIndex(allLines, labelName, fromIdx, currentScope);
+   }
+
+   private static final class LabelIndex {
+      final WeakReference<List<LineRef>> listRef;
+      final int size;
+      final Map<String, Integer> scopedLabels;
+      final Map<String, Integer> globalLabels;
+
+      LabelIndex(List<LineRef> allLines) {
+         this.listRef = new WeakReference<>(allLines);
+         this.size = allLines.size();
+         this.scopedLabels = new HashMap<>();
+         this.globalLabels = new HashMap<>();
+         for(int i = 0; i < allLines.size(); i++) {
+            LineRef ref = allLines.get(i);
+            if(ref.line instanceof AsmLabel) {
+               String l = ((AsmLabel) ref.line).getLabel();
+               if(l != null && !l.startsWith("!")) {
+                  String scope = ref.scope != null ? ref.scope : "";
+                  scopedLabels.putIfAbsent(scope + '\0' + l, i);
+                  if(scope.isEmpty()) {
+                     globalLabels.putIfAbsent(l, i);
+                  }
+               }
+            }
+         }
+      }
+   }
+
+   private static final ThreadLocal<LabelIndex> LABEL_INDEX_CACHE = new ThreadLocal<>();
+
+   private static LabelIndex getLabelIndex(List<LineRef> allLines) {
+      LabelIndex index = LABEL_INDEX_CACHE.get();
+      if(index == null || index.listRef.get() != allLines || index.size != allLines.size()) {
+         index = new LabelIndex(allLines);
+         LABEL_INDEX_CACHE.set(index);
+      }
+      return index;
+   }
+
+   private static int lookupLabelFromIndex(List<LineRef> allLines, String key, boolean useGlobalMap) {
+      LabelIndex index = getLabelIndex(allLines);
+      Map<String, Integer> map = useGlobalMap ? index.globalLabels : index.scopedLabels;
+      Integer idx = map.get(key);
+      if(idx != null) {
+         if(allLines.get(idx).line instanceof AsmLabel) {
+            return idx;
+         }
+         index = new LabelIndex(allLines);
+         LABEL_INDEX_CACHE.set(index);
+         map = useGlobalMap ? index.globalLabels : index.scopedLabels;
+         idx = map.get(key);
+         if(idx != null && allLines.get(idx).line instanceof AsmLabel) {
+            return idx;
+         }
+      }
+      return -1;
    }
 
    /**
@@ -412,59 +548,18 @@ public abstract class Pass5AsmOptimization {
       if(dotIdx != -1) {
          String scopePart = clean.substring(0, dotIdx);
          String labelPart = clean.substring(dotIdx + 1);
-         for(int i = 0; i < allLines.size(); i++) {
-            LineRef ref = allLines.get(i);
-            if(ref.line instanceof AsmLabel && Objects.equals(scopePart, ref.scope)) {
-               String l = ((AsmLabel) ref.line).getLabel();
-               if(labelPart.equals(l)) return i;
-            }
-         }
-         return -1;
+         return lookupLabelFromIndex(allLines, scopePart + '\0' + labelPart, false);
       }
 
       // Named label strictly within the active procedure scope:
-      // Fast path: scan locally within the contiguous enclosing scope block around fromIdx (~30 lines vs whole program)
-      if(fromIdx >= 0 && fromIdx < allLines.size() && Objects.equals(targetScope, allLines.get(fromIdx).scope)) {
-         for(int i = fromIdx; i < allLines.size(); i++) {
-            LineRef ref = allLines.get(i);
-            if(ref.line instanceof AsmScopeEnd || !Objects.equals(targetScope, ref.scope)) {
-               break;
-            }
-            if(ref.line instanceof AsmLabel) {
-               String l = ((AsmLabel) ref.line).getLabel();
-               if(clean.equals(l)) return i;
-            }
-         }
-         for(int i = fromIdx - 1; i >= 0; i--) {
-            LineRef ref = allLines.get(i);
-            if(ref.line instanceof AsmScopeBegin || !Objects.equals(targetScope, ref.scope)) {
-               break;
-            }
-            if(ref.line instanceof AsmLabel) {
-               String l = ((AsmLabel) ref.line).getLabel();
-               if(clean.equals(l)) return i;
-            }
-         }
-      }
-
-      // Fallback scan across allLines (e.g., multi-chunk procedures or out-of-scope fromIdx)
-      for(int i = 0; i < allLines.size(); i++) {
-         LineRef ref = allLines.get(i);
-         if(ref.line instanceof AsmLabel && Objects.equals(targetScope, ref.scope)) {
-            String l = ((AsmLabel) ref.line).getLabel();
-            if(clean.equals(l)) return i;
-         }
+      int idx = lookupLabelFromIndex(allLines, targetScope + '\0' + clean, false);
+      if(idx != -1) {
+         return idx;
       }
 
       // Fallback only for top-level global labels (never match local labels in other procedures)
       if(!targetScope.isEmpty()) {
-         for(int i = 0; i < allLines.size(); i++) {
-            LineRef ref = allLines.get(i);
-            if(ref.line instanceof AsmLabel && "".equals(ref.scope)) {
-               String l = ((AsmLabel) ref.line).getLabel();
-               if(clean.equals(l)) return i;
-            }
-         }
+         return lookupLabelFromIndex(allLines, clean, true);
       }
       return -1;
    }

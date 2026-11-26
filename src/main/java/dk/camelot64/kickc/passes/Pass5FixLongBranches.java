@@ -32,6 +32,7 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
       String label;
       final boolean isStandalone;
       boolean isTargeted;
+      boolean isRemoved;
 
       RtsRef(LineRef ref, int offset, String segment, int lineIdx, String label, boolean isStandalone) {
          this.ref = ref;
@@ -41,6 +42,7 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
          this.label = label;
          this.isStandalone = isStandalone;
          this.isTargeted = false;
+         this.isRemoved = false;
       }
    }
 
@@ -83,134 +85,262 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
 
       // Perform repeated optimization until no more branches are too long
       boolean anyOptimized = (preFixedCount > 0) || (relaxedCount > 0);
-      boolean stepOptimized = true;
-      int iter = 0;
-      while(stepOptimized) {
-         iter++;
-         long tStepStart = System.currentTimeMillis();
-         stepOptimized = step();
-         if(stepOptimized) {
-            new Pass5DoubleJumpElimination(getProgram()).optimize();
+      if(!isAllBranchesAnalyticallySafe()) {
+         boolean stepOptimized = true;
+         int iter = 0;
+         while(stepOptimized) {
+            iter++;
+            long tStepStart = System.currentTimeMillis();
+            stepOptimized = step();
+            if(stepOptimized) {
+               new Pass5DoubleJumpElimination(getProgram()).optimize();
+            }
+            long tStepElapsed = System.currentTimeMillis() - tStepStart;
+            if(getLog().isVerboseFixLongBranch()) {
+               System.out.println(String.format("      [PASS5 LONG BRANCH iter %d] took %6.2f s (fixed=%b)", iter, tStepElapsed / 1000.0, stepOptimized));
+            }
+            if(stepOptimized) anyOptimized = true;
          }
-         long tStepElapsed = System.currentTimeMillis() - tStepStart;
-         if(getLog().isVerboseFixLongBranch()) {
-            System.out.println(String.format("      [PASS5 LONG BRANCH iter %d] took %6.2f s (fixed=%b)", iter, tStepElapsed / 1000.0, stepOptimized));
-         }
-         if(stepOptimized) anyOptimized = true;
-      }
 
-      // Second relaxation pass after long branch resolution and code shrinking
-      int postRelaxedCount = relaxShortBranches();
-      if(postRelaxedCount > 0) {
-         if(getLog().isVerboseFixLongBranch()) {
-            System.out.println(String.format("      [PASS5 POST-RELAX SHORT BRANCHES] relaxed %d trampolines", postRelaxedCount));
+         // Second relaxation pass after long branch resolution and code shrinking
+         int postRelaxedCount = relaxShortBranches();
+         if(postRelaxedCount > 0) {
+            if(getLog().isVerboseFixLongBranch()) {
+               System.out.println(String.format("      [PASS5 POST-RELAX SHORT BRANCHES] relaxed %d trampolines", postRelaxedCount));
+            }
+            anyOptimized = true;
+            if(!isAllBranchesAnalyticallySafe()) {
+               // CF-01: Always verify iteratively with KickAssembler that no branch was pushed out of range
+               while(step()) {
+                  new Pass5DoubleJumpElimination(getProgram()).optimize();
+               }
+            } else {
+               new Pass5ReindexAsmLines(getProgram()).optimize();
+            }
          }
-         anyOptimized = true;
-         // CF-01: Always verify iteratively with KickAssembler that no branch was pushed out of range
-         while(step()) {
-            new Pass5DoubleJumpElimination(getProgram()).optimize();
-         }
+      } else if(anyOptimized) {
+         new Pass5ReindexAsmLines(getProgram()).optimize();
       }
 
       return anyOptimized;
    }
 
+   private void logAnalyticalFallback(String detail) {
+      if(getLog().isVerboseFixLongBranch()) {
+         String msg = "      [PASS5 ANALYTICAL FALLBACK] " + detail;
+         System.out.println(msg);
+         getLog().append(msg);
+      }
+   }
+
    /**
-    * Pre-pass to analytically detect and fix long branches across all scopes.
+    * Conservatively verifies in memory that every conditional branch in the ASM program
+    * resolves within [-126, +125] bytes in the same scope/segment (accounting for worst-case
+    * {@link AsmLoopAlign} padding) and does not span across directives whose assembled byte
+    * size cannot be guaranteed analytically.
+    */
+   private boolean isAllBranchesAnalyticallySafe() {
+      List<LineRef> allLines = flattenLines(getAsmProgram());
+      int n = allLines.size();
+      int[] lineOffsets = new int[n];
+      String[] lineSegments = new String[n];
+      int[] unsafeCountPrefix = new int[n + 1];
+      int[] loopAlignPaddingPrefix = new int[n + 1];
+
+      Map<String, Integer> labelOffsets = new HashMap<>();
+      Map<String, String> labelSegments = new HashMap<>();
+      Map<String, Integer> labelLineIndices = new HashMap<>();
+
+      String currentScope = "";
+      String currentSegment = "Code";
+      Map<String, Integer> segmentOffsets = new HashMap<>();
+
+      for(int i = 0; i < n; i++) {
+         AsmLine line = allLines.get(i).line;
+         boolean isUnsafeDirective = (line instanceof AsmInlineKickAsm)
+               || (line instanceof AsmDataAlignment)
+               || (line instanceof AsmDataKickAsm)
+               || (line instanceof AsmSetPc);
+         unsafeCountPrefix[i + 1] = unsafeCountPrefix[i] + (isUnsafeDirective ? 1 : 0);
+         int loopAlignPad = (line instanceof AsmLoopAlign loopAlign)
+               ? Math.max(0, loopAlign.getLoopLength() - 1)
+               : 0;
+         loopAlignPaddingPrefix[i + 1] = loopAlignPaddingPrefix[i] + loopAlignPad;
+
+         if(line instanceof AsmScopeBegin) {
+            String lbl = ((AsmScopeBegin) line).getLabel();
+            currentScope = (lbl != null) ? lbl : "";
+         } else if(line instanceof AsmScopeEnd) {
+            currentScope = "";
+         } else if(line instanceof AsmSegment) {
+            String seg = ((AsmSegment) line).getName();
+            currentSegment = (seg != null) ? seg : "Code";
+         } else {
+            int offset = segmentOffsets.getOrDefault(currentSegment, 0);
+            lineOffsets[i] = offset;
+            lineSegments[i] = currentSegment;
+            if(line instanceof AsmLabel) {
+               String label = ((AsmLabel) line).getLabel();
+               if(label != null && !label.startsWith("!")) {
+                  String key = currentScope + "::" + label;
+                  if(labelLineIndices.containsKey(key)) {
+                     logAnalyticalFallback("dupLabel scope=\"" + currentScope + "\" label=" + label);
+                     return false;
+                  }
+                  labelOffsets.put(key, offset);
+                  labelSegments.put(key, currentSegment);
+                  labelLineIndices.put(key, i);
+               }
+            }
+            segmentOffsets.put(currentSegment, offset + line.getLineBytes());
+         }
+      }
+
+      for(int i = 0; i < n; i++) {
+         LineRef ref = allLines.get(i);
+         if(!(ref.line instanceof AsmInstruction instr)) continue;
+         if(instr.getCpuOpcode() == null || invertBranch(instr.getCpuOpcode()) == null) continue;
+
+         String scope = ref.scope;
+         if(scope == null) {
+            logAnalyticalFallback("nullScope lineIdx=" + i + " instr=" + instr);
+            return false;
+         }
+         String target = instr.getOperandJumpTarget();
+         if(target == null) {
+            logAnalyticalFallback("missingTarget scope=\"" + scope + "\" branch=" + instr + " target=null");
+            return false;
+         }
+
+         int targetIdx;
+         int targetOffset;
+         String targetSegment;
+
+         if(target.startsWith("!")) {
+            targetIdx = findLabelIndex(allLines, target, i, scope);
+            if(targetIdx == -1 || !scope.equals(allLines.get(targetIdx).scope)) {
+               logAnalyticalFallback("missingTarget scope=\"" + scope + "\" branch=" + instr + " target=" + target + " targetIdx=" + targetIdx);
+               return false;
+            }
+            targetOffset = lineOffsets[targetIdx];
+            targetSegment = lineSegments[targetIdx];
+         } else {
+            String key = scope + "::" + target;
+            Integer idxObj = labelLineIndices.get(key);
+            if(idxObj == null) {
+               logAnalyticalFallback("missingTarget scope=\"" + scope + "\" branch=" + instr + " target=" + target);
+               return false;
+            }
+            targetIdx = idxObj;
+            targetOffset = labelOffsets.get(key);
+            targetSegment = labelSegments.get(key);
+         }
+
+         if(!Objects.equals(lineSegments[i], targetSegment)) {
+            logAnalyticalFallback("crossSegment scope=\"" + scope + "\" branch=" + instr + " target=" + target
+                  + " branchSeg=" + lineSegments[i] + " targetSeg=" + targetSegment);
+            return false;
+         }
+         int lo = Math.min(i, targetIdx);
+         int hi = Math.max(i, targetIdx);
+         if(unsafeCountPrefix[hi] - unsafeCountPrefix[lo + 1] > 0) {
+            logAnalyticalFallback("unsafeDirective scope=\"" + scope + "\" branch=" + instr + " target=" + target);
+            return false;
+         }
+
+         int branchPc = lineOffsets[i] + 2;
+         int distance = targetOffset - branchPc;
+         int pad = loopAlignPaddingPrefix[hi] - loopAlignPaddingPrefix[lo + 1];
+         if((distance - pad) < -126 || (distance + pad) > 125) {
+            logAnalyticalFallback("distance=" + distance + " pad=" + pad + " scope=\"" + scope + "\" branch=" + instr + " target=" + target);
+            return false;
+         }
+      }
+
+      return true;
+   }
+
+   /**
+    * Pre-pass to analytically detect and fix long branches across all scopes (including root scope).
     *
     * @return total number of branches fixed
     */
    private int preFixLongBranches() {
       int totalFixed = 0;
       boolean anyFixedThisPass = true;
-      int pass = 0;
 
       while(anyFixedThisPass) {
          anyFixedThisPass = false;
-         pass++;
 
-         // Phase 1: Collect label offsets per scope
+         List<LineRef> allLines = flattenLines(getAsmProgram());
+         int n = allLines.size();
+         int[] lineOffsets = new int[n];
+         String[] lineSegments = new String[n];
+         int[] loopAlignPaddingPrefix = new int[n + 1];
+
+         // Phase 1: Collect label offsets and per-segment offsets across all scopes (including root "")
          Map<String, Integer> labelOffsets = new HashMap<>();
-         String currentScope = null;
-         boolean inCode = true;
-         int currentOffset = 0;
+         Map<String, String> labelSegments = new HashMap<>();
+         Map<String, Integer> labelLineIndices = new HashMap<>();
+         String currentScope = "";
+         String currentSegment = "Code";
+         Map<String, Integer> segmentOffsets = new HashMap<>();
 
-         for(AsmChunk chunk : getAsmProgram().getChunks()) {
-            for(AsmLine line : chunk.getLines()) {
-               if(line instanceof AsmScopeBegin) {
-                  currentScope = ((AsmScopeBegin) line).getLabel();
-                  inCode = true;
-                  currentOffset = 0;
-               } else if(line instanceof AsmScopeEnd) {
-                  currentScope = null;
-                  inCode = true;
-                  currentOffset = 0;
-               } else if(currentScope != null) {
-                  if(line instanceof AsmSegment) {
-                     String seg = ((AsmSegment) line).getName();
-                     if(seg != null && seg.toLowerCase().contains("data")) {
-                        inCode = false;
-                     } else {
-                        inCode = true;
-                     }
-                  } else if(inCode) {
-                     if(line instanceof AsmLabel) {
-                        String label = ((AsmLabel) line).getLabel();
-                        if(!label.startsWith("!")) {
-                           labelOffsets.put(currentScope + "::" + label, currentOffset);
-                        }
-                     }
-                     currentOffset += line.getLineBytes();
+         for(int i = 0; i < n; i++) {
+            AsmLine line = allLines.get(i).line;
+            int loopAlignPad = (line instanceof AsmLoopAlign loopAlign)
+                  ? Math.max(0, loopAlign.getLoopLength() - 1)
+                  : 0;
+            loopAlignPaddingPrefix[i + 1] = loopAlignPaddingPrefix[i] + loopAlignPad;
+
+            if(line instanceof AsmScopeBegin) {
+               String lbl = ((AsmScopeBegin) line).getLabel();
+               currentScope = (lbl != null) ? lbl : "";
+            } else if(line instanceof AsmScopeEnd) {
+               currentScope = "";
+            } else if(line instanceof AsmSegment) {
+               String seg = ((AsmSegment) line).getName();
+               currentSegment = (seg != null) ? seg : "Code";
+            } else {
+               int offset = segmentOffsets.getOrDefault(currentSegment, 0);
+               lineOffsets[i] = offset;
+               lineSegments[i] = currentSegment;
+               if(line instanceof AsmLabel) {
+                  String label = ((AsmLabel) line).getLabel();
+                  if(label != null && !label.startsWith("!")) {
+                     String key = currentScope + "::" + label;
+                     labelOffsets.put(key, offset);
+                     labelSegments.put(key, currentSegment);
+                     labelLineIndices.put(key, i);
                   }
                }
+               segmentOffsets.put(currentSegment, offset + line.getLineBytes());
             }
          }
 
-         // Phase 2: Check conditional branches and record long ones
-         currentScope = null;
-         inCode = true;
-         currentOffset = 0;
+         // Phase 2: Check conditional branches with worst-case loop alignment padding and record long ones
          List<BranchToFix> branchesToFix = new ArrayList<>();
+         for(int i = 0; i < n; i++) {
+            LineRef ref = allLines.get(i);
+            if(!(ref.line instanceof AsmInstruction instr)) continue;
+            if(instr.getCpuOpcode() == null || invertBranch(instr.getCpuOpcode()) == null) continue;
 
-         for(AsmChunk chunk : getAsmProgram().getChunks()) {
-            for(AsmLine line : chunk.getLines()) {
-               if(line instanceof AsmScopeBegin) {
-                  currentScope = ((AsmScopeBegin) line).getLabel();
-                  inCode = true;
-                  currentOffset = 0;
-               } else if(line instanceof AsmScopeEnd) {
-                  currentScope = null;
-                  inCode = true;
-                  currentOffset = 0;
-               } else if(currentScope != null) {
-                  if(line instanceof AsmSegment) {
-                     String seg = ((AsmSegment) line).getName();
-                     if(seg != null && seg.toLowerCase().contains("data")) {
-                        inCode = false;
-                     } else {
-                        inCode = true;
-                     }
-                  } else if(inCode) {
-                     if(line instanceof AsmInstruction) {
-                        AsmInstruction instr = (AsmInstruction) line;
-                        CpuOpcode inverse = invertBranch(instr.getCpuOpcode());
-                        if(inverse != null) {
-                           String target = instr.getOperandJumpTarget();
-                           if(target != null && !target.startsWith("!")) {
-                              Integer targetOffset = labelOffsets.get(currentScope + "::" + target);
-                              if(targetOffset != null) {
-                                 int branchPc = currentOffset + 2;
-                                 int distance = targetOffset - branchPc;
-                                 if(distance < -128 || distance > 127) {
-                                    branchesToFix.add(new BranchToFix(chunk, instr));
-                                 }
-                              }
-                           }
-                        }
-                     }
-                     currentOffset += line.getLineBytes();
-                  }
-               }
+            String target = instr.getOperandJumpTarget();
+            if(target == null || target.startsWith("!")) continue;
+
+            String scope = ref.scope != null ? ref.scope : "";
+            String key = scope + "::" + target;
+            Integer targetIdx = labelLineIndices.get(key);
+            if(targetIdx == null) continue;
+            if(!Objects.equals(lineSegments[i], labelSegments.get(key))) continue;
+
+            int branchPc = lineOffsets[i] + 2;
+            int distance = labelOffsets.get(key) - branchPc;
+            int lo = Math.min(i, targetIdx);
+            int hi = Math.max(i, targetIdx);
+            int pad = loopAlignPaddingPrefix[hi] - loopAlignPaddingPrefix[lo + 1];
+            if((distance - pad) < -126 || (distance + pad) > 125) {
+               branchesToFix.add(new BranchToFix(ref.chunk, instr));
             }
          }
 
@@ -264,13 +394,17 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
          Map<String, String> labelSegments = new HashMap<>();
          Map<String, Integer> labelLineIndices = new HashMap<>();
          Map<String, List<RtsRef>> scopeRts = new HashMap<>();
+         Map<AsmLine, RtsRef> rtsByLine = new HashMap<>();
          Set<String> targetedLabels = new HashSet<>();
+         int[] origLineBytes = new int[allLines.size()];
          String currentScope = null;
          String currentSegment = "Code";
          Map<String, Integer> segmentOffsets = new HashMap<>();
          String lastNonAnonLabel = null;
 
-         for(LineRef ref : allLines) {
+         for(int k = 0; k < allLines.size(); k++) {
+            LineRef ref = allLines.get(k);
+            origLineBytes[k] = ref.line.getLineBytes();
             if(ref.line instanceof AsmInstruction) {
                AsmInstruction instr = (AsmInstruction) ref.line;
                String target = instr.getOperandJumpTarget();
@@ -333,15 +467,16 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                            rtsRef.isTargeted = true;
                         }
                         scopeRts.computeIfAbsent(currentScope, k -> new ArrayList<>()).add(rtsRef);
+                        rtsByLine.put(line, rtsRef);
                      }
                      lastNonAnonLabel = null;
                   }
-                  segmentOffsets.put(currentSegment, currentOffset + line.getLineBytes());
+                  segmentOffsets.put(currentSegment, currentOffset + origLineBytes[lIdx]);
                }
             }
          }
 
-         // Phase 2: Find and relax trampolines across chunk boundaries
+         // Phase 2: Find and relax non-overlapping trampolines across chunk boundaries in a single sweep
          currentScope = null;
          currentSegment = "Code";
          segmentOffsets.clear();
@@ -379,6 +514,7 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                         if(ref2.line instanceof AsmInstruction && ref3.line instanceof AsmLabel) {
                            AsmInstruction instr2 = (AsmInstruction) ref2.line;
                            AsmLabel label3 = (AsmLabel) ref3.line;
+                           boolean relaxed = false;
 
                            if(instr2.getCpuOpcode() != null
                                  && "jmp".equals(instr2.getCpuOpcode().getMnemonic())
@@ -405,17 +541,17 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                                        getLog().append("Relaxing long branch trampoline to " + inv1.getMnemonic() + " " + jmpTarget);
                                        instr1.setCpuOpcode(inv1);
                                        instr1.setOperandJumpTarget(jmpTarget);
-                                       ref2.chunk.getLines().remove(ref2.line);
-                                       ref3.chunk.getLines().remove(ref3.line);
+                                       tombstoneLine(allLines, idx2);
+                                       tombstoneLine(allLines, idx3);
                                        anyRelaxed = true;
                                        totalRelaxed++;
-                                       break;
+                                       relaxed = true;
                                     }
                                  }
                               }
 
                               // Pattern 2: Inverted branch over jmp [bxx L, jmp TARGET, L:]
-                              boolean isInvertedBranch = (branchTarget != null && fallthroughLabel != null && jmpTarget != null &&
+                              boolean isInvertedBranch = !relaxed && (branchTarget != null && fallthroughLabel != null && jmpTarget != null &&
                                  !branchTarget.startsWith("!") && !fallthroughLabel.startsWith("!") && !jmpTarget.startsWith("!") &&
                                  branchTarget.equals(fallthroughLabel));
 
@@ -430,10 +566,10 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                                        getLog().append("Folding inverted branch over jmp to " + inv1.getMnemonic() + " " + jmpTarget);
                                        instr1.setCpuOpcode(inv1);
                                        instr1.setOperandJumpTarget(jmpTarget);
-                                       ref2.chunk.getLines().remove(ref2.line);
+                                       tombstoneLine(allLines, idx2);
                                        anyRelaxed = true;
                                        totalRelaxed++;
-                                       break;
+                                       relaxed = true;
                                     }
                                  }
                               }
@@ -447,16 +583,9 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                                  branchTarget.equals(fallthroughLabel + "+"));
 
                               if(isReturnTrampoline) {
-                                 boolean rtsIsTargeted = false;
+                                 RtsRef ref2Rts = rtsByLine.get(ref2.line);
+                                 boolean rtsIsTargeted = (ref2Rts != null && ref2Rts.isTargeted);
                                  List<RtsRef> currentScopeRtsList = scopeRts.get(currentScope);
-                                 if(currentScopeRtsList != null) {
-                                    for(RtsRef r : currentScopeRtsList) {
-                                       if(r.ref.line == ref2.line && r.isTargeted) {
-                                          rtsIsTargeted = true;
-                                          break;
-                                       }
-                                    }
-                                 }
 
                                  if(!rtsIsTargeted) {
                                     // Sub-case 1: Check if followed by jmp TARGET
@@ -479,11 +608,11 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                                                    if(isSafeRelaxDistance(allLines, i, targetLineIdx, distance)) {
                                                       getLog().append("Relaxing branch-rts-jmp to " + instr1.getCpuOpcode().getMnemonic() + " " + jmpTarget + " and rts");
                                                       instr1.setOperandJumpTarget(jmpTarget);
-                                                      ref3.chunk.getLines().remove(ref3.line);
-                                                      ref4.chunk.getLines().remove(ref4.line);
+                                                      tombstoneLine(allLines, idx3);
+                                                      tombstoneLine(allLines, idx4);
                                                       anyRelaxed = true;
                                                       totalRelaxed++;
-                                                      break;
+                                                      relaxed = true;
                                                    }
                                                 }
                                              }
@@ -492,30 +621,41 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                                     }
 
                                     // Sub-case 2: Relax return trampoline to __breturn
-                                    String breturnKey = currentScope + "::__breturn";
-                                    Integer breturnOffset = labelOffsets.get(breturnKey);
-                                    Integer breturnLineIdx = labelLineIndices.get(breturnKey);
-                                    if(breturnOffset != null && Objects.equals(currentSegment, labelSegments.get(breturnKey))) {
-                                       int branchPc = currentOffset + 2;
-                                       int distance = breturnOffset - branchPc;
-                                       if(isSafeRelaxDistance(allLines, i, breturnLineIdx, distance)) {
-                                          getLog().append("Relaxing return trampoline to " + inv1.getMnemonic() + " __breturn");
-                                          instr1.setCpuOpcode(inv1);
-                                          instr1.setOperandJumpTarget("__breturn");
-                                          ref2.chunk.getLines().remove(ref2.line);
-                                          ref3.chunk.getLines().remove(ref3.line);
-                                          anyRelaxed = true;
-                                          totalRelaxed++;
-                                          break;
+                                    if(!relaxed) {
+                                       String breturnKey = currentScope + "::__breturn";
+                                       Integer breturnOffset = labelOffsets.get(breturnKey);
+                                       Integer breturnLineIdx = labelLineIndices.get(breturnKey);
+                                       if(breturnOffset != null && Objects.equals(currentSegment, labelSegments.get(breturnKey))) {
+                                          int branchPc = currentOffset + 2;
+                                          int distance = breturnOffset - branchPc;
+                                          if(isSafeRelaxDistance(allLines, i, breturnLineIdx, distance)) {
+                                             getLog().append("Relaxing return trampoline to " + inv1.getMnemonic() + " __breturn");
+                                             instr1.setCpuOpcode(inv1);
+                                             instr1.setOperandJumpTarget("__breturn");
+                                             tombstoneLine(allLines, idx2);
+                                             tombstoneLine(allLines, idx3);
+                                             if(ref2Rts != null) ref2Rts.isRemoved = true;
+                                             if(currentScopeRtsList != null) {
+                                                for(RtsRef r : currentScopeRtsList) {
+                                                   if("__breturn".equals(r.label)) {
+                                                      r.isTargeted = true;
+                                                   }
+                                                }
+                                             }
+                                             targetedLabels.add("__breturn");
+                                             anyRelaxed = true;
+                                             totalRelaxed++;
+                                             relaxed = true;
+                                          }
                                        }
                                     }
 
                                     // Sub-case 3: Relax return trampoline to another RTS in currentScope
-                                    if(currentScopeRtsList != null) {
+                                    if(!relaxed && currentScopeRtsList != null) {
                                        RtsRef bestRts = null;
                                        int bestDist = 999999;
                                        for(RtsRef r : currentScopeRtsList) {
-                                          if(r.ref.line == ref2.line) continue;
+                                          if(r.isRemoved || r.ref.line == ref2.line) continue;
                                           if(!Objects.equals(currentSegment, r.segment)) continue;
                                           int branchPc = currentOffset + 2;
                                           int dist = r.offset - branchPc;
@@ -528,7 +668,7 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                                        }
                                        if(bestRts == null) {
                                           for(RtsRef r : currentScopeRtsList) {
-                                             if(r.ref.line == ref2.line) continue;
+                                             if(r.isRemoved || r.ref.line == ref2.line) continue;
                                              if(!Objects.equals(currentSegment, r.segment)) continue;
                                              int branchPc = currentOffset + 2;
                                              int dist = r.offset - branchPc;
@@ -552,11 +692,11 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                                           getLog().append("Relaxing return trampoline to " + inv1.getMnemonic() + " " + targetLabel);
                                           instr1.setCpuOpcode(inv1);
                                           instr1.setOperandJumpTarget(targetLabel);
-                                          ref2.chunk.getLines().remove(ref2.line);
-                                          ref3.chunk.getLines().remove(ref3.line);
+                                          tombstoneLine(allLines, idx2);
+                                          tombstoneLine(allLines, idx3);
+                                          if(ref2Rts != null) ref2Rts.isRemoved = true;
                                           anyRelaxed = true;
                                           totalRelaxed++;
-                                          break;
                                        }
                                     }
                                  }
@@ -566,7 +706,7 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
                      }
                   }
                }
-               segmentOffsets.put(currentSegment, currentOffset + line1.getLineBytes());
+               segmentOffsets.put(currentSegment, currentOffset + origLineBytes[i]);
             }
          }
       }

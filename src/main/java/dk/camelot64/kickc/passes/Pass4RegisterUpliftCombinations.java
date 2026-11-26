@@ -2,6 +2,7 @@ package dk.camelot64.kickc.passes;
 
 import dk.camelot64.kickc.asm.AsmChunk;
 import dk.camelot64.kickc.asm.AsmProgram;
+import dk.camelot64.kickc.fragment.AsmFragmentTemplate;
 import dk.camelot64.kickc.fragment.synthesis.AsmFragmentTemplateSynthesizer;
 import dk.camelot64.kickc.model.*;
 import dk.camelot64.kickc.model.statements.Statement;
@@ -10,6 +11,7 @@ import dk.camelot64.kickc.model.values.ScopeRef;
 import dk.camelot64.kickc.model.values.VariableRef;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /*** Attempt to uplift live range equivalence classes to registers (instead of ZP) in each scope */
@@ -30,19 +32,32 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
     * @param program The program to test (used for accessing global data structures)
     */
    public static class CachedBlockScores {
-      public final Map<Graph.Block, List<AsmChunk>> cachedBlockChunks = new HashMap<>();
       public final Map<Graph.Block, Integer> blockScores = new HashMap<>();
+      public final Map<Graph.Block, Integer> blockBytes = new HashMap<>();
       public int totalScore = 0;
+      public int totalBytes = 0;
 
       public void init(Program program) {
-         new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing(), true).generate(null, cachedBlockChunks, true);
-         Map<Integer, Double> multipliers = getLoopMultipliers(program);
+         double[] stmtMultipliers = getStmtMultipliers(program);
+         Pass4DirectTrialEvaluator.FastClobberIndex clobberIndex = Pass4DirectTrialEvaluator.getOrBuildClobberIndex(program);
+         clobberIndex.refreshFromVariables();
          blockScores.clear();
+         blockBytes.clear();
          totalScore = 0;
-         for(Map.Entry<Graph.Block, List<AsmChunk>> entry : cachedBlockChunks.entrySet()) {
-            int score = calculateBlockScore(entry.getValue(), multipliers);
-            blockScores.put(entry.getKey(), score);
-            totalScore += score;
+         totalBytes = 0;
+         Pass4DirectTrialEvaluator.computeBlockScores(
+               program,
+               program.getGraph().getAllBlocks(),
+               stmtMultipliers,
+               blockScores,
+               blockBytes,
+               clobberIndex,
+               true);
+         for(Integer s : blockScores.values()) {
+            totalScore += s;
+         }
+         for(Integer b : blockBytes.values()) {
+            totalBytes += b;
          }
       }
 
@@ -58,32 +73,36 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       }
 
       public void updateBlocks(Set<Graph.Block> blocksToRegenerate, Program program) {
-         new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing(), true).generate(blocksToRegenerate, cachedBlockChunks, true);
-         Map<Integer, Double> multipliers = getLoopMultipliers(program);
+         double[] stmtMultipliers = getStmtMultipliers(program);
+         Pass4DirectTrialEvaluator.FastClobberIndex clobberIndex = Pass4DirectTrialEvaluator.getOrBuildClobberIndex(program);
          for(Graph.Block b : blocksToRegenerate) {
             Integer oldS = blockScores.get(b);
             if(oldS != null) {
                totalScore -= oldS;
             }
-            int newS = calculateBlockScore(cachedBlockChunks.get(b), multipliers);
-            blockScores.put(b, newS);
-            totalScore += newS;
-         }
-      }
-
-      private static int calculateBlockScore(List<AsmChunk> chunks, Map<Integer, Double> multipliers) {
-         int score = 0;
-         if(chunks != null) {
-            for(AsmChunk chunk : chunks) {
-               double cycles = chunk.getCycles();
-               if(cycles > 0) {
-                  Integer statementIdx = chunk.getStatementIdx();
-                  Double mult = statementIdx == null ? 10.0 : multipliers.get(statementIdx);
-                  score += (int) (cycles * (mult == null ? 10.0 : mult));
-               }
+            Integer oldB = blockBytes.get(b);
+            if(oldB != null) {
+               totalBytes -= oldB;
             }
          }
-         return score;
+         Map<Graph.Block, Integer> updatedScores = new HashMap<>();
+         Map<Graph.Block, Integer> updatedBytes = new HashMap<>();
+         Pass4DirectTrialEvaluator.computeBlockScores(
+               program,
+               blocksToRegenerate,
+               stmtMultipliers,
+               updatedScores,
+               updatedBytes,
+               clobberIndex,
+               true);
+         for(Graph.Block b : blocksToRegenerate) {
+            int newS = updatedScores.getOrDefault(b, 0);
+            int newB = updatedBytes.getOrDefault(b, 0);
+            blockScores.put(b, newS);
+            blockBytes.put(b, newB);
+            totalScore += newS;
+            totalBytes += newB;
+         }
       }
    }
 
@@ -123,7 +142,19 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          ScopeRef scope,
          Set<Graph.Block> blocksToRegenerate,
          int outsideScore) {
-      return evaluateCombination(combination, program, unknownFragments, scope, blocksToRegenerate, outsideScore, getLoopMultipliers(program));
+      Pass4DirectTrialEvaluator.FastClobberIndex clobberIndex = Pass4DirectTrialEvaluator.getOrBuildClobberIndex(program);
+      clobberIndex.refreshFromVariables();
+      return evaluateCombination(
+            combination,
+            program,
+            unknownFragments,
+            scope,
+            blocksToRegenerate,
+            outsideScore,
+            getStmtMultipliers(program),
+            clobberIndex,
+            false,
+            true);
    }
 
    public static UpliftTrialResult evaluateCombination(
@@ -134,40 +165,93 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          Set<Graph.Block> blocksToRegenerate,
          int outsideScore,
          Map<Integer, Double> multipliers) {
+      Pass4DirectTrialEvaluator.FastClobberIndex clobberIndex = Pass4DirectTrialEvaluator.getOrBuildClobberIndex(program);
+      clobberIndex.refreshFromVariables();
+      double[] stmtMultipliers;
+      boolean useBaselineCache;
+      if(multipliers == null) {
+         stmtMultipliers = null;
+         useBaselineCache = false;
+      } else if(multipliers == program.getUpliftProgramCache().loopMultipliers) {
+         stmtMultipliers = getStmtMultipliers(program);
+         useBaselineCache = true;
+      } else {
+         stmtMultipliers = new double[clobberIndex.numStmts];
+         Arrays.fill(stmtMultipliers, 10.0);
+         for(Map.Entry<Integer, Double> e : multipliers.entrySet()) {
+            Integer k = e.getKey();
+            Double v = e.getValue();
+            if(k != null && k >= 0 && k < stmtMultipliers.length && v != null) {
+               stmtMultipliers[k] = v;
+            }
+         }
+         useBaselineCache = false;
+      }
+      return evaluateCombination(combination, program, unknownFragments, scope, blocksToRegenerate, outsideScore, stmtMultipliers, clobberIndex, false, useBaselineCache);
+   }
+
+   private static UpliftTrialResult evaluateCombination(
+         RegisterCombination combination,
+         Program program,
+         Set<String> unknownFragments,
+         ScopeRef scope,
+         Set<Graph.Block> blocksToRegenerate,
+         int outsideScore,
+         double[] stmtMultipliers,
+         Pass4DirectTrialEvaluator.FastClobberIndex clobberIndex,
+         boolean precheckedConflictFree,
+         boolean useBaselineCache) {
       countAttempts.incrementAndGet();
       // Check the register allocation for whether any register is being allocated to two variables with overlapping live ranges
-      if(isAllocationOverlapping(program, combination)) {
+      if(!precheckedConflictFree && isAllocationOverlapping(program, combination)) {
          return new UpliftTrialResult(combination, Integer.MAX_VALUE, false);
       }
 
-      Map<VariableRef, Registers.Register> override = new HashMap<>();
+      int overrideCount = 0;
+      for(LiveRangeEquivalenceClass ec : combination.getAllocation().keySet()) {
+         overrideCount += ec.getVariables().size();
+      }
+      Map<VariableRef, Registers.Register> override = HashMap.newHashMap(overrideCount);
+      int[] overrideVarIds = new int[overrideCount];
+      byte[] overrideRegMasks = new byte[overrideCount];
+      Registers.Register[] overrideRegs = new Registers.Register[overrideCount];
+      int patchedCount = 0;
       for(Map.Entry<LiveRangeEquivalenceClass, Registers.Register> entry : combination.getAllocation().entrySet()) {
          Registers.Register reg = entry.getValue();
+         byte regMask = Pass4DirectTrialEvaluator.toRegMask(reg);
          for(VariableRef varRef : entry.getKey().getVariables()) {
             override.put(varRef, reg);
+            Integer varId = clobberIndex.varIdMap.get(varRef);
+            if(varId != null) {
+               overrideVarIds[patchedCount] = varId;
+               overrideRegMasks[patchedCount] = regMask;
+               overrideRegs[patchedCount] = reg;
+               patchedCount++;
+            }
          }
+      }
+
+      Pass4DirectTrialEvaluator.FastClobberIndex.LocalState localState = clobberIndex.acquireLocalState();
+      byte[] localRegMasks = localState.regMasks;
+      Registers.Register[] localAllocs = localState.allocations;
+      boolean[] localOverridden = localState.overridden;
+      for(int i = 0; i < patchedCount; i++) {
+         int id = overrideVarIds[i];
+         localRegMasks[id] = overrideRegMasks[i];
+         localAllocs[id] = overrideRegs[i];
+         localOverridden[id] = true;
       }
 
       Variable.setThreadAllocationOverride(override);
       try {
-         AsmProgram asm;
-         try {
-            asm = new Pass4CodeGeneration(program, false, program.isWarnFragmentMissing(), true)
-                  .generate(blocksToRegenerate, null, false);
-         } catch(AsmFragmentTemplateSynthesizer.UnknownFragmentException e) {
-            if(unknownFragments != null) {
-               unknownFragments.add(e.getFragmentSignature());
-            }
+         Pass4DirectTrialEvaluator.TrialEvalResult evalResult = Pass4DirectTrialEvaluator.evaluateBlocks(
+               program, blocksToRegenerate, stmtMultipliers, unknownFragments, clobberIndex, localState, useBaselineCache);
+         if(!evalResult.success()) {
             return new UpliftTrialResult(combination, Integer.MAX_VALUE, false);
          }
 
-         boolean hasClobberProblem = new Pass4AssertNoCpuClobber(program).hasClobberProblem(false, asm);
-         if(hasClobberProblem) {
-            return new UpliftTrialResult(combination, Integer.MAX_VALUE, false);
-         }
-
-         int combinationScore = outsideScore + getAsmScore(program, asm, multipliers);
-         int asmBytes = asm.getBytes();
+         int combinationScore = outsideScore + evalResult.score();
+         int asmBytes = evalResult.bytes();
          int cpuRegs = 0;
          for(Registers.Register r : combination.getAllocation().values()) {
             if(r != null && !(r instanceof Registers.RegisterZpMem) && !(r instanceof Registers.RegisterMainMem)) {
@@ -177,6 +261,14 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          return new UpliftTrialResult(combination, combinationScore, asmBytes, cpuRegs, true);
       } finally {
          Variable.setThreadAllocationOverride(null);
+         byte[] base = clobberIndex.baseCpuRegMask;
+         Registers.Register[] baseAllocs = clobberIndex.baseAllocations;
+         for(int i = 0; i < patchedCount; i++) {
+            int id = overrideVarIds[i];
+            localRegMasks[id] = base[id];
+            localAllocs[id] = baseAllocs[id];
+            localOverridden[id] = false;
+         }
       }
    }
 
@@ -216,7 +308,8 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       RegisterCombination bestCombination = null;
 
       List<UpliftTrialResult> results;
-      Map<Integer, Double> multipliers = getLoopMultipliers(program);
+      double[] stmtMultipliers = getStmtMultipliers(program);
+      Pass4DirectTrialEvaluator.FastClobberIndex clobberIndex;
       if(combinationsToTest.size() > 1) {
          // Pre-initialize lazy analyses on the main thread before parallel evaluation
          program.getLiveRangeInterference();
@@ -227,11 +320,14 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
          program.getLoopSet();
          program.getVariableReferenceInfos();
          program.getCallGraph();
+         Pass4DirectTrialEvaluator.getCpuSynthesizer(program);
+         clobberIndex = Pass4DirectTrialEvaluator.getOrBuildClobberIndex(program);
          results = combinationsToTest.parallelStream()
-               .map(c -> evaluateCombination(c, program, unknownFragments, scope, blocksToRegenerate, outsideScore, multipliers))
+               .map(c -> evaluateCombination(c, program, unknownFragments, scope, blocksToRegenerate, outsideScore, stmtMultipliers, clobberIndex, true, true))
                .toList();
       } else {
-         results = Collections.singletonList(evaluateCombination(combinationsToTest.get(0), program, unknownFragments, scope, blocksToRegenerate, outsideScore, multipliers));
+         clobberIndex = Pass4DirectTrialEvaluator.getOrBuildClobberIndex(program);
+         results = Collections.singletonList(evaluateCombination(combinationsToTest.get(0), program, unknownFragments, scope, blocksToRegenerate, outsideScore, stmtMultipliers, clobberIndex, true, true));
       }
 
       for(UpliftTrialResult res : results) {
@@ -252,12 +348,27 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       }
 
       if(bestCombination != null) {
-         // Save the best combination in the equivalence class
-         bestCombination.store(program.getLiveRangeEquivalenceClassSet());
-         bestCombination.allocate(program);
-         if(program.getLiveRangeInterference() != null) program.getLiveRangeInterference().updateCombination(bestCombination);
-         program.getLog().append("Uplifting [" + scope + "] best " + bestScore + " combination " + bestCombination.toString());
-         cache.updateBlocks(blocksToRegenerate, program);
+         boolean changed = false;
+         LiveRangeEquivalenceClassSet ecSet = program.getLiveRangeEquivalenceClassSet();
+         for(Map.Entry<LiveRangeEquivalenceClass, Registers.Register> entry : bestCombination.getAllocation().entrySet()) {
+            LiveRangeEquivalenceClass ec = entry.getKey();
+            VariableRef var = ec.getVariables().get(0);
+            LiveRangeEquivalenceClass globalEc = ecSet.getEquivalenceClass(var);
+            Registers.Register currentReg = (globalEc != null) ? globalEc.getRegister() : ec.getRegister();
+            if(!Objects.equals(currentReg, entry.getValue())) {
+               changed = true;
+               break;
+            }
+         }
+         if(changed) {
+            // Save the best combination in the equivalence class
+            bestCombination.store(ecSet);
+            bestCombination.allocate(program);
+            if(program.getLiveRangeInterference() != null) program.getLiveRangeInterference().updateCombination(bestCombination);
+            clobberIndex.updateCombination(bestCombination);
+            program.getLog().append("Uplifting [" + scope + "] best " + bestScore + " combination " + bestCombination.toString());
+            cache.updateBlocks(blocksToRegenerate, program);
+         }
       }
       if(combinationIterator.hasNext()) {
          program.getLog().append("Limited combination testing to " + countCombinations + " combinations of " + combinationIterator.getNumIterations() + " possible.");
@@ -274,10 +385,14 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
 
    public static class UpliftProgramCache {
       public volatile Map<Integer, Double> loopMultipliers;
+      public volatile double[] stmtMultipliers;
       public volatile Map<VariableRef, List<Statement>> varStatements;
       public volatile Map<ScopeRef, List<Graph.Block>> blocksByScope;
       public volatile Map<dk.camelot64.kickc.model.values.LabelRef, List<Graph.Block>> predecessors;
       public volatile Map<dk.camelot64.kickc.model.values.LabelRef, Graph.Block> blocksByLabel;
+      public volatile AsmFragmentTemplateSynthesizer cpuSynthesizer;
+      public final ConcurrentHashMap<String, AsmFragmentTemplate> fragmentTemplates = new ConcurrentHashMap<>();
+      public volatile Pass4DirectTrialEvaluator.FastClobberIndex clobberIndex;
    }
 
    public static final AtomicLong countAttempts = new AtomicLong(0);
@@ -294,6 +409,42 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
       }
       UpliftTrialResult res = evaluateCombination(combination, program, unknownFragments, scope, blocksToRegenerate, 0);
       return res.success;
+   }
+
+   static double[] getStmtMultipliers(Program program) {
+      UpliftProgramCache cache = program.getUpliftProgramCache();
+      double[] arr = cache.stmtMultipliers;
+      if(arr != null) {
+         return arr;
+      }
+      synchronized(cache) {
+         arr = cache.stmtMultipliers;
+         if(arr != null) {
+            return arr;
+         }
+         Collection<Statement> allStatements = program.getGraph().getAllStatements();
+         int maxIdx = -1;
+         for(Statement stmt : allStatements) {
+            Integer idx = stmt.getIndex();
+            if(idx != null && idx > maxIdx) {
+               maxIdx = idx;
+            }
+         }
+         arr = new double[maxIdx + 1];
+         Arrays.fill(arr, 10.0);
+         NaturalLoopSet loopSet = program.getLoopSet();
+         StatementInfos stmtInfos = program.getStatementInfos();
+         for(Statement stmt : allStatements) {
+            Integer idx = stmt.getIndex();
+            if(idx != null && idx >= 0) {
+               Graph.Block block = stmtInfos.getBlock(idx);
+               int depth = loopSet.getMaxLoopDepth(block.getLabel());
+               arr[idx] = Math.pow(10, depth);
+            }
+         }
+         cache.stmtMultipliers = arr;
+         return arr;
+      }
    }
 
    private static Map<Integer, Double> getLoopMultipliers(Program program) {
@@ -333,7 +484,23 @@ public class Pass4RegisterUpliftCombinations extends Pass2Base {
    }
 
    public static int getAsmScore(Program program, AsmProgram asm) {
-      return getAsmScore(program, asm, getLoopMultipliers(program));
+      return getAsmScore(program, asm, getStmtMultipliers(program));
+   }
+
+   private static int getAsmScore(Program program, AsmProgram asm, double[] stmtMultipliers) {
+      int score = 0;
+      if(asm == null) asm = program.getAsm();
+      for(AsmChunk asmChunk : asm.getChunks()) {
+         double asmChunkCycles = asmChunk.getCycles();
+         if(asmChunkCycles > 0) {
+            Integer statementIdx = asmChunk.getStatementIdx();
+            double mult = (statementIdx != null && statementIdx >= 0 && statementIdx < stmtMultipliers.length)
+                  ? stmtMultipliers[statementIdx]
+                  : 10.0;
+            score += asmChunkCycles * mult;
+         }
+      }
+      return score;
    }
 
    public static int getAsmScore(Program program, AsmProgram asm, Map<Integer, Double> multipliers) {

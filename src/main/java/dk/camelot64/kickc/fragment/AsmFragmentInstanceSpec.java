@@ -92,7 +92,7 @@ public class AsmFragmentInstanceSpec {
          // Look for variations
          // TODO Currently only one iterable constant value is handled - add support for multiple iterable constant values!
          for(String name : bindings.keySet()) {
-            if(name.matches("v..c[1-9]")) {
+            if(name.length() == 5 && name.charAt(0) == 'v' && name.charAt(3) == 'c' && name.charAt(4) >= '1' && name.charAt(4) <= '9') {
                // Found a constant value that may be multi-typed
                Value value = bindings.get(name);
                if(value instanceof ConstantValue) {

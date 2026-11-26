@@ -1,12 +1,17 @@
 package dk.camelot64.kickc.passes;
 
 import dk.camelot64.kickc.model.*;
+import dk.camelot64.kickc.model.statements.Statement;
+import dk.camelot64.kickc.model.statements.StatementCalling;
 import dk.camelot64.kickc.model.symbols.Variable;
+import dk.camelot64.kickc.model.values.ScopeRef;
 import dk.camelot64.kickc.model.values.VariableRef;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /*** Initialize potential registers for each equivalence class.
  *
@@ -23,6 +28,7 @@ public class Pass4RegisterUpliftPotentialInitialize extends Pass2Base {
    public void initPotentialRegisters() {
       LiveRangeEquivalenceClassSet liveRangeEquivalenceClassSet = getProgram().getLiveRangeEquivalenceClassSet();
       RegisterPotentials registerPotentials = new RegisterPotentials();
+      Set<ScopeRef> nonLeafProcedures = findNonLeafProcedures();
       for(LiveRangeEquivalenceClass equivalenceClass : liveRangeEquivalenceClassSet.getEquivalenceClasses()) {
          Registers.Register declaredRegister = null;
          int bytes = -1;
@@ -58,7 +64,7 @@ public class Pass4RegisterUpliftPotentialInitialize extends Pass2Base {
             List<Registers.Register> potentials = new ArrayList<>();
             boolean isByte2 = defaultRegister.isMem() && defaultRegister.getBytes() == 1;
             if(isByte2 && !varVolatile(equivalenceClass)) {
-               Integer leafParamIdx = getLeafProcedureParameterIndex(equivalenceClass);
+               Integer leafParamIdx = getLeafProcedureParameterIndex(equivalenceClass, nonLeafProcedures);
                if(leafParamIdx != null) {
                   if(leafParamIdx == 0) {
                      potentials.add(Registers.getRegisterA());
@@ -99,7 +105,26 @@ public class Pass4RegisterUpliftPotentialInitialize extends Pass2Base {
     * @return true if any variable is volatile
     */
    
-   private Integer getLeafProcedureParameterIndex(LiveRangeEquivalenceClass equivalenceClass) {
+   private Set<ScopeRef> findNonLeafProcedures() {
+      Set<ScopeRef> nonLeafProcedures = new HashSet<>();
+      for(ProcedureCompilation procComp : getProgram().getProcedureCompilations()) {
+         ControlFlowGraph graph = procComp.getGraph();
+         if(graph == null) continue;
+         for(Graph.Block block : graph.getAllBlocks()) {
+            ScopeRef blockScope = block.getScope();
+            if(blockScope == null || nonLeafProcedures.contains(blockScope)) continue;
+            for(Statement stmt : block.getStatements()) {
+               if(stmt instanceof StatementCalling) {
+                  nonLeafProcedures.add(blockScope);
+                  break;
+               }
+            }
+         }
+      }
+      return nonLeafProcedures;
+   }
+
+   private Integer getLeafProcedureParameterIndex(LiveRangeEquivalenceClass equivalenceClass, Set<ScopeRef> nonLeafProcedures) {
       CallGraph callGraph = getProgram().getCallGraph();
       if(callGraph == null) return null;
       for(VariableRef varRef : equivalenceClass.getVariables()) {
@@ -121,19 +146,9 @@ public class Pass4RegisterUpliftPotentialInitialize extends Pass2Base {
             if(callBlock != null && callBlock.getCalls() != null && !callBlock.getCalls().isEmpty()) {
                continue;
             }
-            boolean hasCalls = false;
-            for(var block : getProgram().getGraph().getAllBlocks()) {
-               if(procedure.getRef().equals(block.getScope())) {
-                  for(dk.camelot64.kickc.model.statements.Statement stmt : block.getStatements()) {
-                     if(stmt instanceof dk.camelot64.kickc.model.statements.StatementCalling) {
-                        hasCalls = true;
-                        break;
-                     }
-                  }
-               }
-               if(hasCalls) break;
+            if(nonLeafProcedures.contains(procedure.getRef())) {
+               continue;
             }
-            if(hasCalls) continue;
 
             List<Variable> params = procedure.getParameters();
             if(params != null && !params.isEmpty() && params.size() <= 3) {

@@ -10,26 +10,57 @@ import dk.camelot64.kickc.model.types.SymbolType;
 import dk.camelot64.kickc.model.values.*;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.ListIterator;
+import java.util.Map;
 
 /** Pass that modifies a control flow graph to inline any procedures declared as inline */
 public class Pass1ProcedureInline extends Pass1Base {
+
+   private Map<ProcedureRef, Integer> cachedCallCounts;
 
    public Pass1ProcedureInline(Program program) {
       super(program);
    }
 
    @Override
+   public void execute() {
+      cachedCallCounts = computeCallCounts();
+      try {
+         super.execute();
+      } finally {
+         cachedCallCounts = null;
+      }
+   }
+
+   @Override
    public boolean step() {
+      Map<ProcedureRef, Integer> callCounts = (cachedCallCounts != null) ? cachedCallCounts : computeCallCounts();
       for(var procedureCompilation : getProgram().getProcedureCompilations())
-         if(inlineProcedure(procedureCompilation))
+         if(inlineProcedure(procedureCompilation, callCounts))
             return true;
       return false;
    }
 
-   private boolean inlineProcedure(ProcedureCompilation procedureCompilation) {
+   private Map<ProcedureRef, Integer> computeCallCounts() {
+      Map<ProcedureRef, Integer> counts = new HashMap<>();
+      for(var pc : getProgram().getProcedureCompilations()) {
+         if(pc.getGraph() == null) continue;
+         for(Graph.Block b : pc.getGraph().getAllBlocks()) {
+            for(Statement s : b.getStatements()) {
+               if(s instanceof StatementCall sc && sc.getProcedure() != null) {
+                  counts.merge(sc.getProcedure(), 1, Integer::sum);
+               }
+            }
+         }
+      }
+      return counts;
+   }
+
+   private boolean inlineProcedure(ProcedureCompilation procedureCompilation, Map<ProcedureRef, Integer> callCounts) {
       final ControlFlowGraph procedureGraph = procedureCompilation.getGraph();
       if(procedureGraph!=null) {
          final List<Graph.Block> procedureBlocks = new ArrayList<>(procedureGraph.getAllBlocks());
@@ -44,12 +75,25 @@ public class Pass1ProcedureInline extends Pass1Base {
                   ProcedureRef procedureRef = call.getProcedure();
                   Procedure procedure = getProgramScope().getProcedure(procedureRef);
                   Procedure caller = getProgramScope().getProcedure(procedureCompilation.getProcedureRef());
-                  if(procedure.isDeclaredInline() || isAutoInlineCandidate(procedure, caller, call)) {
+                  if(procedure.isDeclaredInline() || isAutoInlineCandidate(procedure, caller, call, callCounts)) {
                      procedure.setCallingConvention(Procedure.CallingConvention.PHI_CALL);
                      if(procedure.getInterruptType() != null) {
                         throw new CompileError("Error! Interrupts cannot be inlined. " + procedure.getRef().toString());
                      }
-                     inlineProcedureCall(call, procedure, statementsIt, block, blocksIt);
+                     LabelRef restBlockLabelRef = inlineProcedureCall(call, procedure, statementsIt, block, blocksIt, callCounts);
+                     // Update any existing phi-blocks referencing the split caller block as predecessor
+                     // so they now reference restBlock (which inherited the caller block's outgoing edges).
+                     for(var procBlock : procedureBlocks) {
+                        if(procBlock.hasPhiBlock()) {
+                           for(StatementPhiBlock.PhiVariable phiVariable : procBlock.getPhiBlock().getPhiVariables()) {
+                              for(StatementPhiBlock.PhiRValue phiRValue : phiVariable.getValues()) {
+                                 if(block.getLabel().equals(phiRValue.getPredecessor())) {
+                                    phiRValue.setPredecessor(restBlockLabelRef);
+                                 }
+                              }
+                           }
+                        }
+                     }
                      // Update the procedure graph
                      procedureCompilation.setGraph(new ControlFlowGraph(procedureBlocks));
                      // Exit and restart
@@ -71,10 +115,11 @@ public class Pass1ProcedureInline extends Pass1Base {
     * @param block The block containing the call
     * @param blocksIt The block iterator pointing to the block containing the call
     */
-   private void inlineProcedureCall(StatementCall call, Procedure procedure, ListIterator<Statement> statementsIt, Graph.Block block, ListIterator<Graph.Block> blocksIt) {
+   private LabelRef inlineProcedureCall(StatementCall call, Procedure procedure, ListIterator<Statement> statementsIt, Graph.Block block, ListIterator<Graph.Block> blocksIt, Map<ProcedureRef, Integer> callCounts) {
       Scope callScope = getProgramScope().getScope(block.getScope());
       // Remove call
       statementsIt.remove();
+      callCounts.merge(procedure.getRef(), -1, Integer::sum);
       // Find call serial number (handles when multiple calls to the same procedure is made in the call scope)
       int serial = nextSerial(procedure, callScope);
       // Copy all procedure symbols
@@ -84,7 +129,10 @@ public class Pass1ProcedureInline extends Pass1Base {
       // Create a new block label for the rest of the calling block
       Label restBlockLabel = callScope.addLabelIntermediate();
       // Copy all procedure blocks
-      List<Graph.Block> procedureBlocks = getGraph().getScopeBlocks(procedure.getRef());
+      ProcedureCompilation calleePc = getProgram().getProcedureCompilation(procedure.getRef());
+      List<Graph.Block> procedureBlocks = (calleePc != null && calleePc.getGraph() != null)
+            ? calleePc.getGraph().getScopeBlocks(procedure.getRef())
+            : Collections.emptyList();
       for(var procedureBlock : procedureBlocks) {
          LabelRef procBlockLabelRef = procedureBlock.getLabel();
          Symbol procBlockLabel = getProgramScope().getSymbol(procBlockLabelRef);
@@ -101,6 +149,9 @@ public class Pass1ProcedureInline extends Pass1Base {
             Statement inlinedStatement = inlineStatement(procStatement, procedure, callScope, serial);
             if(inlinedStatement != null) {
                inlineBlock.addStatement(inlinedStatement);
+               if(inlinedStatement instanceof StatementCall inlinedCall && inlinedCall.getProcedure() != null) {
+                  callCounts.merge(inlinedCall.getProcedure(), 1, Integer::sum);
+               }
             }
          }
          // Set successors
@@ -147,13 +198,16 @@ public class Pass1ProcedureInline extends Pass1Base {
       // Set conditional successor of original block to null (as any condition has been moved to the rest block)
       block.setConditionalSuccessor(null);
       // Log the inlining
-      getLog().append("Inlined call " + call.toString(getProgram(), false));
+      if(getLog().isEnabled()) {
+         getLog().append("Inlined call " + call.toString(getProgram(), false));
+      }
+      return restBlock.getLabel();
    }
 
    /**
     * OPT-06: Heuristic for controlled auto-inlining of small, non-recursive leaf procedures.
     */
-   private boolean isAutoInlineCandidate(Procedure callee, Procedure caller, StatementCall call) {
+   private boolean isAutoInlineCandidate(Procedure callee, Procedure caller, StatementCall call, Map<ProcedureRef, Integer> callCounts) {
       if(callee == null || caller == null || callee.equals(caller)) return false;
       if(SymbolRef.MAIN_PROC_NAME.equals(callee.getLocalName())) return false;
       if(callee.getInterruptType() != null) return false;
@@ -172,7 +226,10 @@ public class Pass1ProcedureInline extends Pass1Base {
          if(localVar.isKindLoadStore()) return false;
       }
 
-      List<Graph.Block> calleeBlocks = getGraph().getScopeBlocks(callee.getRef());
+      ProcedureCompilation calleePc = getProgram().getProcedureCompilation(callee.getRef());
+      List<Graph.Block> calleeBlocks = (calleePc != null && calleePc.getGraph() != null)
+            ? calleePc.getGraph().getScopeBlocks(callee.getRef())
+            : Collections.emptyList();
       if(calleeBlocks == null || calleeBlocks.isEmpty() || calleeBlocks.size() > 3) return false;
 
       int stmtCount = 0;
@@ -187,17 +244,7 @@ public class Pass1ProcedureInline extends Pass1Base {
       }
       if(stmtCount == 0 || stmtCount > 18) return false;
 
-      int callCount = 0;
-      for(var pc : getProgram().getProcedureCompilations()) {
-         if(pc.getGraph() == null) continue;
-         for(Graph.Block b : pc.getGraph().getAllBlocks()) {
-            for(Statement s : b.getStatements()) {
-               if(s instanceof StatementCall sc && callee.getRef().equals(sc.getProcedure())) {
-                  callCount++;
-               }
-            }
-         }
-      }
+      int callCount = callCounts.getOrDefault(callee.getRef(), 0);
       if(callCount == 1) return true;
 
       boolean hasConstArg = false;

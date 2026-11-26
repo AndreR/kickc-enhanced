@@ -52,6 +52,8 @@ public class Pass4MemoryCoalesceCallGraph extends Pass2Base {
       Map<String, List<LiveRangeEquivalenceClass>> handledECsByTypeAndSize = new LinkedHashMap<>();
       List<LiveRangeEquivalenceClass> allECs = new ArrayList<>(liveRangeEquivalenceClassSet.getEquivalenceClasses());
       Map<LiveRangeEquivalenceClass, Collection<ScopeRef>> ecScopesCache = new HashMap<>();
+      Map<LiveRangeEquivalenceClass, Set<ScopeRef>> threadCache = new HashMap<>();
+      Map<LiveRangeEquivalenceClass, Set<Integer>> ecStmtsCache = new HashMap<>();
       for(LiveRangeEquivalenceClass thisEC : allECs) {
          // Skip main-memory registers or non-memory registers
          Registers.Register thisReg = thisEC.getRegister();
@@ -62,14 +64,17 @@ public class Pass4MemoryCoalesceCallGraph extends Pass2Base {
          if(thisReg instanceof Registers.RegisterZpMem && getProgram().getReservedZps().contains(((Registers.RegisterZpMem) thisReg).getZp()))
             continue;
 
+         boolean thisIsZp = thisReg instanceof Registers.RegisterZpMem;
          String typeKey = thisReg.getType().name() + ":" + thisReg.getBytes();
          List<LiveRangeEquivalenceClass> handledList = handledECsByTypeAndSize.get(typeKey);
 
          // Find all calling scopes - since we want to avoid coalescing with variables in these
          Set<ScopeRef> allCallingScopes = null;
+         Set<Integer> thisECStmts = null;
          boolean coalesced = false;
          if(handledList != null && !handledList.isEmpty()) {
-            for(LiveRangeEquivalenceClass otherEC : handledList) {
+            for(int idx = 0; idx < handledList.size(); idx++) {
+               LiveRangeEquivalenceClass otherEC = handledList.get(idx);
                // Fast compatibility check: must be compatible memory registers (same type, same size, not in reserved ZPs)
                if(!Pass4MemoryCoalesce.canCoalesceCompatible(thisEC, otherEC, getProgram()))
                   continue;
@@ -84,11 +89,21 @@ public class Pass4MemoryCoalesceCallGraph extends Pass2Base {
                if(isProcedureOverlap(otherEC, allCallingScopes, ecScopesCache))
                   continue;
                // No scope overlap - attempt to coalesce
+               boolean skipClobber = false;
+               if(thisIsZp && (otherEC.getRegister() instanceof Registers.RegisterZpMem)) {
+                  if(thisECStmts == null) {
+                     thisECStmts = ecStmtsCache.computeIfAbsent(thisEC, ec -> Pass4MemoryCoalesce.getEquivalenceClassStatements(ec, getProgram()));
+                  }
+                  skipClobber = !Pass4MemoryCoalesce.sharesAnyStatement(thisECStmts, otherEC, getProgram());
+               }
                Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate candidate = new Pass4MemoryCoalesce.LiveRangeEquivalenceClassCoalesceCandidate(thisEC, otherEC, null);
-               if(Pass4MemoryCoalesce.attemptCoalesce(candidate, threadHeads, unknownFragments, getProgram())) {
-                  // Successfully coalesced with already handled EC - invalidate cached scopes for both and move on!
+               if(Pass4MemoryCoalesce.attemptCoalesce(candidate, threadHeads, unknownFragments, getProgram(), skipClobber, threadCache)) {
+                  // Successfully coalesced with already handled EC - invalidate caches for both, replace deleted otherEC with surviving thisEC, and move on!
                   ecScopesCache.remove(otherEC);
                   ecScopesCache.remove(thisEC);
+                  ecStmtsCache.remove(otherEC);
+                  ecStmtsCache.remove(thisEC);
+                  handledList.set(idx, thisEC);
                   coalesced = true;
                   modified = true;
                   break;

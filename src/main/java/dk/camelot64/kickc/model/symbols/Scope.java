@@ -60,6 +60,18 @@ public abstract class Scope implements Symbol {
       this.segmentData = segmentData;
    }
 
+   /**
+    * Get the data segment for immutable constant data (such as inline string literals) in this scope.
+    * Walks up to the containing procedure if present, otherwise falls back to {@link #getSegmentData()}.
+    */
+   public String getSegmentConstData() {
+      Procedure containingProc = getContainingProcedure();
+      if(containingProc != null && containingProc != this) {
+         return containingProc.getSegmentConstData();
+      }
+      return getSegmentData();
+   }
+
    public HashMap<String, Symbol> getSymbols() {
       return symbols;
    }
@@ -115,7 +127,11 @@ public abstract class Scope implements Symbol {
 
    public void remove(Symbol symbol) {
       symbols.remove(symbol.getLocalName());
-      getProgramScope().clearCache();
+      if(symbol instanceof Scope) {
+         getProgramScope().clearCache();
+      } else {
+         getProgramScope().removeFromCache(symbol.getFullName());
+      }
    }
 
 
