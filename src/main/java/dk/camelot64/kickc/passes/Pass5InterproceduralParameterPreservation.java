@@ -347,9 +347,10 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
 
       // 3. Scan lines across all chunks for redundant stores across JSR.
       // Notice: tracking persists across chunk boundaries within a procedure scope!
-      List<LineRef> allLines = flattenLines(getAsmProgram());
-      Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
+      List<LineRef> allLines = getSharedAllLines();
+      Map<String, CanonicalResolver> scopeResolvers = getSharedScopeResolvers(allLines);
       Set<AsmLine> removedLines = Collections.newSetFromMap(new IdentityHashMap<>());
+      boolean structuralChange = false;
 
       Map<String, String> knownZp = new HashMap<>();
       String currentValA = null;
@@ -475,6 +476,7 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                      getLog().append("Forwarding known ZP constant " + varKey + "=" + knownVal + " into " + mnem + " #" + rawImm);
                      inst.setCpuOpcode(immOp);
                      inst.setOperand1(rawImm);
+                     markScopeDirty(currentScope);
                      modified = true;
                      if("lda".equals(mnem)) { currentValA = knownVal; loadRefA = ref; }
                      else if("ldx".equals(mnem)) { currentValX = knownVal; loadRefX = ref; }
@@ -559,6 +561,8 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
                      getLog().append("Pass 5: Eliminating redundant store across JSR: " + inst.getAsm());
                      ref.chunk.getLines().remove(ref.line);
                      removedLines.add(ref.line);
+                     markScopeDirty(currentScope);
+                     structuralChange = true;
                      modified = true;
 
                      if(loadRef != null && canEliminatePrecedingLoad(allLines, i, loadRef, reg, removedLines)) {
@@ -610,6 +614,9 @@ public class Pass5InterproceduralParameterPreservation extends Pass5AsmOptimizat
          }
       }
 
+      if(structuralChange) {
+         invalidateRoundStructure();
+      }
       return modified;
    }
 }

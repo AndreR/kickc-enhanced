@@ -198,9 +198,72 @@ public abstract class Pass5AsmOptimization {
    }
 
    private Program program;
+   private Pass5RoundContext roundContext;
 
    public Pass5AsmOptimization(Program program) {
       this.program = program;
+   }
+
+   public void setRoundContext(Pass5RoundContext ctx) {
+      this.roundContext = ctx;
+   }
+
+   public Pass5RoundContext getRoundContext() {
+      return this.roundContext;
+   }
+
+   protected List<LineRef> getSharedAllLines() {
+      if(roundContext != null) {
+         return roundContext.getAllLines();
+      }
+      return flattenLines(getAsmProgram());
+   }
+
+   protected Map<String, CanonicalResolver> getSharedScopeResolvers(List<LineRef> allLines) {
+      if(roundContext != null) {
+         return roundContext.getScopeResolvers();
+      }
+      return buildScopeResolvers(allLines);
+   }
+
+   protected Map<String, List<LineRef>> getSharedScopeLinesMap(List<LineRef> allLines) {
+      if(roundContext != null) {
+         return roundContext.getScopeLinesMap();
+      }
+      Map<String, List<LineRef>> map = new LinkedHashMap<>();
+      for(LineRef ref : allLines) {
+         String scope = ref.scope != null ? ref.scope : "";
+         map.computeIfAbsent(scope, k -> new ArrayList<>()).add(ref);
+      }
+      return map;
+   }
+
+   protected boolean isScopeDirty(String scope) {
+      return roundContext == null || roundContext.isScopeDirty(scope);
+   }
+
+   protected void markScopeDirty(String scope) {
+      if(roundContext != null) {
+         roundContext.markScopeDirty(scope);
+      }
+   }
+
+   protected void markAllScopesDirty() {
+      if(roundContext != null) {
+         roundContext.markAllScopesDirty();
+      }
+   }
+
+   protected void invalidateRoundStructure() {
+      if(roundContext != null) {
+         roundContext.invalidateStructure();
+      }
+   }
+
+   protected void invalidateRoundLabels() {
+      if(roundContext != null) {
+         roundContext.invalidateLabels();
+      }
    }
 
    /**

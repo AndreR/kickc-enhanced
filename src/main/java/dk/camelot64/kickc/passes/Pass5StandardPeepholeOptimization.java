@@ -26,19 +26,16 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
       while(passModified) {
          passModified = false;
 
-         List<LineRef> allLines = flattenLines(getAsmProgram());
-         Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
-         Map<String, Map<String, String>> scopeAliasMap = new HashMap<>();
-         for(LineRef ref : allLines) {
-            if(ref.line instanceof AsmLabelDecl) {
-               AsmLabelDecl decl = (AsmLabelDecl) ref.line;
-               scopeAliasMap.computeIfAbsent(ref.scope, k -> new HashMap<>()).put(decl.getName(), decl.getValue());
-            }
-         }
+         List<LineRef> allLines = getSharedAllLines();
+         Map<String, CanonicalResolver> scopeResolvers = getSharedScopeResolvers(allLines);
+         Map<String, Map<String, String>> scopeAliasMap = null;
 
          for(int i = 0; i < allLines.size(); i++) {
             LineRef ref1 = allLines.get(i);
             String currentScope = ref1.scope;
+            if(!isScopeDirty(currentScope)) {
+               continue;
+            }
             if(!(ref1.line instanceof AsmInstruction)) {
                continue;
             }
@@ -95,6 +92,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                         getLog().append("Eliminating redundant " + inst2.getAsm() + " and converting " + mnem3 + " to " + newBranchMnem);
                         inst3.setCpuOpcode(newBranchOp);
                         tombstoneLine(allLines, nextIdx);
+                        markScopeDirty(currentScope);
                         passModified = true;
                         overallModified = true;
                         continue;
@@ -102,6 +100,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                         getLog().append("Converting " + inst2.getAsm() + "; " + mnem3 + " to CMP #0; " + newBranchMnem);
                         inst2.setOperand1("0");
                         inst3.setCpuOpcode(newBranchOp);
+                        markScopeDirty(currentScope);
                         passModified = true;
                         overallModified = true;
                         continue;
@@ -137,6 +136,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                      instE.getCpuOpcode() != null && instE.getCpuOpcode().getMnemonic().equals("lda") && isZeroOperand(instE.getOperand1()) &&
                      instF.getCpuOpcode() != null && instF.getCpuOpcode().getMnemonic().equals("sta")) {
 
+                     if(scopeAliasMap == null) scopeAliasMap = buildScopeAliasMap(allLines);
                      Map<String, String> aliases = scopeAliasMap.get(currentScope);
                      String var1 = getBaseVar(inst1.getOperand1());
                      String varB = getBaseVar(instB.getOperand1());
@@ -159,6 +159,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                         tombstoneLine(allLines, i5);
                         tombstoneLine(allLines, i6);
                         tombstoneLine(allLines, i7);
+                        markScopeDirty(currentScope);
                         passModified = true;
                         overallModified = true;
                         continue;
@@ -210,6 +211,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                            tombstoneLine(allLines, i5);
                            tombstoneLine(allLines, i6);
                            tombstoneLine(allLines, i7);
+                           markScopeDirty(currentScope);
                            passModified = true;
                            overallModified = true;
                            continue;
@@ -243,6 +245,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                      instD.getCpuOpcode() != null && instD.getCpuOpcode().getMnemonic().equals("lda") &&
                      instE.getCpuOpcode() != null) {
 
+                     if(scopeAliasMap == null) scopeAliasMap = buildScopeAliasMap(allLines);
                      Map<String, String> aliases = scopeAliasMap.get(currentScope);
                      String baseA = getBaseVar(instA.getOperand1());
                      String baseC = getBaseVar(instC.getOperand1());
@@ -258,6 +261,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                            tombstoneLine(allLines, i3);
                            tombstoneLine(allLines, i4);
                            tombstoneLine(allLines, i5);
+                           markScopeDirty(currentScope);
                            passModified = true;
                            overallModified = true;
                            continue;
@@ -267,6 +271,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                            tombstoneLine(allLines, i3);
                            tombstoneLine(allLines, i4);
                            tombstoneLine(allLines, i5);
+                           markScopeDirty(currentScope);
                            passModified = true;
                            overallModified = true;
                            continue;
@@ -325,6 +330,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                         instD.setOperand1(idxOp);
                         tombstoneLine(allLines, i6);
                         tombstoneLine(allLines, i7);
+                        markScopeDirty(currentScope);
                         passModified = true;
                         overallModified = true;
                         continue;
@@ -382,6 +388,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                      instM.getCpuOpcode() != null && instM.getCpuOpcode().getMnemonic().equals("ror") && getOffset(instM.getOperand1()) == 1 &&
                      instN.getCpuOpcode() != null && instN.getCpuOpcode().getMnemonic().equals("ror") && getOffset(instN.getOperand1()) == 0) {
 
+                     if(scopeAliasMap == null) scopeAliasMap = buildScopeAliasMap(allLines);
                      Map<String, String> aliases = scopeAliasMap.get(currentScope);
                      String var1 = getBaseVar(inst1.getOperand1());
                      String varB = getBaseVar(instB.getOperand1());
@@ -421,6 +428,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                         tombstoneLine(allLines, i13);
                         tombstoneLine(allLines, i14);
                         tombstoneLine(allLines, i15);
+                        markScopeDirty(currentScope);
                         passModified = true;
                         overallModified = true;
                         continue;
@@ -446,6 +454,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                      if(mnemK.equals("txa")) {
                         getLog().append("Eliminating redundant secondary TXA");
                         tombstoneLine(allLines, k);
+                        markScopeDirty(currentScope);
                         passModified = true;
                         overallModified = true;
                         removedTxa = true;
@@ -498,6 +507,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                      instF.getCpuOpcode() != null && instF.getCpuOpcode().getMnemonic().equals("lda") && getOffset(instF.getOperand1()) == 1 &&
                      instG.getCpuOpcode() != null && instG.getCpuOpcode().getMnemonic().equals("sta") && getOffset(instG.getOperand1()) == 1) {
 
+                     if(scopeAliasMap == null) scopeAliasMap = buildScopeAliasMap(allLines);
                      Map<String, String> aliases = scopeAliasMap.get(currentScope);
                      String baseSrcLo = getBaseVar(inst1.getOperand1());
                      String baseSrcHi = getBaseVar(instB.getOperand1());
@@ -533,10 +543,12 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                         int idx4 = allLines.get(i4).chunk.getLines().indexOf(instC);
                         allLines.get(i4).chunk.getLines().add(idx4 + 1, newStaHi);
 
-                        allLines.get(i5).chunk.getLines().remove(instD);
-                        allLines.get(i6).chunk.getLines().remove(instE);
-                        allLines.get(i7).chunk.getLines().remove(instF);
-                        allLines.get(i8).chunk.getLines().remove(instG);
+                        tombstoneLine(allLines, i5);
+                        tombstoneLine(allLines, i6);
+                        tombstoneLine(allLines, i7);
+                        tombstoneLine(allLines, i8);
+                        markScopeDirty(currentScope);
+                        invalidateRoundStructure();
                         passModified = true;
                         overallModified = true;
                         break;
@@ -557,6 +569,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                   if(isZOrNBranch && areFlagsEstablishedForReg(allLines, i, reg, currentScope)) {
                      getLog().append("Eliminating redundant zero comparison " + inst1.getAsm() + " before " + inst2.getAsm());
                      tombstoneLine(allLines, i);
+                     markScopeDirty(currentScope);
                      passModified = true;
                      overallModified = true;
                      continue;
@@ -572,6 +585,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                            getLog().append("Shortening " + inst1.getAsm() + " to " + xferMnem + " before " + inst2.getAsm());
                            inst1.setCpuOpcode(xferOp);
                            inst1.setOperand1(null);
+                           markScopeDirty(currentScope);
                            passModified = true;
                            overallModified = true;
                            continue;
@@ -602,6 +616,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                   if(targetDead && fallthroughDead) {
                      getLog().append("Eliminating redundant load " + inst2.getAsm() + " after " + inst1.getAsm() + " before " + inst3.getAsm());
                      tombstoneLine(allLines, nextIdx);
+                     markScopeDirty(currentScope);
                      passModified = true;
                      overallModified = true;
                      continue;
@@ -619,6 +634,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                   mnem1.equals("lax") || mnem1.equals("alr")) {
                   getLog().append("Eliminating redundant " + inst2.getAsm() + " after " + inst1.getAsm());
                   tombstoneLine(allLines, nextIdx);
+                  markScopeDirty(currentScope);
                   passModified = true;
                   overallModified = true;
                   continue;
@@ -635,6 +651,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                mode1.equals(CpuAddressingMode.NON) && mode2.equals(CpuAddressingMode.NON)) {
                getLog().append("Eliminating redundant transfer " + inst2.getAsm() + " after " + inst1.getAsm());
                tombstoneLine(allLines, nextIdx);
+               markScopeDirty(currentScope);
                passModified = true;
                overallModified = true;
                continue;
@@ -659,6 +676,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                         getLog().append("Folding " + inst1.getAsm() + "; " + inst2.getAsm() + " -> " + storeMnem + " " + inst2.getOperand1());
                         inst2.setCpuOpcode(storeOp);
                         tombstoneLine(allLines, i);
+                        markScopeDirty(currentScope);
                         passModified = true;
                         overallModified = true;
                         continue;
@@ -681,6 +699,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                      getLog().append("Folding " + inst1.getAsm() + "; " + inst2.getAsm() + " -> " + loadMnem + " " + inst1.getOperand1());
                      inst1.setCpuOpcode(loadOp);
                      tombstoneLine(allLines, nextIdx);
+                     markScopeDirty(currentScope);
                      passModified = true;
                      overallModified = true;
                      continue;
@@ -698,6 +717,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                      && (getLiveFlagsAfter(allLines, i, currentScope, getProgram()) & FLAG_NZ) == 0) {
                   getLog().append("Eliminating dead register transfer " + inst1.getAsm());
                   tombstoneLine(allLines, i);
+                  markScopeDirty(currentScope);
                   passModified = true;
                   overallModified = true;
                   continue;
@@ -724,6 +744,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
             if(isDeadOverwrittenLoad) {
                getLog().append("Eliminating dead overwritten load " + inst1.getAsm() + " before " + inst2.getAsm());
                tombstoneLine(allLines, i);
+               markScopeDirty(currentScope);
                passModified = true;
                overallModified = true;
                continue;
@@ -741,6 +762,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                AsmInstruction in2 = (AsmInstruction) r2.line;
                if(in2.getCpuOpcode() != null && "lda".equals(in2.getCpuOpcode().getMnemonic()) &&
                   AsmProgramStaticRegisterValues.matchImm(in2.getOperand1(), "0")) {
+                  if(scopeAliasMap == null) scopeAliasMap = buildScopeAliasMap(allLines);
                   int idx3 = findNextInstruction(allLines, idx2 + 1);
                   if(idx3 != -1) {
                      LineRef r3 = allLines.get(idx3);
@@ -770,7 +792,9 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                                     in4.setOperand1(null);
                                     in5.setCpuOpcode(in3.getCpuOpcode());
                                     in5.setOperand1(in3.getOperand1());
-                                    r3.chunk.getLines().remove(in3);
+                                    tombstoneLine(allLines, idx3);
+                                    markScopeDirty(currentScope);
+                                    invalidateRoundStructure();
                                     passModified = true;
                                     overallModified = true;
                                     break;
@@ -818,17 +842,19 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                               AsmInstruction inst9 = (AsmInstruction) allLines.get(idx9).line;
                               AsmInstruction inst10 = (AsmInstruction) allLines.get(idx10).line;
 
+                              if(scopeAliasMap == null) scopeAliasMap = buildScopeAliasMap(allLines);
+                              Map<String, String> aliases = scopeAliasMap.get(currentScope);
                               if(inst4.getCpuOpcode() != null && "lda".equals(inst4.getCpuOpcode().getMnemonic()) &&
                                  inst5.getCpuOpcode() != null && "ror".equals(inst5.getCpuOpcode().getMnemonic()) &&
                                  inst5.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.NON) &&
                                  inst6.getCpuOpcode() != null && "sta".equals(inst6.getCpuOpcode().getMnemonic()) &&
-                                 isSameLocation(inst6.getOperand1(), opT, scopeAliasMap.get(currentScope)) &&
+                                 isSameLocation(inst6.getOperand1(), opT, aliases) &&
                                  inst7.getCpuOpcode() != null && "lsr".equals(inst7.getCpuOpcode().getMnemonic()) &&
-                                 isSameLocation(inst7.getOperand1(), opT1, scopeAliasMap.get(currentScope)) &&
+                                 isSameLocation(inst7.getOperand1(), opT1, aliases) &&
                                  inst8.getCpuOpcode() != null && "ror".equals(inst8.getCpuOpcode().getMnemonic()) &&
-                                 isSameLocation(inst8.getOperand1(), opT, scopeAliasMap.get(currentScope)) &&
+                                 isSameLocation(inst8.getOperand1(), opT, aliases) &&
                                  inst9.getCpuOpcode() != null && "lda".equals(inst9.getCpuOpcode().getMnemonic()) &&
-                                 isSameLocation(inst9.getOperand1(), opT, scopeAliasMap.get(currentScope)) &&
+                                 isSameLocation(inst9.getOperand1(), opT, aliases) &&
                                  inst10.getCpuOpcode() != null && "sta".equals(inst10.getCpuOpcode().getMnemonic()) &&
                                  !isVolatileOrHardwareOperand(opT, currentScope, resolver, getProgram())) {
 
@@ -843,6 +869,7 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
                                  tombstoneLine(allLines, idx6);
                                  tombstoneLine(allLines, idx9);
                                  tombstoneLine(allLines, idx10);
+                                 markScopeDirty(currentScope);
 
                                  passModified = true;
                                  overallModified = true;
@@ -875,6 +902,11 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
 
       for(int i = 0; i < allLines.size(); i++) {
          LineRef ref = allLines.get(i);
+         if(!isScopeDirty(ref.scope)) {
+            carryClear = false;
+            maxA = 255;
+            continue;
+         }
          AsmLine line = ref.line;
          if(line instanceof AsmComment || line instanceof AsmConstant || line instanceof AsmLabelDecl) {
             continue;
@@ -898,7 +930,8 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
          if(mnem.equals("clc")) {
             if(carryClear && !inst.isNoOptimize()) {
                getLog().append("OPT-03: Eliminating redundant clc (C=0 guaranteed)");
-               ref.chunk.getLines().remove(inst);
+               tombstoneLine(allLines, i);
+               markScopeDirty(ref.scope);
                modified = true;
                continue;
             }
@@ -973,6 +1006,16 @@ public class Pass5StandardPeepholeOptimization extends Pass5AsmOptimization {
       } catch(NumberFormatException ignored) {
       }
       return null;
+   }
+
+   private Map<String, Map<String, String>> buildScopeAliasMap(List<LineRef> allLines) {
+      Map<String, Map<String, String>> scopeAliasMap = new HashMap<>();
+      for(LineRef ref : allLines) {
+         if(ref.line instanceof AsmLabelDecl decl && isScopeDirty(ref.scope)) {
+            scopeAliasMap.computeIfAbsent(ref.scope, k -> new HashMap<>()).put(decl.getName(), decl.getValue());
+         }
+      }
+      return scopeAliasMap;
    }
 
    private static boolean isSameLocation(String op1, String op2, Map<String, String> scopeAliases) {

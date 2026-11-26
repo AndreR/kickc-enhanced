@@ -5,6 +5,7 @@ import dk.camelot64.cpufamily6502.CpuClobber;
 import dk.camelot64.cpufamily6502.CpuOpcode;
 import dk.camelot64.kickc.model.Program;
 import dk.camelot64.kickc.passes.Pass5AsmOptimization;
+import dk.camelot64.kickc.passes.Pass5RoundContext;
 
 import java.util.*;
 
@@ -15,6 +16,7 @@ public class AsmProgramStaticRegisterValues {
 
    private AsmProgram program;
    private Program kickcProgram;
+   private Pass5RoundContext roundContext;
    private List<Pass5AsmOptimization.LineRef> allLines;
    private Map<String, Pass5AsmOptimization.CanonicalResolver> scopeResolvers;
    private String currentScope = "";
@@ -45,12 +47,17 @@ public class AsmProgramStaticRegisterValues {
    }
 
    public AsmProgramStaticRegisterValues(AsmProgram program) {
-      this(program, null);
+      this(program, null, null);
    }
 
    public AsmProgramStaticRegisterValues(AsmProgram program, Program kickcProgram) {
+      this(program, kickcProgram, null);
+   }
+
+   public AsmProgramStaticRegisterValues(AsmProgram program, Program kickcProgram, Pass5RoundContext roundContext) {
       this.program = program;
       this.kickcProgram = kickcProgram;
+      this.roundContext = roundContext;
       this.values = new LinkedHashMap<>();
       initValues();
    }
@@ -270,11 +277,19 @@ public class AsmProgramStaticRegisterValues {
       backwardTargetLabels.clear();
       lastInstructionWasUnconditionalControlFlow = false;
       currentScope = "";
-      this.allLines = Pass5AsmOptimization.flattenLines(program);
-      scopeResolvers = Pass5AsmOptimization.buildScopeResolvers(allLines);
+      if(roundContext != null) {
+         this.allLines = roundContext.getAllLines();
+         this.scopeResolvers = roundContext.getScopeResolvers();
+      } else {
+         this.allLines = Pass5AsmOptimization.flattenLines(program);
+         this.scopeResolvers = Pass5AsmOptimization.buildScopeResolvers(allLines);
+      }
       // CF-08: Pre-scan backward jumps to multi-labels (!-, !loop-, !--, etc.) and invalidate state at their targets
       for(int i = 0; i < allLines.size(); i++) {
          Pass5AsmOptimization.LineRef ref = allLines.get(i);
+         if(roundContext != null && !roundContext.isScopeDirty(ref.scope)) {
+            continue;
+         }
          if(ref.line instanceof AsmInstruction inst && inst.getCpuOpcode() != null && inst.getCpuOpcode().isJump()) {
             String target = inst.getOperandJumpTarget();
             if(target != null && target.startsWith("!") && target.endsWith("-")) {
@@ -285,9 +300,24 @@ public class AsmProgramStaticRegisterValues {
             }
          }
       }
+      boolean activeScopeDirty = (roundContext == null || roundContext.isScopeDirty(""));
       for(AsmChunk chunk : program.getChunks()) {
          for(AsmLine line : chunk.getLines()) {
-            current = updateStaticRegisterValues(current, line);
+            if(line instanceof AsmScopeBegin) {
+               currentScope = ((AsmScopeBegin) line).getLabel();
+               forwardBranches.clear();
+               lastInstructionWasUnconditionalControlFlow = false;
+               current = new AsmRegisterValues();
+               activeScopeDirty = (roundContext == null || roundContext.isScopeDirty(currentScope));
+            } else if(line instanceof AsmScopeEnd) {
+               currentScope = "";
+               forwardBranches.clear();
+               lastInstructionWasUnconditionalControlFlow = false;
+               current = new AsmRegisterValues();
+               activeScopeDirty = (roundContext == null || roundContext.isScopeDirty(""));
+            } else if(activeScopeDirty) {
+               current = updateStaticRegisterValues(current, line);
+            }
          }
       }
    }

@@ -70,14 +70,16 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
    @Override
    public boolean optimize() {
       // Build allLines initially for analysis
-      List<LineRef> initialLines = buildAllLines();
+      List<LineRef> initialLines = getSharedAllLines();
       Set<String> carryProcs = findCarryReturnProcedures(initialLines);
       if(carryProcs.isEmpty()) {
          return false;
       }
 
       boolean overallModified = false;
+      boolean structuralChange = false;
       boolean needsRebuild = true;
+      boolean firstPass = true;
 
       CpuOpcode secOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("sec", CpuAddressingMode.NON, false);
       CpuOpcode clcOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("clc", CpuAddressingMode.NON, false);
@@ -87,23 +89,22 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
       while(needsRebuild) {
          needsRebuild = false;
 
-         // Linearize all lines across chunks
-         List<LineRef> allLines = new ArrayList<>();
-         String currentScope = null;
-         int lineIdx = 0;
+         List<LineRef> allLines;
+         if(firstPass) {
+            allLines = new ArrayList<>(initialLines);
+            firstPass = false;
+         } else {
+            allLines = flattenLines(getAsmProgram());
+         }
          Map<String, Integer> labelIndices = new HashMap<>();
-
-         for(AsmChunk chunk : getAsmProgram().getChunks()) {
-            String scope = chunk.getScopeLabel();
-            for(AsmLine line : chunk.getLines()) {
-               if(line instanceof AsmLabel) {
-                  String lbl = ((AsmLabel) line).getLabel();
-                  if(lbl != null && !lbl.startsWith("!")) {
-                     String key = (scope != null ? scope : "") + "::" + lbl;
-                     labelIndices.put(key, lineIdx);
-                  }
+         for(int idx = 0; idx < allLines.size(); idx++) {
+            LineRef ref = allLines.get(idx);
+            if(ref.line instanceof AsmLabel lblLine) {
+               String lbl = lblLine.getLabel();
+               if(lbl != null && !lbl.startsWith("!")) {
+                  String key = (ref.scope != null ? ref.scope : "") + "::" + lbl;
+                  labelIndices.put(key, idx);
                }
-               allLines.add(new LineRef(lineIdx++, chunk, line, scope));
             }
          }
 
@@ -123,6 +124,7 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
                            prevInst.setOperand1(null);
                            prevInst.setOperand2(null);
                            prevInst.setOperand3(null);
+                           markScopeDirty(ref.scope);
                            overallModified = true;
                         } else if(isImmVal(prevInst.getOperand1(), 0)) {
                            // Replace with CLC
@@ -130,12 +132,15 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
                            prevInst.setOperand1(null);
                            prevInst.setOperand2(null);
                            prevInst.setOperand3(null);
+                           markScopeDirty(ref.scope);
                            overallModified = true;
                         }
                      } else if("eor".equals(mn) && isImmVal(prevInst.getOperand1(), 1)) {
                          // A contains inverted boolean 0 or 1: insert LSR before RTS to shift bit 0 into Carry!
                          CpuOpcode lsrOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lsr", CpuAddressingMode.NON, false);
                          ref.chunk.addLineBefore(inst, new AsmInstruction(lsrOp, null, null, null));
+                         markScopeDirty(ref.scope);
+                         structuralChange = true;
                          needsRebuild = true;
                          overallModified = true;
                       } else if("rol".equals(mn)) {
@@ -148,6 +153,8 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
                                  if("cmp".equals(cmn) || "cpx".equals(cmn) || "cpy".equals(cmn)) {
                                     tombstoneLine(allLines, prevLdaIdx);
                                     tombstoneLine(allLines, prevIdx);
+                                    markScopeDirty(ref.scope);
+                                    structuralChange = true;
                                     overallModified = true;
                                  }
                               }
@@ -194,6 +201,8 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
                                  // CMP already sets Carry: eliminate BCC and SEC!
                                  tombstoneLine(allLines, idxB);
                                  tombstoneLine(allLines, idxSec);
+                                 markScopeDirty(refCmp.scope);
+                                 structuralChange = true;
                                  overallModified = true;
                               }
                            }
@@ -207,6 +216,8 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
                               if(idxRts2 != -1 && isRts(allLines.get(idxRts2).line)) {
                                  tombstoneLine(allLines, idxB);
                                  tombstoneLine(allLines, idxSec);
+                                 markScopeDirty(refCmp.scope);
+                                 structuralChange = true;
                                  overallModified = true;
                               }
                            }
@@ -228,6 +239,8 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
             if(ref.line instanceof AsmInstruction inst && "jsr".equalsIgnoreCase(inst.getCpuOpcode().getMnemonic())) {
                String target = inst.getOperand1();
                if(target != null && carryProcs.contains(target.trim())) {
+                  String calleeScope = target.trim();
+                  String callerScope = ref.scope != null ? ref.scope : "";
                   int nextIdx = nextInstIdx(allLines, i + 1);
                   if(nextIdx != -1) {
                      LineRef refNext = allLines.get(nextIdx);
@@ -242,19 +255,29 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
                                  if("bne".equals(bmn)) {
                                     branchInst.setCpuOpcode(bcsOp);
                                     tombstoneLine(allLines, nextIdx);
+                                    markScopeDirty(calleeScope);
+                                    markScopeDirty(callerScope);
+                                    structuralChange = true;
                                     overallModified = true;
                                  } else if("beq".equals(bmn)) {
                                     branchInst.setCpuOpcode(bccOp);
                                     tombstoneLine(allLines, nextIdx);
+                                    markScopeDirty(calleeScope);
+                                    markScopeDirty(callerScope);
+                                    structuralChange = true;
                                     overallModified = true;
                                  }
                               }
                            }
                         } else if("bne".equals(mn)) {
                            nextInst.setCpuOpcode(bcsOp);
+                           markScopeDirty(calleeScope);
+                           markScopeDirty(callerScope);
                            overallModified = true;
                         } else if("beq".equals(mn)) {
                            nextInst.setCpuOpcode(bccOp);
+                           markScopeDirty(calleeScope);
+                           markScopeDirty(callerScope);
                            overallModified = true;
                         } else if(isRts(nextInst) && (ref.scope == null || !carryProcs.contains(ref.scope))) {
                            // Caller is NOT a carry procedure and immediately returns the result:
@@ -263,6 +286,9 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
                            CpuOpcode rolOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("rol", CpuAddressingMode.NON, false);
                            refNext.chunk.addLineBefore(nextInst, new AsmInstruction(ldaImm, "0", null, null));
                            refNext.chunk.addLineBefore(nextInst, new AsmInstruction(rolOp, null, null, null));
+                           markScopeDirty(calleeScope);
+                           markScopeDirty(callerScope);
+                           structuralChange = true;
                            overallModified = true;
                         } else if((mn.startsWith("sta") || "tay".equals(mn) || "tax".equals(mn) || "pha".equals(mn)) && (ref.scope == null || !carryProcs.contains(ref.scope))) {
                            // Call site stores the boolean result: normalize Carry to Register A: LDA #0 ; ROL
@@ -270,6 +296,9 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
                            CpuOpcode rolOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("rol", CpuAddressingMode.NON, false);
                            refNext.chunk.addLineBefore(nextInst, new AsmInstruction(ldaImm, "0", null, null));
                            refNext.chunk.addLineBefore(nextInst, new AsmInstruction(rolOp, null, null, null));
+                           markScopeDirty(calleeScope);
+                           markScopeDirty(callerScope);
+                           structuralChange = true;
                            overallModified = true;
                         }
                      }
@@ -279,6 +308,9 @@ public class Pass5CarryFlagReturnOptimization extends Pass5AsmOptimization {
          }
       }
 
+      if(structuralChange) {
+         invalidateRoundStructure();
+      }
       return overallModified;
    }
 

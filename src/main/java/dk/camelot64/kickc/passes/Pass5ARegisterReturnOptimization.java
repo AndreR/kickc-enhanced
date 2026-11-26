@@ -27,9 +27,9 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
    @Override
    public boolean optimize() {
       if(getProgram().getScope() == null) return false;
-      List<LineRef> allLines = flattenLines(getAsmProgram());
+      List<LineRef> allLines = getSharedAllLines();
       if(allLines.isEmpty()) return false;
-      Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
+      Map<String, CanonicalResolver> scopeResolvers = getSharedScopeResolvers(allLines);
 
       // Map procedure name -> scope range in allLines, and collect per-scope .label declarations and call/operand indices
       Map<String, int[]> scopeRanges = new LinkedHashMap<>();
@@ -369,13 +369,19 @@ public class Pass5ARegisterReturnOptimization extends Pass5AsmOptimization {
             }
          }
          for(int loadIdx : callerLoadIndices) {
+            String callerScope = allLines.get(loadIdx).scope;
+            markScopeDirty(callerScope != null ? callerScope : "");
             tombstoneLine(allLines, loadIdx);
          }
+         markScopeDirty(procName);
          proc.setAReturn(true);
          getLog().append("GEN-06: Optimized 8-bit return of " + procName + " to A register (" + callerLoadIndices.size() + " call sites)");
          modified = true;
       }
 
+      if(modified) {
+         invalidateRoundStructure();
+      }
       return modified;
    }
 

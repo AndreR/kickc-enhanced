@@ -198,6 +198,15 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
       return crossScopeRefs;
    }
 
+   private static void tombstoneScopeLine(List<LineRef> allLines, List<LineRef> sLines, int sIdx) {
+      if(sIdx < 0 || sIdx >= sLines.size()) return;
+      LineRef ref = sLines.get(sIdx);
+      tombstoneLine(sLines, sIdx);
+      if(ref != null && ref.index >= 0 && ref.index < allLines.size() && allLines.get(ref.index) == ref) {
+         allLines.set(ref.index, sLines.get(sIdx));
+      }
+   }
+
    @Override
    public boolean optimize() {
       boolean overallModified = false;
@@ -206,19 +215,24 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
       while(passModified) {
          passModified = false;
 
-         // Build a flat sequential list of all lines across all chunks
-         List<LineRef> allLines = new ArrayList<>();
-         for(AsmChunk chunk : getAsmProgram().getChunks()) {
-            for(AsmLine line : chunk.getLines()) {
-               allLines.add(new LineRef(chunk, line));
+         List<LineRef> allLines = getSharedAllLines();
+         Map<String, List<LineRef>> scopeLinesMap = getSharedScopeLinesMap(allLines);
+
+         boolean anyDirty = false;
+         for(String sc : scopeLinesMap.keySet()) {
+            if(!sc.isEmpty() && isScopeDirty(sc)) {
+               anyDirty = true;
+               break;
             }
+         }
+         if(!anyDirty) {
+            break;
          }
 
          // 0. Collect physical addresses bound to non-SSA variables and call graph
          Set<Integer> trulyGlobalPhysicalAddrs = new HashSet<>();
          Map<String, Set<Integer>> scopeNamedPhysicalAddrs = new HashMap<>();
          Map<String, Set<String>> directCalls = new HashMap<>();
-         Map<String, List<LineRef>> scopeLinesMap = new LinkedHashMap<>();
          Map<String, String> globalAliases = new HashMap<>();
 
          String scanScope = "";
@@ -227,8 +241,6 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                scanScope = ((AsmScopeBegin) ref.line).getLabel();
             } else if(ref.line instanceof AsmScopeEnd) {
                scanScope = "";
-            } else if(scanScope != null && !scanScope.isEmpty()) {
-               scopeLinesMap.computeIfAbsent(scanScope, k -> new ArrayList<>()).add(ref);
             }
 
             if(ref.line instanceof AsmLabelDecl) {
@@ -268,6 +280,7 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
          // Transitive closure of calls per scope
          Map<String, Set<String>> allCallees = new HashMap<>();
          for(String sc : scopeLinesMap.keySet()) {
+            if(sc.isEmpty()) continue;
             Set<String> visited = new HashSet<>();
             Queue<String> queue = new ArrayDeque<>();
             if(directCalls.containsKey(sc)) {
@@ -288,6 +301,10 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
          Map<String, Set<String>> crossScopeRefsByScope = null;
 
          for(Map.Entry<String, List<LineRef>> entry : scopeLinesMap.entrySet()) {
+            String currentScopeKey = entry.getKey();
+            if(currentScopeKey.isEmpty() || !isScopeDirty(currentScopeKey)) {
+               continue;
+            }
             List<LineRef> sLines = entry.getValue();
 
             // 1. Parse all .label declarations in this scope
@@ -437,8 +454,9 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                                  getLog().append("Forwarding transient temporary " + v + " -> " + target);
                                  origStore.setOperand1(target);
                                  origStore.setCpuOpcode(finalStore.getCpuOpcode());
-                                 tombstoneLine(sLines, rIdx);
-                                 tombstoneLine(sLines, nextStoreIdx);
+                                 tombstoneScopeLine(allLines, sLines, rIdx);
+                                 tombstoneScopeLine(allLines, sLines, nextStoreIdx);
+                                 markScopeDirty(currentScopeKey);
                                  passModified = true;
                                  overallModified = true;
                                  break;
@@ -570,14 +588,16 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
 
                         if(canEliminateLda) {
                            getLog().append("Eliminating dead load-and-store pair: " + inst1.getAsm() + " ; " + inst2.getAsm());
-                           tombstoneLine(sLines, k);
-                           tombstoneLine(sLines, nextStoreIdx);
+                           tombstoneScopeLine(allLines, sLines, k);
+                           tombstoneScopeLine(allLines, sLines, nextStoreIdx);
+                           markScopeDirty(currentScopeKey);
                            passModified = true;
                            overallModified = true;
                            k = nextStoreIdx;
                         } else {
                            getLog().append("Eliminating dead store to dead temp: " + inst2.getAsm() + " (preserving load for subsequent A reads)");
-                           tombstoneLine(sLines, nextStoreIdx);
+                           tombstoneScopeLine(allLines, sLines, nextStoreIdx);
+                           markScopeDirty(currentScopeKey);
                            passModified = true;
                            overallModified = true;
                            k = nextStoreIdx;
@@ -623,7 +643,8 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                      String simpleName = dotIdx != -1 ? baseVar.substring(dotIdx + 1) : baseVar;
 
                      if(deadVars.contains(baseVar) || deadVars.contains(simpleName)) {
-                        if(tryFoldDeadStackPullIntoAxs(sLines, i, inst, deadVars)) {
+                        if(tryFoldDeadStackPullIntoAxs(allLines, sLines, i, inst, deadVars)) {
+                           markScopeDirty(currentScopeKey);
                            passModified = true;
                            overallModified = true;
                            break;
@@ -669,15 +690,16 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                         }
 
                         getLog().append("Eliminating dead store " + inst.getAsm() + " to dead local variable " + op);
-                        tombstoneLine(sLines, i);
+                        tombstoneScopeLine(allLines, sLines, i);
 
                         if(canEliminatePrevLoad && prevIdx != -1) {
                            LineRef prevRef = sLines.get(prevIdx);
                            AsmInstruction prevInst = (AsmInstruction) prevRef.line;
                            getLog().append("Eliminating dead preceding load " + prevInst.getAsm());
-                           tombstoneLine(sLines, prevIdx);
+                           tombstoneScopeLine(allLines, sLines, prevIdx);
                         }
 
+                        markScopeDirty(currentScopeKey);
                         passModified = true;
                         overallModified = true;
                      }
@@ -763,14 +785,16 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
                      if(canonAddr != null && aliasProtectedAddrs.contains(canonAddr)) continue;
                      if(!canonByte.isEmpty() && !exactReadCanon.contains(canonByte)) {
                         getLog().append("GEN-04: Eliminating dead byte store " + inst.getAsm() + " (canon " + canonByte + " never read)");
-                        tombstoneLine(sLines, i);
+                        tombstoneScopeLine(allLines, sLines, i);
+                        markScopeDirty(currentScopeKey);
                         passModified = true;
                         overallModified = true;
                      }
                   }
                }
             }
-            if(eliminateIntraBlockOverwrittenStores(sLines, entry.getKey(), resolver)) {
+            if(eliminateIntraBlockOverwrittenStores(allLines, sLines, currentScopeKey, resolver)) {
+               markScopeDirty(currentScopeKey);
                passModified = true;
                overallModified = true;
             }
@@ -786,7 +810,7 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
     * completely overwrites the exact same canonical target without any intervening read, branch, call,
     * indirect/indexed access, or volatile/hardware-address guard.
     */
-   private boolean eliminateIntraBlockOverwrittenStores(List<LineRef> sLines, String scopeName,
+   private boolean eliminateIntraBlockOverwrittenStores(List<LineRef> allLines, List<LineRef> sLines, String scopeName,
                                                         CanonicalResolver resolver) {
       boolean modified = false;
       for(int i = 0; i < sLines.size(); i++) {
@@ -872,12 +896,12 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
             }
 
             getLog().append("OPT-01: Eliminating intra-block overwritten store " + inst.getAsm());
-            tombstoneLine(sLines, i);
+            tombstoneScopeLine(allLines, sLines, i);
             if(eliminatePrevLoad) {
                LineRef prevRef = sLines.get(prevIdx);
                AsmInstruction prevInst = (AsmInstruction) prevRef.line;
                getLog().append("OPT-01: Eliminating dead preceding load " + prevInst.getAsm());
-               tombstoneLine(sLines, prevIdx);
+               tombstoneScopeLine(allLines, sLines, prevIdx);
             }
             modified = true;
          }
@@ -905,7 +929,7 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
       return -1;
    }
 
-   private boolean tryFoldDeadStackPullIntoAxs(List<LineRef> sLines, int staIdx, AsmInstruction staInst, Set<String> deadVars) {
+   private boolean tryFoldDeadStackPullIntoAxs(List<LineRef> allLines, List<LineRef> sLines, int staIdx, AsmInstruction staInst, Set<String> deadVars) {
       int prevIdx = prevInstIdx(sLines, staIdx - 1);
       if(prevIdx < 0) return false;
       AsmInstruction prevInst = (AsmInstruction) sLines.get(prevIdx).line;
@@ -976,12 +1000,12 @@ public class Pass5DeadStoreElimination extends Pass5AsmOptimization {
       int newK = currentK + deadPops;
       axsInst.setOperand1("#-" + newK);
 
-      tombstoneLine(sLines, prevIdx);
-      tombstoneLine(sLines, staIdx);
+      tombstoneScopeLine(allLines, sLines, prevIdx);
+      tombstoneScopeLine(allLines, sLines, staIdx);
 
       if(hasSecondDeadPop) {
-         tombstoneLine(sLines, secondPlaIdx);
-         tombstoneLine(sLines, secondStaIdx);
+         tombstoneScopeLine(allLines, sLines, secondPlaIdx);
+         tombstoneScopeLine(allLines, sLines, secondStaIdx);
       }
 
       getLog().append("Fusing " + deadPops + " dead stack pull(s) into axs #-" + newK + " and removing dummy pla/sta");

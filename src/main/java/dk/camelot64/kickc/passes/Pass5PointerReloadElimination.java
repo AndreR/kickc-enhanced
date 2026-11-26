@@ -34,38 +34,13 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
       return isZpAddressOperand(op, "$fd") || (op != null && op.trim().equals("253"));
    }
 
-   private static boolean hasFeFfOrIzy(AsmProgram asmProgram) {
-      for(AsmChunk chunk : asmProgram.getChunks()) {
-         for(AsmLine line : chunk.getLines()) {
-            if(line instanceof AsmInstruction inst) {
-               CpuOpcode op = inst.getCpuOpcode();
-               if(op == null) continue;
-               if(op.getAddressingMode() == CpuAddressingMode.IZY) {
-                  return true;
-               }
-               String op1 = inst.getOperand1();
-               if(op1 != null && (isZpFe(op1) || isZpFf(op1))) {
-                  return true;
-               }
-            }
-         }
-      }
-      return false;
-   }
-
    @Override
    public boolean optimize() {
-      if(!hasFeFfOrIzy(getAsmProgram())) {
-         return false;
-      }
+      List<LineRef> allLines = getSharedAllLines();
+      Map<String, CanonicalResolver> scopeResolvers = getSharedScopeResolvers(allLines);
 
-      boolean overallModified = false;
-      boolean passModified = true;
-
-      List<LineRef> allLines = flattenLines(getAsmProgram());
-      Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
-
-      // ZP-01: Pre-scan back-edges, nooptimize labels, and scopes containing inline KickAsm
+      // ZP-01: Pre-scan dirty scopes for $fe/$ff/IZY, back-edges, nooptimize labels, and inline KickAsm
+      boolean hasFeFfOrIzyInDirtyScope = false;
       Set<String> seenLabelsInScan = new HashSet<>();
       Set<String> backEdgeOrUnsafeLabels = new HashSet<>();
       boolean scopeSawInlineAsm = false;
@@ -73,7 +48,12 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
          if(r.line instanceof AsmScopeBegin || r.line instanceof AsmScopeEnd) {
             seenLabelsInScan.clear();
             scopeSawInlineAsm = false;
-         } else if(r.line instanceof AsmInlineKickAsm) {
+            continue;
+         }
+         if(!isScopeDirty(r.scope)) {
+            continue;
+         }
+         if(r.line instanceof AsmInlineKickAsm) {
             scopeSawInlineAsm = true;
          } else if(r.line instanceof AsmLabel lbl) {
             String key = r.scope + "::" + lbl.getLabel();
@@ -81,17 +61,34 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
             if(scopeSawInlineAsm || lbl.isNoOptimize() || (lbl.getLabel() != null && lbl.getLabel().startsWith("!"))) {
                backEdgeOrUnsafeLabels.add(key);
             }
-         } else if(r.line instanceof AsmInstruction inst && inst.getCpuOpcode() != null && inst.getCpuOpcode().isJump()) {
-            String target = inst.getOperandJumpTarget();
-            if(target != null) {
-               String key = r.scope + "::" + target;
-               if(seenLabelsInScan.contains(key)) {
-                  backEdgeOrUnsafeLabels.add(key);
+         } else if(r.line instanceof AsmInstruction inst && inst.getCpuOpcode() != null) {
+            CpuOpcode op = inst.getCpuOpcode();
+            if(op.getAddressingMode() == CpuAddressingMode.IZY) {
+               hasFeFfOrIzyInDirtyScope = true;
+            } else {
+               String op1 = inst.getOperand1();
+               if(op1 != null && (isZpFe(op1) || isZpFf(op1))) {
+                  hasFeFfOrIzyInDirtyScope = true;
+               }
+            }
+            if(op.isJump()) {
+               String target = inst.getOperandJumpTarget();
+               if(target != null) {
+                  String key = r.scope + "::" + target;
+                  if(seenLabelsInScan.contains(key)) {
+                     backEdgeOrUnsafeLabels.add(key);
+                  }
                }
             }
          }
       }
 
+      if(!hasFeFfOrIzyInDirtyScope) {
+         return false;
+      }
+
+      boolean overallModified = false;
+      boolean passModified = true;
       Map<String, String[]> incomingFeFf = new HashMap<>();
 
       while(passModified) {
@@ -108,7 +105,6 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
 
          for(int i = 0; i < allLines.size(); i++) {
             LineRef ref = allLines.get(i);
-            CanonicalResolver resolver = scopeResolvers.getOrDefault(ref.scope, scopeResolvers.get(""));
 
             // Scope / Inline boundaries reset everything
             if(ref.line instanceof AsmScopeBegin || ref.line instanceof AsmScopeEnd || ref.line instanceof AsmInlineKickAsm) {
@@ -121,6 +117,10 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                incomingFeFf.clear();
                continue;
             }
+            if(!isScopeDirty(ref.scope)) {
+               continue;
+            }
+            CanonicalResolver resolver = scopeResolvers.getOrDefault(ref.scope, scopeResolvers.get(""));
 
             // ZP-01: Forward CFG-Meet (intersection) of ($fe, $ff) at named labels
             if(ref.line instanceof AsmLabel lbl) {
@@ -233,6 +233,7 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                          || areFlagsEstablishedForReg(allLines, i, "Y", ref.scope))) {
                         getLog().append("Eliminating redundant LDY " + inst.getOperand1() + " (Y already contains " + currentY + ")");
                         tombstoneLine(allLines, i);
+                        markScopeDirty(ref.scope);
                         passModified = true;
                         overallModified = true;
                         continue;
@@ -255,6 +256,7 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                       || areFlagsEstablishedForReg(allLines, i, "A", ref.scope))) {
                      getLog().append("Eliminating redundant LDA ($fe),y (A already contains dereferenced value)");
                      tombstoneLine(allLines, i);
+                     markScopeDirty(ref.scope);
                      passModified = true;
                      overallModified = true;
                      continue;
@@ -336,6 +338,7 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                                     tombstoneLine(allLines, idx2);
                                     tombstoneLine(allLines, idx3);
                                     tombstoneLine(allLines, idx4);
+                                    markScopeDirty(ref.scope);
                                     passModified = true;
                                     overallModified = true;
                                     i = (postFd != -1 ? postFd : idx4);
@@ -345,6 +348,7 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                                     tombstoneLine(allLines, idx3);
                                     tombstoneLine(allLines, idx4);
                                     currentFe = lo;
+                                    markScopeDirty(ref.scope);
                                     passModified = true;
                                     overallModified = true;
                                     i = (postFd != -1 ? postFd : idx4);
@@ -354,6 +358,7 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                                     tombstoneLine(allLines, idx1);
                                     tombstoneLine(allLines, idx2);
                                     currentFf = hi;
+                                    markScopeDirty(ref.scope);
                                     passModified = true;
                                     overallModified = true;
                                     i = (postFd != -1 ? postFd : idx4);
@@ -410,6 +415,7 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                                        tombstoneLine(allLines, aIdx2);
                                        tombstoneLine(allLines, aIdx3);
                                        tombstoneLine(allLines, aIdx4);
+                                       markScopeDirty(ref.scope);
                                        passModified = true;
                                        overallModified = true;
                                        i = aIdx4;
@@ -420,6 +426,7 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                                     tombstoneLine(allLines, aIdx3);
                                     tombstoneLine(allLines, aIdx4);
                                     currentFe = lo;
+                                    markScopeDirty(ref.scope);
                                     passModified = true;
                                     overallModified = true;
                                     i = aIdx4;
@@ -429,6 +436,7 @@ public class Pass5PointerReloadElimination extends Pass5AsmOptimization {
                                     tombstoneLine(allLines, aIdx1);
                                     tombstoneLine(allLines, aIdx2);
                                     currentFf = hi;
+                                    markScopeDirty(ref.scope);
                                     passModified = true;
                                     overallModified = true;
                                     i = aIdx4;

@@ -598,9 +598,6 @@ public class Compiler {
    }
 
    private int pass2Execute(List<PassStep> optimizations, boolean[] runLoopAnalysis) {
-      if(runLoopAnalysis != null) {
-         runLoopAnalysis[0] = true;
-      }
       boolean ssaOptimized = true;
       int round = 0;
       while(ssaOptimized) {
@@ -988,6 +985,10 @@ public class Compiler {
       pass5Optimizations.add(new Pass5UnreachableCodeElimination(program));
       pass5Optimizations.add(new Pass5AddMainRts(program));
       pass5Optimizations.add(new Pass5HighSpeedJumpTableSwitch(program));
+      Pass5RoundContext roundContext = new Pass5RoundContext(program.getAsm());
+      for(Pass5AsmOptimization optimization : pass5Optimizations) {
+         optimization.setRoundContext(roundContext);
+      }
       boolean asmOptimized = true;
       int pass5Rounds = 0;
       final int MAX_PASS5_ROUNDS = 8;
@@ -996,6 +997,7 @@ public class Compiler {
          CompilerProgress.status(String.format("Pass 5 (ASM & Peephole): Round %d...", pass5Rounds));
          asmOptimized = false;
          for(Pass5AsmOptimization optimization : pass5Optimizations) {
+            roundContext.resetStepTracking();
             long tStepStart = System.currentTimeMillis();
             boolean stepOptimized = optimization.optimize();
             long stepElapsed = System.currentTimeMillis() - tStepStart;
@@ -1003,6 +1005,10 @@ public class Compiler {
                System.out.println(String.format("       [SLOW PASS5 STEP] %s took %5.2f s (round %d)", optimization.getClass().getSimpleName(), stepElapsed / 1000.0, pass5Rounds));
             }
             if(stepOptimized) {
+               if(!roundContext.hasStepRecordedScopeChange()) {
+                  roundContext.markAllScopesDirty();
+                  roundContext.invalidateStructure();
+               }
                if(getLog().isSysOut() || getLog().isVerboseAsmOptimize()) {
                   getLog().append("Succesful ASM optimization " + optimization.getClass().getSimpleName());
                   getLog().append("ASSEMBLER");
@@ -1011,6 +1017,7 @@ public class Compiler {
                asmOptimized = true;
             }
          }
+         roundContext.advanceRound();
       }
       long tOptElapsed = System.currentTimeMillis() - tOptStart;
       if(getLog().isVerboseAsmOptimize()) {

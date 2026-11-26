@@ -21,7 +21,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
 
    @Override
    public boolean optimize() {
-      AsmProgramStaticRegisterValues staticValues = new AsmProgramStaticRegisterValues(getAsmProgram(), getProgram());
+      AsmProgramStaticRegisterValues staticValues = new AsmProgramStaticRegisterValues(getAsmProgram(), getProgram(), getRoundContext());
       List<LineRef> allLines = staticValues.getAllLines();
       Map<String, CanonicalResolver> scopeResolvers = staticValues.getScopeResolvers();
       CanonicalResolver defaultResolver = scopeResolvers.get("");
@@ -29,6 +29,9 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
 
       for(int i = 0; i < allLines.size(); i++) {
          LineRef ref = allLines.get(i);
+         if(!isScopeDirty(ref.scope)) {
+            continue;
+         }
          if(!(ref.line instanceof AsmInstruction)) {
             continue;
          }
@@ -50,17 +53,11 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                      modified = true;
                   }
                } else if(AsmProgramStaticRegisterValues.matchImm(instructionValues.getX(), immValue)) {
-                  getLog().append("Replacing instruction " + instruction + " with TXA");
-                  instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("txa", CpuAddressingMode.NON, false));
-                  instruction.setOperand1(null);
+                  replaceWithInherent(instruction, "txa", ref.scope);
                } else if(AsmProgramStaticRegisterValues.matchImm(instructionValues.getY(), immValue)) {
-                  getLog().append("Replacing instruction " + instruction + " with TYA");
-                  instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tya", CpuAddressingMode.NON, false));
-                  instruction.setOperand1(null);
+                  replaceWithInherent(instruction, "tya", ref.scope);
                } else if(AsmProgramStaticRegisterValues.matchImm(instructionValues.getZ(), immValue)) {
-                  getLog().append("Replacing instruction " + instruction + " with TZA");
-                  instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tza", CpuAddressingMode.NON, false));
-                  instruction.setOperand1(null);
+                  replaceWithInherent(instruction, "tza", ref.scope);
                }
             }
          } else if(mnem.equals("lda") && (mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS))) {
@@ -75,17 +72,11 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                         modified = true;
                      }
                   } else if(instructionValues.getxMem() != null && instructionValues.getxMem().equals(memValue)) {
-                     getLog().append("Replacing instruction " + instruction + " with TXA");
-                     instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("txa", CpuAddressingMode.NON, false));
-                     instruction.setOperand1(null);
+                     replaceWithInherent(instruction, "txa", ref.scope);
                   } else if(instructionValues.getyMem() != null && instructionValues.getyMem().equals(memValue)) {
-                     getLog().append("Replacing instruction " + instruction + " with TYA");
-                     instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tya", CpuAddressingMode.NON, false));
-                     instruction.setOperand1(null);
+                     replaceWithInherent(instruction, "tya", ref.scope);
                   } else if(instructionValues.getzMem() != null && instructionValues.getzMem().equals(memValue)) {
-                     getLog().append("Replacing instruction " + instruction + " with TZA");
-                     instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tza", CpuAddressingMode.NON, false));
-                     instruction.setOperand1(null);
+                     replaceWithInherent(instruction, "tza", ref.scope);
                   }
                }
             }
@@ -99,9 +90,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                      modified = true;
                   }
                } else if(AsmProgramStaticRegisterValues.matchImm(instructionValues.getA(), immValue)) {
-                  getLog().append("Replacing instruction " + instruction + " with TAX");
-                  instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tax", CpuAddressingMode.NON, false));
-                  instruction.setOperand1(null);
+                  replaceWithInherent(instruction, "tax", ref.scope);
                   modified = true;
                } else {
                   // ZP-02: Strength-reduce LDX #(k±1) -> INX / DEX (saves 1 byte, identical N/Z/C/V)
@@ -109,14 +98,10 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                   Integer targetX = AsmProgramStaticRegisterValues.getImmValue(immValue);
                   if(prevX != null && targetX != null) {
                      if(((prevX + 1) & 0xff) == targetX) {
-                        getLog().append("Replacing instruction " + instruction + " with INX");
-                        instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("inx", CpuAddressingMode.NON, false));
-                        instruction.setOperand1(null);
+                        replaceWithInherent(instruction, "inx", ref.scope);
                         modified = true;
                      } else if(((prevX - 1) & 0xff) == targetX) {
-                        getLog().append("Replacing instruction " + instruction + " with DEX");
-                        instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("dex", CpuAddressingMode.NON, false));
-                        instruction.setOperand1(null);
+                        replaceWithInherent(instruction, "dex", ref.scope);
                         modified = true;
                      }
                   }
@@ -134,9 +119,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                         modified = true;
                      }
                   } else if(instructionValues.getaMem() != null && instructionValues.getaMem().equals(memValue)) {
-                     getLog().append("Replacing instruction " + instruction + " with TAX");
-                     instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tax", CpuAddressingMode.NON, false));
-                     instruction.setOperand1(null);
+                     replaceWithInherent(instruction, "tax", ref.scope);
                   }
                }
             }
@@ -150,9 +133,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                      modified = true;
                   }
                } else if(AsmProgramStaticRegisterValues.matchImm(instructionValues.getA(), immValue)) {
-                  getLog().append("Replacing instruction " + instruction + " with TAY");
-                  instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tay", CpuAddressingMode.NON, false));
-                  instruction.setOperand1(null);
+                  replaceWithInherent(instruction, "tay", ref.scope);
                   modified = true;
                } else {
                   // ZP-02: Strength-reduce LDY #(k±1) -> INY / DEY (saves 1 byte, identical N/Z/C/V)
@@ -160,14 +141,10 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                   Integer targetY = AsmProgramStaticRegisterValues.getImmValue(immValue);
                   if(prevY != null && targetY != null) {
                      if(((prevY + 1) & 0xff) == targetY) {
-                        getLog().append("Replacing instruction " + instruction + " with INY");
-                        instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("iny", CpuAddressingMode.NON, false));
-                        instruction.setOperand1(null);
+                        replaceWithInherent(instruction, "iny", ref.scope);
                         modified = true;
                      } else if(((prevY - 1) & 0xff) == targetY) {
-                        getLog().append("Replacing instruction " + instruction + " with DEY");
-                        instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("dey", CpuAddressingMode.NON, false));
-                        instruction.setOperand1(null);
+                        replaceWithInherent(instruction, "dey", ref.scope);
                         modified = true;
                      }
                   }
@@ -185,9 +162,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                         modified = true;
                      }
                   } else if(instructionValues.getaMem() != null && instructionValues.getaMem().equals(memValue)) {
-                     getLog().append("Replacing instruction " + instruction + " with TAY");
-                     instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("tay", CpuAddressingMode.NON, false));
-                     instruction.setOperand1(null);
+                     replaceWithInherent(instruction, "tay", ref.scope);
                   }
                }
             }
@@ -199,9 +174,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                   removeLine(allLines, i, ref, instruction);
                   modified = true;
                } else if(AsmProgramStaticRegisterValues.matchImm(instructionValues.getA(), immValue)) {
-                  getLog().append("Replacing instruction " + instruction + " with TAZ");
-                  instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("taz", CpuAddressingMode.NON, false));
-                  instruction.setOperand1(null);
+                  replaceWithInherent(instruction, "taz", ref.scope);
                }
             }
          } else if(mnem.equals("ldz") && (mode.equals(CpuAddressingMode.ZP) || mode.equals(CpuAddressingMode.ABS))) {
@@ -214,9 +187,7 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
                      removeLine(allLines, i, ref, instruction);
                      modified = true;
                   } else if(instructionValues.getaMem() != null && instructionValues.getaMem().equals(memValue)) {
-                     getLog().append("Replacing instruction " + instruction + " with TAZ");
-                     instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("taz", CpuAddressingMode.NON, false));
-                     instruction.setOperand1(null);
+                     replaceWithInherent(instruction, "taz", ref.scope);
                   }
                }
             }
@@ -253,11 +224,17 @@ public class Pass5UnnecesaryLoadElimination extends Pass5AsmOptimization {
       return modified;
    }
 
+   private void replaceWithInherent(AsmInstruction instruction, String targetMnem, String scope) {
+      getLog().append("Replacing instruction " + instruction + " with " + targetMnem.toUpperCase());
+      instruction.setCpuOpcode(getAsmProgram().getTargetCpu().getCpu65xx().getOpcode(targetMnem, CpuAddressingMode.NON, false));
+      instruction.setOperand1(null);
+      markScopeDirty(scope);
+   }
+
    private void removeLine(List<LineRef> allLines, int idx, LineRef ref, AsmInstruction instruction) {
       getLog().append("Removing instruction " + instruction);
-      ref.chunk.getLines().remove(instruction);
-      // Replace entry in flattened list with a harmless comment so backwards flag scans skip it
-      allLines.set(idx, new LineRef(ref.index, ref.chunk, ref.indexInChunk, new AsmComment("", false), ref.scope));
+      tombstoneLine(allLines, idx);
+      markScopeDirty(ref.scope);
    }
 
    private boolean canRemoveRegister(List<LineRef> allLines, int currentIdx, String reg, String currentScope) {

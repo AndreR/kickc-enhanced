@@ -33,19 +33,16 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
       while(passModified) {
          passModified = false;
 
-         List<LineRef> allLines = flattenLines(getAsmProgram());
-         Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
-         Map<String, Map<String, String>> scopeAliasMap = new HashMap<>();
-         for(LineRef ref : allLines) {
-            if(ref.line instanceof AsmLabelDecl) {
-               AsmLabelDecl decl = (AsmLabelDecl) ref.line;
-               scopeAliasMap.computeIfAbsent(ref.scope, k -> new HashMap<>()).put(decl.getName(), decl.getValue());
-            }
-         }
+         List<LineRef> allLines = getSharedAllLines();
+         Map<String, CanonicalResolver> scopeResolvers = getSharedScopeResolvers(allLines);
+         Map<String, Map<String, String>> scopeAliasMap = null;
 
          for(int i = 0; i < allLines.size(); i++) {
             LineRef ref1 = allLines.get(i);
             String currentScope = ref1.scope;
+            if(!isScopeDirty(currentScope)) {
+               continue;
+            }
             if(!(ref1.line instanceof AsmInstruction)) {
                continue;
             }
@@ -79,6 +76,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                if(mnem2.equals("txa")) {
                   getLog().append("Eliminating redundant TXA after LAX");
                   tombstoneLine(allLines, nextIdx);
+                  markScopeDirty(currentScope);
                   passModified = true;
                   overallModified = true;
                   continue;
@@ -89,6 +87,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                      if(instB.getCpuOpcode() != null && instB.getCpuOpcode().getMnemonic().equals("txa")) {
                         getLog().append("Eliminating redundant TXA after LAX and store");
                         tombstoneLine(allLines, i3);
+                        markScopeDirty(currentScope);
                         passModified = true;
                         overallModified = true;
                         continue;
@@ -114,6 +113,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                      getLog().append("Replacing " + inst1.getAsm() + "; " + inst2.getAsm() + " with LAX");
                      inst1.setCpuOpcode(laxOpcode);
                      tombstoneLine(allLines, nextIdx);
+                     markScopeDirty(currentScope);
                      passModified = true;
                      overallModified = true;
                      continue;
@@ -136,6 +136,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                      getLog().append("Replacing " + inst1.getAsm() + "; " + inst2.getAsm() + " with LAX");
                      inst1.setCpuOpcode(laxOpcode);
                      tombstoneLine(allLines, nextIdx);
+                     markScopeDirty(currentScope);
                      passModified = true;
                      overallModified = true;
                      continue;
@@ -156,6 +157,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                   AsmInstruction instNext3 = (AsmInstruction) allLines.get(idx3).line;
                   if(instNext3.getCpuOpcode() != null && instNext3.getCpuOpcode().getMnemonic().equals("tax") &&
                      instNext3.getCpuOpcode().getAddressingMode().equals(CpuAddressingMode.NON)) {
+                     if(scopeAliasMap == null) scopeAliasMap = buildScopeAliasMap(allLines);
                      Map<String, String> aliases = scopeAliasMap.get(currentScope);
                      if(!isSameLocation(inst1.getOperand1(), inst2.getOperand1(), aliases)) {
                         CpuOpcode laxOpcode = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("lax", mode1, false);
@@ -163,6 +165,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                            getLog().append("Replacing " + inst1.getAsm() + "; " + inst2.getAsm() + "; TAX with LAX");
                            inst1.setCpuOpcode(laxOpcode);
                            tombstoneLine(allLines, idx3);
+                           markScopeDirty(currentScope);
                            passModified = true;
                            overallModified = true;
                            continue;
@@ -192,6 +195,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                            getLog().append("Lifting TAX into LAX before branch: " + inst1.getAsm() + "; " + inst2.getAsm() + "; TAX");
                            inst1.setCpuOpcode(laxOpcode);
                            tombstoneLine(allLines, idx3);
+                           markScopeDirty(currentScope);
                            passModified = true;
                            overallModified = true;
                            continue;
@@ -217,6 +221,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                      inst1.setCpuOpcode(laxOpcode);
                      inst2.setCpuOpcode(tayOpcode);
                      inst2.setOperand1(null);
+                     markScopeDirty(currentScope);
                      passModified = true;
                      overallModified = true;
                      continue;
@@ -234,6 +239,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                   getLog().append("Replacing " + inst1.getAsm() + "; " + inst2.getAsm() + " with ALR");
                   inst1.setCpuOpcode(alrOpcode);
                   tombstoneLine(allLines, nextIdx);
+                  markScopeDirty(currentScope);
                   passModified = true;
                   overallModified = true;
                   continue;
@@ -255,6 +261,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                         inst1.setCpuOpcode(alrOpcode);
                         inst1.setOperand1("$" + Integer.toHexString(alrImm));
                         tombstoneLine(allLines, nextIdx);
+                        markScopeDirty(currentScope);
                         passModified = true;
                         overallModified = true;
                         continue;
@@ -280,6 +287,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                         inst1.setOperand1("$fc");
                         tombstoneLine(allLines, nextIdx);
                         tombstoneLine(allLines, idx3);
+                        markScopeDirty(currentScope);
                         passModified = true;
                         overallModified = true;
                         continue;
@@ -322,6 +330,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                      getLog().append("Replacing " + inst1.getAsm() + "; " + inst2.getAsm() + " with " + combinedMnemonic.toUpperCase());
                      inst1.setCpuOpcode(combinedOpcode);
                      tombstoneLine(allLines, nextIdx);
+                     markScopeDirty(currentScope);
                      passModified = true;
                      overallModified = true;
                      continue;
@@ -385,6 +394,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                               getLog().append("ILL-04: Folding " + inst1.getAsm() + "; " + inst2.getAsm() + "; " + inst3.getAsm() + " -> " + inst2.getAsm() + "; " + combinedMnem + " " + inst3.getOperand1());
                               inst3.setCpuOpcode(combinedOp);
                               tombstoneLine(allLines, i);
+                              markScopeDirty(currentScope);
                               passModified = true;
                               overallModified = true;
                               continue;
@@ -408,6 +418,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                      getLog().append("ILL-05A: Replacing " + inst1.getAsm() + "; CLC with ANC");
                      inst1.setCpuOpcode(ancOp);
                      tombstoneLine(allLines, nextIdx);
+                     markScopeDirty(currentScope);
                      passModified = true;
                      overallModified = true;
                      continue;
@@ -423,6 +434,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                               getLog().append("ILL-05B: Replacing " + inst1.getAsm() + "; CMP #$80; ROR with ANC; ROR");
                               inst1.setCpuOpcode(ancOp);
                               tombstoneLine(allLines, nextIdx);
+                              markScopeDirty(currentScope);
                               passModified = true;
                               overallModified = true;
                               continue;
@@ -456,6 +468,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                            inst2.setCpuOpcode(ldaImm);
                            inst3.setCpuOpcode(saxOp);
                            tombstoneLine(allLines, i);
+                           markScopeDirty(currentScope);
                            passModified = true;
                            overallModified = true;
                            continue;
@@ -489,6 +502,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                            inst3.setCpuOpcode(saxOp);
                            tombstoneLine(allLines, i);
                            tombstoneLine(allLines, nextIdx);
+                           markScopeDirty(currentScope);
                            passModified = true;
                            overallModified = true;
                            continue;
@@ -508,6 +522,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                      inst1.setOperand1("0");
                      inst2.setCpuOpcode(txaOp);
                      inst2.setOperand1(null);
+                     markScopeDirty(currentScope);
                      passModified = true;
                      overallModified = true;
                      continue;
@@ -545,6 +560,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                               inst3.setOperand1("$" + Integer.toHexString(axsImm));
                               tombstoneLine(allLines, nextIdx);
                               tombstoneLine(allLines, idx4);
+                              markScopeDirty(currentScope);
                               passModified = true;
                               overallModified = true;
                               continue;
@@ -589,6 +605,7 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
                               inst2.setCpuOpcode(dcpOp);
                               inst2.setOperand1(mOp);
                               tombstoneLine(allLines, idx3);
+                              markScopeDirty(currentScope);
                               passModified = true;
                               overallModified = true;
                               continue;
@@ -669,6 +686,16 @@ public class Pass5IllegalOpcodeOptimization extends Pass5AsmOptimization {
          break;
       }
       return false;
+   }
+
+   private Map<String, Map<String, String>> buildScopeAliasMap(List<LineRef> allLines) {
+      Map<String, Map<String, String>> scopeAliasMap = new HashMap<>();
+      for(LineRef ref : allLines) {
+         if(ref.line instanceof AsmLabelDecl decl && isScopeDirty(ref.scope)) {
+            scopeAliasMap.computeIfAbsent(ref.scope, k -> new HashMap<>()).put(decl.getName(), decl.getValue());
+         }
+      }
+      return scopeAliasMap;
    }
 
    private static boolean isSameLocation(String op1, String op2, Map<String, String> scopeAliases) {

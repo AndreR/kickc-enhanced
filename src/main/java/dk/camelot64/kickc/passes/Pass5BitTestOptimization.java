@@ -70,30 +70,12 @@ public class Pass5BitTestOptimization extends Pass5AsmOptimization {
    public boolean optimize() {
       boolean overallModified = false;
 
-      List<LineRef> allLines = new ArrayList<>();
-      String currentScope = null;
-      int lineIdx = 0;
-      Map<String, Integer> labelIndices = new HashMap<>();
-
-      for(AsmChunk chunk : getAsmProgram().getChunks()) {
-         for(AsmLine line : chunk.getLines()) {
-            if(line instanceof AsmScopeBegin) {
-               currentScope = ((AsmScopeBegin) line).getLabel();
-            } else if(line instanceof AsmScopeEnd) {
-               currentScope = null;
-            } else if(line instanceof AsmLabel) {
-               String lbl = ((AsmLabel) line).getLabel();
-               if(lbl != null && !lbl.startsWith("!")) {
-                  String key = (currentScope != null ? currentScope + "::" : "") + lbl;
-                  labelIndices.put(key, lineIdx);
-               }
-            }
-            allLines.add(new LineRef(lineIdx++, chunk, line, currentScope));
-         }
-      }
+      List<LineRef> allLines = getSharedAllLines();
+      Map<String, Integer> labelIndices = null;
 
       for(int i = 0; i < allLines.size(); i++) {
             LineRef ref1 = allLines.get(i);
+            if(!isScopeDirty(ref1.scope)) continue;
             if(!(ref1.line instanceof AsmInstruction)) continue;
             AsmInstruction inst1 = (AsmInstruction) ref1.line;
             if(inst1.getCpuOpcode() == null || inst1.isNoOptimize()) continue;
@@ -205,7 +187,20 @@ public class Pass5BitTestOptimization extends Pass5AsmOptimization {
             if(!isADeadAfter(allLines, idxBranch + 1, refBranch.scope)) continue;
 
             // Check if A is dead on jump target path (strictly within refBranch.scope)
-            String targetKey = (refBranch.scope != null ? refBranch.scope + "::" : "") + jumpTarget;
+            if(labelIndices == null) {
+               labelIndices = new HashMap<>();
+               for(int li = 0; li < allLines.size(); li++) {
+                  LineRef lr = allLines.get(li);
+                  if(lr.line instanceof AsmLabel) {
+                     String lbl = ((AsmLabel) lr.line).getLabel();
+                     if(lbl != null && !lbl.startsWith("!")) {
+                        String key = (lr.scope != null ? lr.scope : "") + "::" + lbl;
+                        labelIndices.put(key, li);
+                     }
+                  }
+               }
+            }
+            String targetKey = (refBranch.scope != null ? refBranch.scope : "") + "::" + jumpTarget;
             Integer targetLineIdx = labelIndices.get(targetKey);
             if(targetLineIdx == null && jumpTarget.startsWith("!")) {
                int resolvedIdx = findLabelIndex(allLines, jumpTarget, idxBranch, refBranch.scope);
@@ -248,6 +243,7 @@ public class Pass5BitTestOptimization extends Pass5AsmOptimization {
             // Update instBranch to new branch opcode
             instBranch.setCpuOpcode(newBranchOp);
 
+            markScopeDirty(ref1.scope);
             overallModified = true;
          }
 

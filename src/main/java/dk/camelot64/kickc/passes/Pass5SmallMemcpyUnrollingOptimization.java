@@ -154,8 +154,8 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
       CpuOpcode staAbs = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("sta", CpuAddressingMode.ABS, false);
       CpuOpcode inyOp = getAsmProgram().getTargetCpu().getCpu65xx().getOpcode("iny", CpuAddressingMode.NON, false);
 
-      List<LineRef> allLines = flattenLines(getAsmProgram());
-      Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
+      List<LineRef> allLines = getSharedAllLines();
+      Map<String, CanonicalResolver> scopeResolvers = getSharedScopeResolvers(allLines);
       Map<AsmInstruction, Integer> instToGlobalIdx = new IdentityHashMap<>();
       populateInstToGlobalIdx(allLines, instToGlobalIdx);
       boolean linesStale = false;
@@ -209,6 +209,7 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
                            Integer endGlobalIdx = instToGlobalIdx.get(inst5);
                            if(endGlobalIdx != null) {
                               String scope = allLines.get(endGlobalIdx).scope;
+                              if(!isScopeDirty(scope)) continue;
                               CanonicalResolver resolver = scopeResolvers.getOrDefault(scope, scopeResolvers.get(""));
                               if(!isVolatileOrHardwareOperand(inst2, scope, resolver, getProgram()) &&
                                  !isVolatileOrHardwareOperand(inst3, scope, resolver, getProgram())) {
@@ -234,6 +235,8 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
 
                                     lines.subList(i, i + 6).clear();
                                     lines.addAll(i, unrolled);
+                                    markScopeDirty(scope);
+                                    invalidateRoundStructure();
                                     modified = true;
                                     linesStale = true;
                                     i += unrolled.size() - 1;
@@ -282,6 +285,7 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
                   Integer endGlobalIdx = instToGlobalIdx.get(inst6);
                   if(endGlobalIdx == null) continue;
                   String scope = allLines.get(endGlobalIdx).scope;
+                  if(!isScopeDirty(scope)) continue;
                   CanonicalResolver resolver = scopeResolvers.getOrDefault(scope, scopeResolvers.get(""));
 
                   // Check X-indexed absolute:
@@ -309,6 +313,8 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
 
                         lines.subList(i, i + 7).clear();
                         lines.addAll(i, unrolled);
+                        markScopeDirty(scope);
+                        invalidateRoundStructure();
                         modified = true;
                         linesStale = true;
                         i += unrolled.size() - 1;
@@ -340,6 +346,8 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
 
                         lines.subList(i, i + 7).clear();
                         lines.addAll(i, unrolled);
+                        markScopeDirty(scope);
+                        invalidateRoundStructure();
                         modified = true;
                         linesStale = true;
                         i += unrolled.size() - 1;
@@ -374,6 +382,8 @@ public class Pass5SmallMemcpyUnrollingOptimization extends Pass5AsmOptimization 
 
                         lines.subList(i, i + 7).clear();
                         lines.addAll(i, unrolled);
+                        markScopeDirty(scope);
+                        invalidateRoundStructure();
                         modified = true;
                         linesStale = true;
                         i += unrolled.size() - 1;

@@ -76,30 +76,14 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
    @Override
    public boolean optimize() {
       boolean overallModified = false;
-      boolean passModified = true;
+      List<LineRef> allLines = getSharedAllLines();
+      Map<String, CanonicalResolver> scopeResolvers = getSharedScopeResolvers(allLines);
+      Map<String, Map<String, String>> scopeAliasMap = null;
+      Map<String, String> globalAliasMap = null;
 
+      boolean passModified = true;
       while(passModified) {
          passModified = false;
-
-         List<LineRef> allLines = flattenLines(getAsmProgram());
-         Map<String, CanonicalResolver> scopeResolvers = buildScopeResolvers(allLines);
-         Map<String, Map<String, String>> scopeAliasMap = new HashMap<>();
-         Map<String, String> globalAliasMap = new HashMap<>();
-         for(LineRef ref : allLines) {
-            if(ref.line instanceof AsmLabelDecl) {
-               AsmLabelDecl decl = (AsmLabelDecl) ref.line;
-               String rawName = decl.getName();
-               String rawVal = decl.getValue();
-               if(ref.scope != null && !ref.scope.isEmpty()) {
-                  scopeAliasMap.computeIfAbsent(ref.scope, k -> new HashMap<>()).put(rawName, rawVal);
-                  String qualName = rawName.contains(".") ? rawName : (ref.scope + "." + rawName);
-                  String qualVal = (rawVal.contains(".") || rawVal.startsWith("$") || rawVal.startsWith("#")) ? rawVal : (ref.scope + "." + rawVal);
-                  globalAliasMap.put(qualName, qualVal);
-               } else {
-                  globalAliasMap.put(rawName, rawVal);
-               }
-            }
-         }
 
          String currentScope = "";
          // Track canonical memory locations currently held in registers
@@ -121,7 +105,11 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                xMems.clear();
                yMems.clear();
                continue;
-            } else if(ref.line instanceof AsmLabel || ref.line instanceof AsmInlineKickAsm) {
+            }
+            if(!isScopeDirty(currentScope)) {
+               continue;
+            }
+            if(ref.line instanceof AsmLabel || ref.line instanceof AsmInlineKickAsm) {
                aMems.clear();
                xMems.clear();
                yMems.clear();
@@ -145,6 +133,25 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                xMems.clear();
                yMems.clear();
                continue;
+            }
+
+            if(scopeAliasMap == null) {
+               scopeAliasMap = new HashMap<>();
+               globalAliasMap = new HashMap<>();
+               for(LineRef lr : allLines) {
+                  if(lr.line instanceof AsmLabelDecl decl) {
+                     String rawName = decl.getName();
+                     String rawVal = decl.getValue();
+                     if(lr.scope != null && !lr.scope.isEmpty()) {
+                        scopeAliasMap.computeIfAbsent(lr.scope, k -> new HashMap<>()).put(rawName, rawVal);
+                        String qualName = rawName.contains(".") ? rawName : (lr.scope + "." + rawName);
+                        String qualVal = (rawVal.contains(".") || rawVal.startsWith("$") || rawVal.startsWith("#")) ? rawVal : (lr.scope + "." + rawVal);
+                        globalAliasMap.put(qualName, qualVal);
+                     } else {
+                        globalAliasMap.put(rawName, rawVal);
+                     }
+                  }
+               }
             }
 
             Map<String, String> localAliases = scopeAliasMap.get(currentScope);
@@ -175,6 +182,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                         if(!areModifiedFlagsLiveAfter(allLines, i, currentScope, getProgram()) || areFlagsEstablishedForReg(allLines, i, "A", currentScope)) {
                            getLog().append("Eliminating redundant load " + inst.getAsm() + " (A already contains " + canon + ")");
                            tombstoneLine(allLines, i);
+                           markScopeDirty(currentScope);
                            passModified = true;
                            overallModified = true;
                            continue;
@@ -182,6 +190,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                      }
                      // FL-05: Commutative accumulator forwarding before overwriting aMems
                      if(!aMems.isEmpty() && tryCommutativeForwarding(allLines, i, inst, mode, operand, currentScope, localAliases, globalAliasMap, resolver, aMems)) {
+                        markScopeDirty(currentScope);
                         passModified = true;
                         overallModified = true;
                         aMems.clear();
@@ -194,6 +203,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                }
                if(!aMems.isEmpty() && !isVolatileOrHardwareOperand(inst, currentScope, resolver, getProgram())) {
                   if(tryCommutativeForwarding(allLines, i, inst, mode, operand, currentScope, localAliases, globalAliasMap, resolver, aMems)) {
+                     markScopeDirty(currentScope);
                      passModified = true;
                      overallModified = true;
                      aMems.clear();
@@ -214,6 +224,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                      if(aMems.contains(canon)) {
                         getLog().append("Eliminating redundant self-store " + inst.getAsm() + " (A already loaded from " + canon + ")");
                         tombstoneLine(allLines, i);
+                        markScopeDirty(currentScope);
                         passModified = true;
                         overallModified = true;
                         continue;
@@ -239,8 +250,8 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                      if(xMems.contains(canon)) {
                         if(!areModifiedFlagsLiveAfter(allLines, i, currentScope, getProgram()) || areFlagsEstablishedForReg(allLines, i, "X", currentScope)) {
                            getLog().append("Eliminating redundant load " + inst.getAsm() + " (X already contains " + canon + ")");
-                           ref.chunk.getLines().remove(inst);
-                           allLines.set(i, new LineRef(ref.chunk, ref.indexInChunk, new AsmComment("", false), ref.scope));
+                           tombstoneLine(allLines, i);
+                           markScopeDirty(currentScope);
                            passModified = true;
                            overallModified = true;
                            continue;
@@ -265,6 +276,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                      if(xMems.contains(canon)) {
                         getLog().append("Eliminating redundant self-store " + inst.getAsm() + " (X already loaded from " + canon + ")");
                         tombstoneLine(allLines, i);
+                        markScopeDirty(currentScope);
                         passModified = true;
                         overallModified = true;
                         continue;
@@ -288,8 +300,8 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                      if(yMems.contains(canon)) {
                         if(!areModifiedFlagsLiveAfter(allLines, i, currentScope, getProgram()) || areFlagsEstablishedForReg(allLines, i, "Y", currentScope)) {
                            getLog().append("Eliminating redundant load " + inst.getAsm() + " (Y already contains " + canon + ")");
-                           ref.chunk.getLines().remove(inst);
-                           allLines.set(i, new LineRef(ref.chunk, ref.indexInChunk, new AsmComment("", false), ref.scope));
+                           tombstoneLine(allLines, i);
+                           markScopeDirty(currentScope);
                            passModified = true;
                            overallModified = true;
                            continue;
@@ -314,6 +326,7 @@ public class Pass5RedundantStoreAndReloadElimination extends Pass5AsmOptimizatio
                      if(yMems.contains(canon)) {
                         getLog().append("Eliminating redundant self-store " + inst.getAsm() + " (Y already loaded from " + canon + ")");
                         tombstoneLine(allLines, i);
+                        markScopeDirty(currentScope);
                         passModified = true;
                         overallModified = true;
                         continue;

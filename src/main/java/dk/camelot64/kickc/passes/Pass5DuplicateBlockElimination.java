@@ -109,27 +109,12 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
       while(passModified) {
          passModified = false;
 
-         List<LineRef> allLines = new ArrayList<>();
-         for(AsmChunk chunk : getAsmProgram().getChunks()) {
-            for(AsmLine line : chunk.getLines()) {
-               allLines.add(new LineRef(chunk, line));
-            }
-         }
-
-         // Group lines strictly by local scope
-         Map<String, List<LineRef>> scopeLinesMap = new LinkedHashMap<>();
-         String currentScope = "";
-         for(LineRef ref : allLines) {
-            if(ref.line instanceof AsmScopeBegin) {
-               currentScope = ((AsmScopeBegin) ref.line).getLabel();
-            } else if(ref.line instanceof AsmScopeEnd) {
-               currentScope = "";
-            } else if(currentScope != null && !currentScope.isEmpty()) {
-               scopeLinesMap.computeIfAbsent(currentScope, k -> new ArrayList<>()).add(ref);
-            }
-         }
+         List<LineRef> allLines = getSharedAllLines();
+         Map<String, List<LineRef>> scopeLinesMap = getSharedScopeLinesMap(allLines);
 
          for(Map.Entry<String, List<LineRef>> entry : scopeLinesMap.entrySet()) {
+            String scope = entry.getKey();
+            if(scope == null || scope.isEmpty() || !isScopeDirty(scope)) continue;
             List<LineRef> sLines = entry.getValue();
             List<BasicBlock> blocks = new ArrayList<>();
 
@@ -222,6 +207,8 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
                   for(LineRef instRef : b1.instructionRefs) {
                      instRef.chunk.getLines().remove(instRef.line);
                   }
+                  markScopeDirty(scope);
+                  invalidateRoundStructure();
                   passModified = true;
                   overallModified = true;
                   mergedPair = true;
@@ -327,6 +314,8 @@ public class Pass5DuplicateBlockElimination extends Pass5AsmOptimization {
                   instRef.chunk.getLines().remove(instRef.line);
                }
 
+               markScopeDirty(scope);
+               invalidateRoundStructure();
                passModified = true;
                overallModified = true;
                break;

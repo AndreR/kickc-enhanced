@@ -125,10 +125,19 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
       return anyOptimized;
    }
 
+   private void logAnalyticalFallback(String detail) {
+      if(getLog().isVerboseFixLongBranch()) {
+         String msg = "      [PASS5 ANALYTICAL FALLBACK] " + detail;
+         System.out.println(msg);
+         getLog().append(msg);
+      }
+   }
+
    /**
     * Conservatively verifies in memory that every conditional branch in the ASM program
-    * resolves within [-126, +125] bytes in the same scope/segment and does not span across
-    * directives whose assembled byte size cannot be guaranteed analytically.
+    * resolves within [-126, +125] bytes in the same scope/segment (accounting for worst-case
+    * {@link AsmLoopAlign} padding) and does not span across directives whose assembled byte
+    * size cannot be guaranteed analytically.
     */
    private boolean isAllBranchesAnalyticallySafe() {
       List<LineRef> allLines = flattenLines(getAsmProgram());
@@ -136,12 +145,13 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
       int[] lineOffsets = new int[n];
       String[] lineSegments = new String[n];
       int[] unsafeCountPrefix = new int[n + 1];
+      int[] loopAlignPaddingPrefix = new int[n + 1];
 
       Map<String, Integer> labelOffsets = new HashMap<>();
       Map<String, String> labelSegments = new HashMap<>();
       Map<String, Integer> labelLineIndices = new HashMap<>();
 
-      String currentScope = null;
+      String currentScope = "";
       String currentSegment = "Code";
       Map<String, Integer> segmentOffsets = new HashMap<>();
 
@@ -149,41 +159,40 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
          AsmLine line = allLines.get(i).line;
          boolean isUnsafeDirective = (line instanceof AsmInlineKickAsm)
                || (line instanceof AsmDataAlignment)
-               || (line instanceof AsmLoopAlign)
                || (line instanceof AsmDataKickAsm)
                || (line instanceof AsmSetPc);
          unsafeCountPrefix[i + 1] = unsafeCountPrefix[i] + (isUnsafeDirective ? 1 : 0);
+         int loopAlignPad = (line instanceof AsmLoopAlign loopAlign)
+               ? Math.max(0, loopAlign.getLoopLength() - 1)
+               : 0;
+         loopAlignPaddingPrefix[i + 1] = loopAlignPaddingPrefix[i] + loopAlignPad;
 
          if(line instanceof AsmScopeBegin) {
-            currentScope = ((AsmScopeBegin) line).getLabel();
-            currentSegment = "Code";
-            segmentOffsets.clear();
+            String lbl = ((AsmScopeBegin) line).getLabel();
+            currentScope = (lbl != null) ? lbl : "";
          } else if(line instanceof AsmScopeEnd) {
-            currentScope = null;
-            currentSegment = "Code";
-            segmentOffsets.clear();
-         } else if(currentScope != null) {
-            if(line instanceof AsmSegment) {
-               String seg = ((AsmSegment) line).getName();
-               currentSegment = (seg != null) ? seg : "Code";
-            } else {
-               int offset = segmentOffsets.getOrDefault(currentSegment, 0);
-               lineOffsets[i] = offset;
-               lineSegments[i] = currentSegment;
-               if(line instanceof AsmLabel) {
-                  String label = ((AsmLabel) line).getLabel();
-                  if(label != null && !label.startsWith("!")) {
-                     String key = currentScope + "::" + label;
-                     if(labelLineIndices.containsKey(key)) {
-                        return false;
-                     }
-                     labelOffsets.put(key, offset);
-                     labelSegments.put(key, currentSegment);
-                     labelLineIndices.put(key, i);
+            currentScope = "";
+         } else if(line instanceof AsmSegment) {
+            String seg = ((AsmSegment) line).getName();
+            currentSegment = (seg != null) ? seg : "Code";
+         } else {
+            int offset = segmentOffsets.getOrDefault(currentSegment, 0);
+            lineOffsets[i] = offset;
+            lineSegments[i] = currentSegment;
+            if(line instanceof AsmLabel) {
+               String label = ((AsmLabel) line).getLabel();
+               if(label != null && !label.startsWith("!")) {
+                  String key = currentScope + "::" + label;
+                  if(labelLineIndices.containsKey(key)) {
+                     logAnalyticalFallback("dupLabel scope=\"" + currentScope + "\" label=" + label);
+                     return false;
                   }
+                  labelOffsets.put(key, offset);
+                  labelSegments.put(key, currentSegment);
+                  labelLineIndices.put(key, i);
                }
-               segmentOffsets.put(currentSegment, offset + line.getLineBytes());
             }
+            segmentOffsets.put(currentSegment, offset + line.getLineBytes());
          }
       }
 
@@ -193,11 +202,13 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
          if(instr.getCpuOpcode() == null || invertBranch(instr.getCpuOpcode()) == null) continue;
 
          String scope = ref.scope;
-         if(scope == null || scope.isEmpty()) {
+         if(scope == null) {
+            logAnalyticalFallback("nullScope lineIdx=" + i + " instr=" + instr);
             return false;
          }
          String target = instr.getOperandJumpTarget();
          if(target == null) {
+            logAnalyticalFallback("missingTarget scope=\"" + scope + "\" branch=" + instr + " target=null");
             return false;
          }
 
@@ -208,6 +219,7 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
          if(target.startsWith("!")) {
             targetIdx = findLabelIndex(allLines, target, i, scope);
             if(targetIdx == -1 || !scope.equals(allLines.get(targetIdx).scope)) {
+               logAnalyticalFallback("missingTarget scope=\"" + scope + "\" branch=" + instr + " target=" + target + " targetIdx=" + targetIdx);
                return false;
             }
             targetOffset = lineOffsets[targetIdx];
@@ -216,6 +228,7 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
             String key = scope + "::" + target;
             Integer idxObj = labelLineIndices.get(key);
             if(idxObj == null) {
+               logAnalyticalFallback("missingTarget scope=\"" + scope + "\" branch=" + instr + " target=" + target);
                return false;
             }
             targetIdx = idxObj;
@@ -224,17 +237,22 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
          }
 
          if(!Objects.equals(lineSegments[i], targetSegment)) {
+            logAnalyticalFallback("crossSegment scope=\"" + scope + "\" branch=" + instr + " target=" + target
+                  + " branchSeg=" + lineSegments[i] + " targetSeg=" + targetSegment);
             return false;
          }
          int lo = Math.min(i, targetIdx);
          int hi = Math.max(i, targetIdx);
          if(unsafeCountPrefix[hi] - unsafeCountPrefix[lo + 1] > 0) {
+            logAnalyticalFallback("unsafeDirective scope=\"" + scope + "\" branch=" + instr + " target=" + target);
             return false;
          }
 
          int branchPc = lineOffsets[i] + 2;
          int distance = targetOffset - branchPc;
-         if(distance < -126 || distance > 125) {
+         int pad = loopAlignPaddingPrefix[hi] - loopAlignPaddingPrefix[lo + 1];
+         if((distance - pad) < -126 || (distance + pad) > 125) {
+            logAnalyticalFallback("distance=" + distance + " pad=" + pad + " scope=\"" + scope + "\" branch=" + instr + " target=" + target);
             return false;
          }
       }
@@ -243,101 +261,86 @@ public class Pass5FixLongBranches extends Pass5AsmOptimization {
    }
 
    /**
-    * Pre-pass to analytically detect and fix long branches across all scopes.
+    * Pre-pass to analytically detect and fix long branches across all scopes (including root scope).
     *
     * @return total number of branches fixed
     */
    private int preFixLongBranches() {
       int totalFixed = 0;
       boolean anyFixedThisPass = true;
-      int pass = 0;
 
       while(anyFixedThisPass) {
          anyFixedThisPass = false;
-         pass++;
 
-         // Phase 1: Collect label offsets per scope
+         List<LineRef> allLines = flattenLines(getAsmProgram());
+         int n = allLines.size();
+         int[] lineOffsets = new int[n];
+         String[] lineSegments = new String[n];
+         int[] loopAlignPaddingPrefix = new int[n + 1];
+
+         // Phase 1: Collect label offsets and per-segment offsets across all scopes (including root "")
          Map<String, Integer> labelOffsets = new HashMap<>();
-         String currentScope = null;
-         boolean inCode = true;
-         int currentOffset = 0;
+         Map<String, String> labelSegments = new HashMap<>();
+         Map<String, Integer> labelLineIndices = new HashMap<>();
+         String currentScope = "";
+         String currentSegment = "Code";
+         Map<String, Integer> segmentOffsets = new HashMap<>();
 
-         for(AsmChunk chunk : getAsmProgram().getChunks()) {
-            for(AsmLine line : chunk.getLines()) {
-               if(line instanceof AsmScopeBegin) {
-                  currentScope = ((AsmScopeBegin) line).getLabel();
-                  inCode = true;
-                  currentOffset = 0;
-               } else if(line instanceof AsmScopeEnd) {
-                  currentScope = null;
-                  inCode = true;
-                  currentOffset = 0;
-               } else if(currentScope != null) {
-                  if(line instanceof AsmSegment) {
-                     String seg = ((AsmSegment) line).getName();
-                     if(seg != null && seg.toLowerCase().contains("data")) {
-                        inCode = false;
-                     } else {
-                        inCode = true;
-                     }
-                  } else if(inCode) {
-                     if(line instanceof AsmLabel) {
-                        String label = ((AsmLabel) line).getLabel();
-                        if(!label.startsWith("!")) {
-                           labelOffsets.put(currentScope + "::" + label, currentOffset);
-                        }
-                     }
-                     currentOffset += line.getLineBytes();
+         for(int i = 0; i < n; i++) {
+            AsmLine line = allLines.get(i).line;
+            int loopAlignPad = (line instanceof AsmLoopAlign loopAlign)
+                  ? Math.max(0, loopAlign.getLoopLength() - 1)
+                  : 0;
+            loopAlignPaddingPrefix[i + 1] = loopAlignPaddingPrefix[i] + loopAlignPad;
+
+            if(line instanceof AsmScopeBegin) {
+               String lbl = ((AsmScopeBegin) line).getLabel();
+               currentScope = (lbl != null) ? lbl : "";
+            } else if(line instanceof AsmScopeEnd) {
+               currentScope = "";
+            } else if(line instanceof AsmSegment) {
+               String seg = ((AsmSegment) line).getName();
+               currentSegment = (seg != null) ? seg : "Code";
+            } else {
+               int offset = segmentOffsets.getOrDefault(currentSegment, 0);
+               lineOffsets[i] = offset;
+               lineSegments[i] = currentSegment;
+               if(line instanceof AsmLabel) {
+                  String label = ((AsmLabel) line).getLabel();
+                  if(label != null && !label.startsWith("!")) {
+                     String key = currentScope + "::" + label;
+                     labelOffsets.put(key, offset);
+                     labelSegments.put(key, currentSegment);
+                     labelLineIndices.put(key, i);
                   }
                }
+               segmentOffsets.put(currentSegment, offset + line.getLineBytes());
             }
          }
 
-         // Phase 2: Check conditional branches and record long ones
-         currentScope = null;
-         inCode = true;
-         currentOffset = 0;
+         // Phase 2: Check conditional branches with worst-case loop alignment padding and record long ones
          List<BranchToFix> branchesToFix = new ArrayList<>();
+         for(int i = 0; i < n; i++) {
+            LineRef ref = allLines.get(i);
+            if(!(ref.line instanceof AsmInstruction instr)) continue;
+            if(instr.getCpuOpcode() == null || invertBranch(instr.getCpuOpcode()) == null) continue;
 
-         for(AsmChunk chunk : getAsmProgram().getChunks()) {
-            for(AsmLine line : chunk.getLines()) {
-               if(line instanceof AsmScopeBegin) {
-                  currentScope = ((AsmScopeBegin) line).getLabel();
-                  inCode = true;
-                  currentOffset = 0;
-               } else if(line instanceof AsmScopeEnd) {
-                  currentScope = null;
-                  inCode = true;
-                  currentOffset = 0;
-               } else if(currentScope != null) {
-                  if(line instanceof AsmSegment) {
-                     String seg = ((AsmSegment) line).getName();
-                     if(seg != null && seg.toLowerCase().contains("data")) {
-                        inCode = false;
-                     } else {
-                        inCode = true;
-                     }
-                  } else if(inCode) {
-                     if(line instanceof AsmInstruction) {
-                        AsmInstruction instr = (AsmInstruction) line;
-                        CpuOpcode inverse = invertBranch(instr.getCpuOpcode());
-                        if(inverse != null) {
-                           String target = instr.getOperandJumpTarget();
-                           if(target != null && !target.startsWith("!")) {
-                              Integer targetOffset = labelOffsets.get(currentScope + "::" + target);
-                              if(targetOffset != null) {
-                                 int branchPc = currentOffset + 2;
-                                 int distance = targetOffset - branchPc;
-                                 if(distance < -126 || distance > 125) {
-                                    branchesToFix.add(new BranchToFix(chunk, instr));
-                                 }
-                              }
-                           }
-                        }
-                     }
-                     currentOffset += line.getLineBytes();
-                  }
-               }
+            String target = instr.getOperandJumpTarget();
+            if(target == null || target.startsWith("!")) continue;
+
+            String scope = ref.scope != null ? ref.scope : "";
+            String key = scope + "::" + target;
+            Integer targetIdx = labelLineIndices.get(key);
+            if(targetIdx == null) continue;
+            if(!Objects.equals(lineSegments[i], labelSegments.get(key))) continue;
+
+            int branchPc = lineOffsets[i] + 2;
+            int distance = labelOffsets.get(key) - branchPc;
+            int lo = Math.min(i, targetIdx);
+            int hi = Math.max(i, targetIdx);
+            int pad = loopAlignPaddingPrefix[hi] - loopAlignPaddingPrefix[lo + 1];
+            if((distance - pad) < -126 || (distance + pad) > 125) {
+               branchesToFix.add(new BranchToFix(ref.chunk, instr));
             }
          }
 

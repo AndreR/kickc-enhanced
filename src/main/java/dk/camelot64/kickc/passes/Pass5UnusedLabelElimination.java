@@ -44,11 +44,27 @@ public class Pass5UnusedLabelElimination extends Pass5AsmOptimization {
 
       Set<String> usedLabels = findUsedLabels();
 
-      List<AsmLine> removeLines = findUnusedLabelLines(usedLabels);
+      Set<String> modifiedScopes = new LinkedHashSet<>();
 
-      remove(removeLines);
+      List<AsmLine> removeLines = findUnusedLabelLines(usedLabels, modifiedScopes);
 
-      return removeLines.size() > 0;
+      if(!removeLines.isEmpty()) {
+
+         remove(removeLines);
+
+         for(String scope : modifiedScopes) {
+
+            markScopeDirty(scope);
+
+         }
+
+         invalidateRoundStructure();
+
+         return true;
+
+      }
+
+      return false;
 
    }
 
@@ -145,7 +161,7 @@ public class Pass5UnusedLabelElimination extends Pass5AsmOptimization {
 
    /** Find all ASM lines that are unused labels. */
 
-   private List<AsmLine> findUnusedLabelLines(Set<String> usedLabels) {
+   private List<AsmLine> findUnusedLabelLines(Set<String> usedLabels, Set<String> modifiedScopes) {
 
       List<AsmLine> removeLines = new ArrayList<>();
 
@@ -194,6 +210,8 @@ public class Pass5UnusedLabelElimination extends Pass5AsmOptimization {
                if(!labelStr.contains("!") && !usedLabels.contains(labelStr)) {
 
                   removeLines.add(label);
+
+                  modifiedScopes.add(currentScope);
 
                }
 
