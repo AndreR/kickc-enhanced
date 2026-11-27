@@ -182,6 +182,7 @@ directive
     | AX #directiveAx
     | LOHI #directiveLoHi
     | SOA #directiveSoa
+    | PAGED_SOA #directivePagedSoa
     | BANK PAR_BEGIN NAME COMMA NUMBER PAR_END #directiveBank
     | INTRINSIC #directiveIntrinsic
     | INTERRUPT ( PAR_BEGIN NAME PAR_END )? #directiveInterrupt

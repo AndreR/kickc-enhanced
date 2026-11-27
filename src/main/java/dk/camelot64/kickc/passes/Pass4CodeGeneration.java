@@ -640,7 +640,7 @@ public class Pass4CodeGeneration {
                 ConstantValue constantValue = constantVar.getInitValue();
                 if (constantValue instanceof ConstantArray || constantValue instanceof ConstantString || constantValue instanceof ConstantStructValue) {
                     AsmDataChunk asmDataChunk = new AsmDataChunk();
-                    addChunkData(asmDataChunk, constantValue, constantVar.getType(), constantVar.getArraySpec(), scopeRef, constantVar.isLoHi(), constantVar.isSoa());
+                    addChunkData(asmDataChunk, constantValue, constantVar.getType(), constantVar.getArraySpec(), scopeRef, constantVar.isLoHi(), constantVar.isSoa() || constantVar.isPagedSoa());
                     asmDataChunk.addToAsm(AsmFormat.asmFix(asmName), asm);
                 } else {
                     throw new InternalError("Constant Variable not handled " + constantVar.toString(program));
@@ -685,7 +685,7 @@ public class Pass4CodeGeneration {
                 ConstantValue constantValue = constantVar.getInitValue();
                 if (constantValue instanceof ConstantArray || constantValue instanceof ConstantString || constantValue instanceof ConstantStructValue) {
                     AsmDataChunk asmDataChunk = new AsmDataChunk();
-                    addChunkData(asmDataChunk, constantValue, constantVar.getType(), constantVar.getArraySpec(), scopeRef, constantVar.isLoHi(), constantVar.isSoa());
+                    addChunkData(asmDataChunk, constantValue, constantVar.getType(), constantVar.getArraySpec(), scopeRef, constantVar.isLoHi(), constantVar.isSoa() || constantVar.isPagedSoa());
                     asmDataChunk.addToAsm(AsmFormat.asmFix(asmName), asm);
                 } else {
                     throw new InternalError("Constant Variable not handled " + constantVar.toString(program));
@@ -726,13 +726,13 @@ public class Pass4CodeGeneration {
                                 // Variable has a constant init Value
                                 ConstantValue constantValue = variable.getInitValue();
                                 AsmDataChunk asmDataChunk = new AsmDataChunk();
-                                addChunkData(asmDataChunk, constantValue, variable.getType(), variable.getArraySpec(), scopeRef, variable.isLoHi(), variable.isSoa());
+                                addChunkData(asmDataChunk, constantValue, variable.getType(), variable.getArraySpec(), scopeRef, variable.isLoHi(), variable.isSoa() || variable.isPagedSoa());
                                 asmDataChunk.addToAsm(AsmFormat.asmFix(variable.getAsmName()), asm);
                             } else {
                                 // Zero-fill variable
                                 AsmDataChunk asmDataChunk = new AsmDataChunk();
                                 ConstantValue zeroValue = Initializers.createZeroValue(new Initializers.ValueTypeSpec(variable.getType()), null);
-                                addChunkData(asmDataChunk, zeroValue, variable.getType(), variable.getArraySpec(), scopeRef, variable.isLoHi(), variable.isSoa());
+                                addChunkData(asmDataChunk, zeroValue, variable.getType(), variable.getArraySpec(), scopeRef, variable.isLoHi(), variable.isSoa() || variable.isPagedSoa());
                                 asmDataChunk.addToAsm(AsmFormat.asmFix(variable.getAsmName()), asm);
                             }
                         }
@@ -906,7 +906,8 @@ public class Pass4CodeGeneration {
                     List<ConstantValue> elements = constantArrayList.getElements();
                     Integer declaredSize = getArrayDeclaredSize(valueArraySpec.getArraySize());
                     int n = (declaredSize != null) ? declaredSize : elements.size();
-                    for (Variable member : structDef.getAllVars(false)) {
+                    for (Variable member : structDef.getLayoutMembers(program.getScope())) {
+                        if (member.isBitField()) continue;
                         for (int i = 0; i < n; i++) {
                             ConstantValue memberVal = null;
                             if (i < elements.size()) {

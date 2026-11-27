@@ -156,6 +156,11 @@ public class Directive {
       public Soa() { super("__soa"); }
    }
 
+   /** Array declared __paged_soa (2-page struct-of-arrays flattening for up to 512 elements). */
+   public static class PagedSoa extends Directive {
+      public PagedSoa() { super("__paged_soa"); }
+   }
+
    /** Function declared interrupt. */
    public static class Interrupt extends Directive {
       public String interruptType;

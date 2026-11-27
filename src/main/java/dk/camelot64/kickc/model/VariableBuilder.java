@@ -89,21 +89,27 @@ public class VariableBuilder {
       variable.setStructUnwind(this.getStructUnwind());
       variable.setLoHi(this.isLoHi());
       variable.setSoa(this.isSoa());
-      if(this.isSoa()) {
+      variable.setPagedSoa(this.isPagedSoa());
+      if(this.isSoa() && this.isPagedSoa()) {
+         throw new CompileError("Cannot combine __soa and __paged_soa directives on the same array");
+      }
+      if(this.isSoa() || this.isPagedSoa()) {
+         String dirName = this.isPagedSoa() ? "__paged_soa" : "__soa";
+         long maxElements = this.isPagedSoa() ? 512L : 256L;
          if(!isArray()) {
-            throw new CompileError("__soa directive is only valid on arrays");
+            throw new CompileError(dirName + " directive is only valid on arrays");
          }
          SymbolType elemType = ((SymbolTypePointer) type).getElementType();
          if(!(elemType instanceof SymbolTypeStruct)) {
-            throw new CompileError("__soa directive is only supported on arrays of structs");
+            throw new CompileError(dirName + " directive is only supported on arrays of structs");
          }
          dk.camelot64.kickc.model.symbols.ArraySpec as = ((SymbolTypePointer) type).getArraySpec();
          if(as != null && as.getArraySize() instanceof dk.camelot64.kickc.model.values.ConstantInteger ci) {
-            if(ci.getValue() > 256) {
-               throw new CompileError("Array declared __soa cannot have more than 256 elements, found " + ci.getValue());
+            if(ci.getValue() > maxElements) {
+               throw new CompileError("Array declared " + dirName + " cannot have more than " + maxElements + " elements, found " + ci.getValue());
             }
             if(ci.getValue() <= 0) {
-               throw new CompileError("Array declared __soa must have positive size");
+               throw new CompileError("Array declared " + dirName + " must have positive size");
             }
          }
       }
@@ -351,6 +357,10 @@ public class VariableBuilder {
     */
    public boolean isSoa() {
       return hasDirective(Directive.Soa.class);
+   }
+
+   public boolean isPagedSoa() {
+      return hasDirective(Directive.PagedSoa.class);
    }
 
    public boolean isLoHi() {

@@ -1877,6 +1877,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    }
 
    @Override
+   public Object visitDirectivePagedSoa(KickCParser.DirectivePagedSoaContext ctx) {
+      return new Directive.PagedSoa();
+   }
+
+   @Override
    public Object visitDirectiveCountdown(KickCParser.DirectiveCountdownContext ctx) {
       return new Directive.Countdown();
    }
@@ -3777,21 +3782,28 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return member.getType().getSizeBytes();
    }
 
-   public RValue desugarBitfieldRead(ParserRuleContext ctx, StructMemberRef containerRef, Variable member) {
+   public RValue desugarBitfieldRead(ParserRuleContext ctx, RValue containerVal, Variable member) {
       int offset = member.getBitFieldOffset();
       int width = member.getBitFieldWidth();
       long valMask = (1L << width) - 1;
       int containerSize = getBitfieldContainerSize(member);
+      boolean isSigned = member.getType() instanceof SymbolTypeIntegerFixed fixedType && fixedType.isSigned();
+      boolean needsMask = !(offset == 0 && ((containerSize == 1 && width == 8) || (containerSize == 2 && width == 16)));
 
-      RValue val = containerRef;
+      RValue val = containerVal;
+      if(val instanceof PointerDereference && (offset > 0 || needsMask || isSigned)) {
+         SymbolVariableRef rawVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) rawVar, val, true, new StatementSource(ctx), Comment.NO_COMMENTS));
+         consumeExpr(val);
+         val = rawVar;
+      }
       if(offset > 0) {
          val = addExprBinary(ctx, val, Operators.SHIFT_RIGHT, new ConstantInteger((long) offset));
       }
-      boolean needsMask = !(offset == 0 && ((containerSize == 1 && width == 8) || (containerSize == 2 && width == 16)));
       if(needsMask) {
          val = addExprBinary(ctx, val, Operators.BOOL_AND, new ConstantInteger(valMask));
       }
-      if(member.getType() instanceof SymbolTypeIntegerFixed fixedType && fixedType.isSigned()) {
+      if(isSigned) {
          if(width < (containerSize * 8)) {
             long signBit = 1L << (width - 1);
             RValue xored = addExprBinary(ctx, val, Operators.BOOL_XOR, new ConstantInteger(signBit));
@@ -3819,7 +3831,20 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          return rhsVal;
       }
 
+      if(containerSize == 1 && !(rhsVal instanceof ConstantInteger)) {
+         SymbolType rhsType = SymbolTypeInference.inferType(program.getScope(), rhsVal);
+         if(rhsType != null && rhsType.getSizeBytes() > 1) {
+            rhsVal = addExprUnary(ctx, Operators.getCastUnary(SymbolType.BYTE), rhsVal);
+         }
+      }
+
       RValue containerRVal = copyLValue(containerLVal);
+      if(containerRVal instanceof PointerDereference) {
+         SymbolVariableRef rawVar = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) rawVar, containerRVal, true, new StatementSource(ctx), Comment.NO_COMMENTS));
+         consumeExpr(containerRVal);
+         containerRVal = rawVar;
+      }
       RValue cleared = addExprBinary(ctx, containerRVal, Operators.BOOL_AND, new ConstantInteger(invMask));
 
       RValue insertBits;
@@ -3867,18 +3892,39 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       public final Variable arrayVar;
       public final SymbolTypeStruct structType;
       public final Variable memberVar;
+      public final Variable storageVar;
       public final long baseOffset;
       public final long elementCount;
+      public final boolean isPagedSoa;
 
-      public SoaAccessInfo(KickCParser.ExprDotContext dotCtx, KickCParser.ExprArrayContext arrayCtx, Variable arrayVar, SymbolTypeStruct structType, Variable memberVar, long baseOffset, long elementCount) {
+      public SoaAccessInfo(KickCParser.ExprDotContext dotCtx, KickCParser.ExprArrayContext arrayCtx, Variable arrayVar, SymbolTypeStruct structType, Variable memberVar, Variable storageVar, long baseOffset, long elementCount, boolean isPagedSoa) {
          this.dotCtx = dotCtx;
          this.arrayCtx = arrayCtx;
          this.arrayVar = arrayVar;
          this.structType = structType;
          this.memberVar = memberVar;
+         this.storageVar = storageVar;
          this.baseOffset = baseOffset;
          this.elementCount = elementCount;
+         this.isPagedSoa = isPagedSoa;
       }
+   }
+
+   public SoaAccessInfo getSoaAccessInfo(KickCParser.ExprContext exprCtx) {
+      while(exprCtx instanceof KickCParser.ExprParContext) {
+         KickCParser.CommaExprContext commaCtx = ((KickCParser.ExprParContext) exprCtx).commaExpr();
+         if(commaCtx instanceof KickCParser.CommaNoneContext) {
+            exprCtx = ((KickCParser.CommaNoneContext) commaCtx).expr();
+         } else if(commaCtx instanceof KickCParser.CommaSimpleContext) {
+            exprCtx = ((KickCParser.CommaSimpleContext) commaCtx).expr();
+         } else {
+            return null;
+         }
+      }
+      if(exprCtx instanceof KickCParser.ExprDotContext dotCtx) {
+         return getSoaAccessInfo(dotCtx);
+      }
+      return null;
    }
 
    public SoaAccessInfo getSoaAccessInfo(KickCParser.ExprDotContext dotCtx) {
@@ -3911,7 +3957,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             if(sym == null) {
                sym = program.getScope().findSymbol(name);
             }
-            if(sym instanceof Variable arrayVar && arrayVar.isSoa()) {
+            if(sym instanceof Variable arrayVar && (arrayVar.isSoa() || arrayVar.isPagedSoa())) {
                SymbolType elemType = ((SymbolTypePointer) arrayVar.getType()).getElementType();
                if(elemType instanceof SymbolTypeStruct structType) {
                   StructDefinition structDef = structType.getStructDefinition(program.getScope());
@@ -3920,19 +3966,35 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
                   if(memberVar == null) {
                      throw new CompileError("Struct " + structType.getStructTypeName() + " has no member " + memberName, new StatementSource(dotCtx));
                   }
+                  Variable storageVar = memberVar;
+                  if(memberVar.isBitField()) {
+                     storageVar = structDef.getMember(memberVar.getBitFieldContainerName());
+                     if(storageVar == null) {
+                        throw new CompileError("Missing bitfield container " + memberVar.getBitFieldContainerName() + " in struct " + structType.getStructTypeName(), new StatementSource(dotCtx));
+                     }
+                  }
                   Long elementCount = getSoaArrayElementCount(arrayVar);
+                  String dirName = arrayVar.isPagedSoa() ? "__paged_soa" : "__soa";
+                  long maxElements = arrayVar.isPagedSoa() ? 512L : 256L;
                   if(elementCount == null) {
-                     throw new CompileError("Cannot determine element count of __soa array " + arrayVar.getLocalName(), new StatementSource(dotCtx));
+                     throw new CompileError("Cannot determine element count of " + dirName + " array " + arrayVar.getLocalName(), new StatementSource(dotCtx));
+                  }
+                  if(elementCount <= 0 || elementCount > maxElements) {
+                     throw new CompileError("Array declared " + dirName + " must have 1.." + maxElements + " elements, found " + elementCount, new StatementSource(dotCtx));
                   }
                   long baseOffset = 0;
-                  for(Variable m : structDef.getAllVars(false)) {
-                     if(m.getLocalName().equals(memberName)) {
+                  String targetStorageName = storageVar.getLocalName();
+                  for(Variable m : structDef.getLayoutMembers(program.getScope())) {
+                     if(m.isBitField()) {
+                        continue;
+                     }
+                     if(m.getLocalName().equals(targetStorageName)) {
                         break;
                      }
                      long mSize = SymbolTypeStruct.getMemberSizeBytes(m.getType(), m.getArraySize(), program.getScope());
                      baseOffset += mSize * elementCount;
                   }
-                  return new SoaAccessInfo(dotCtx, arrayCtx, arrayVar, structType, memberVar, baseOffset, elementCount);
+                  return new SoaAccessInfo(dotCtx, arrayCtx, arrayVar, structType, memberVar, storageVar, baseOffset, elementCount, arrayVar.isPagedSoa());
                }
             }
          }
@@ -3940,20 +4002,301 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       return null;
    }
 
-   public PointerDereferenceIndexed desugarSoaMember(SoaAccessInfo soa) {
-      RValue indexRVal = (RValue) visit(soa.arrayCtx.commaExpr());
+   private ConstantValue getSoaMemberPtr(SoaAccessInfo soa, long pageOffsetBytes) {
       SymbolTypePointer bytePtrType = new SymbolTypePointer(SymbolType.BYTE);
       ConstantCastValue bytePtr = new ConstantCastValue(bytePtrType, (ConstantValue) soa.arrayVar.getRef());
-      ConstantValue memberBasePtr;
-      if(soa.baseOffset > 0) {
-         ConstantBinary addOffset = new ConstantBinary(bytePtr, Operators.PLUS, new ConstantInteger(soa.baseOffset, SymbolType.WORD));
-         memberBasePtr = new ConstantCastValue(new SymbolTypePointer(soa.memberVar.getType()), addOffset);
+      long totalOffset = soa.baseOffset + pageOffsetBytes;
+      if(totalOffset > 0) {
+         ConstantBinary addOffset = new ConstantBinary(bytePtr, Operators.PLUS, new ConstantInteger(totalOffset, SymbolType.WORD));
+         return new ConstantCastValue(new SymbolTypePointer(soa.storageVar.getType()), addOffset);
       } else {
-         memberBasePtr = new ConstantCastValue(new SymbolTypePointer(soa.memberVar.getType()), bytePtr);
+         return new ConstantCastValue(new SymbolTypePointer(soa.storageVar.getType()), bytePtr);
       }
-      PointerDereferenceIndexed deref = new PointerDereferenceIndexed(memberBasePtr, indexRVal);
-      addExprToConsume(deref);
-      return deref;
+   }
+
+   private boolean isSingleByteSoaPlane(SoaAccessInfo soa) {
+      return soa.storageVar.getArraySpec() == null && soa.storageVar.getType().getSizeBytes() == 1;
+   }
+
+   private boolean isPagedBytePlaneDispatch(SoaAccessInfo soa, RValue indexRVal) {
+      if(!soa.isPagedSoa || !isSingleByteSoaPlane(soa)) {
+         return false;
+      }
+      if(evaluateConstantInteger(indexRVal) != null) {
+         return false;
+      }
+      SymbolType idxType = SymbolTypeInference.inferType(program.getScope(), indexRVal);
+      if(idxType != null) {
+         SymbolType unqualIdxType = idxType.getQualified(false, false);
+         if((unqualIdxType instanceof SymbolTypeIntegerFixed fixedIdx && fixedIdx.getSizeBytes() == 1 && !fixedIdx.isSigned())
+               || SymbolType.BOOLEAN.equals(unqualIdxType)) {
+            return false;
+         }
+      }
+      return true;
+   }
+
+   private RValue ensureMaterialized(ParserRuleContext ctx, RValue val) {
+      if(val instanceof SymbolVariableRef || val instanceof ConstantValue) {
+         return val;
+      }
+      SymbolVariableRef varRef = addIntermediateVar().getRef();
+      addStatement(new StatementAssignment((LValue) varRef, val, true, new StatementSource(ctx), Comment.NO_COMMENTS));
+      consumeExpr(val);
+      return varRef;
+   }
+
+   private PointerDereferenceIndexed buildSoaContainerDeref(ParserRuleContext ctx, SoaAccessInfo soa, RValue indexRVal) {
+      if(soa.isPagedSoa && isSingleByteSoaPlane(soa)) {
+         Long constIdx = evaluateConstantInteger(indexRVal);
+         if(constIdx != null) {
+            if(constIdx >= 0 && constIdx < 256) {
+               consumeExpr(indexRVal);
+               return new PointerDereferenceIndexed(getSoaMemberPtr(soa, 0), new ConstantInteger(constIdx, SymbolType.BYTE));
+            } else if(constIdx >= 256 && constIdx < 512) {
+               consumeExpr(indexRVal);
+               return new PointerDereferenceIndexed(getSoaMemberPtr(soa, 256), new ConstantInteger(constIdx - 256, SymbolType.BYTE));
+            }
+         }
+         consumeExpr(indexRVal);
+         return new PointerDereferenceIndexed(getSoaMemberPtr(soa, 0), indexRVal);
+      }
+      long mSize = SymbolTypeStruct.getMemberSizeBytes(soa.storageVar.getType(), soa.storageVar.getArraySize(), program.getScope());
+      if(mSize > 1 && mSize * soa.elementCount > 256 && evaluateConstantInteger(indexRVal) == null) {
+         SymbolType idxType = SymbolTypeInference.inferType(program.getScope(), indexRVal);
+         if(idxType != null && idxType.getSizeBytes() == 1) {
+            indexRVal = addExprUnary(ctx, Operators.getCastUnary(SymbolType.WORD), indexRVal);
+         }
+      }
+      consumeExpr(indexRVal);
+      return new PointerDereferenceIndexed(getSoaMemberPtr(soa, 0), indexRVal);
+   }
+
+   private RValue readPagedSoaMember(ParserRuleContext ctx, SoaAccessInfo soa, RValue indexRVal) {
+      indexRVal = ensureMaterialized(ctx, indexRVal);
+      RValue loByte = addExprUnary(ctx, Operators.BYTE0, indexRVal);
+      RValue hiByte = addExprUnary(ctx, Operators.BYTE1, indexRVal);
+
+      Label page1Label = getCurrentScope().addLabelIntermediate();
+      Label page0Label = getCurrentScope().addLabelIntermediate();
+      Label endLabel = getCurrentScope().addLabelIntermediate();
+
+      addStatement(new StatementConditionalJump(hiByte, Operators.NEQ, new ConstantInteger(0L, SymbolType.BYTE), page1Label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+      addStatement(new StatementLabel(page0Label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+      PointerDereferenceIndexed deref0 = new PointerDereferenceIndexed(getSoaMemberPtr(soa, 0), loByte);
+      SymbolVariableRef val0Var = addIntermediateVar().getRef();
+      addStatement(new StatementAssignment((LValue) val0Var, deref0, true, new StatementSource(ctx), Comment.NO_COMMENTS));
+      LabelRef page0ExitLabel = getCurrentProcedureCompilation().getStatementSequence().getCurrentBlockLabel();
+      addStatement(new StatementJump(endLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+
+      addStatement(new StatementLabel(page1Label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+      PointerDereferenceIndexed deref1 = new PointerDereferenceIndexed(getSoaMemberPtr(soa, 256), loByte);
+      SymbolVariableRef val1Var = addIntermediateVar().getRef();
+      addStatement(new StatementAssignment((LValue) val1Var, deref1, true, new StatementSource(ctx), Comment.NO_COMMENTS));
+      LabelRef page1ExitLabel = getCurrentProcedureCompilation().getStatementSequence().getCurrentBlockLabel();
+
+      addStatement(new StatementLabel(endLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+      StatementPhiBlock phiBlock = new StatementPhiBlock(Comment.NO_COMMENTS);
+      phiBlock.setSource(new StatementSource(ctx));
+      SymbolVariableRef finalVar = addIntermediateVar().getRef();
+      StatementPhiBlock.PhiVariable phiVariable = phiBlock.addPhiVariable((VariableRef) finalVar);
+      phiVariable.setrValue(page1ExitLabel, val1Var);
+      phiVariable.setrValue(page0ExitLabel, val0Var);
+      addStatement(phiBlock);
+
+      if(soa.memberVar.isBitField()) {
+         return desugarBitfieldRead(ctx, finalVar, soa.memberVar);
+      }
+      return finalVar;
+   }
+
+   private RValue writePagedSoaMember(ParserRuleContext ctx, SoaAccessInfo soa, RValue indexRVal, RValue rhsVal) {
+      indexRVal = ensureMaterialized(ctx, indexRVal);
+      rhsVal = ensureMaterialized(ctx, rhsVal);
+      RValue loByte = addExprUnary(ctx, Operators.BYTE0, indexRVal);
+      RValue hiByte = addExprUnary(ctx, Operators.BYTE1, indexRVal);
+
+      boolean isBitfieldRmw = false;
+      long invMask = 0xFFL;
+      RValue precomputedInsertBits = null;
+      if(soa.memberVar.isBitField()) {
+         int offset = soa.memberVar.getBitFieldOffset();
+         int width = soa.memberVar.getBitFieldWidth();
+         if(!(offset == 0 && width == 8)) {
+            isBitfieldRmw = true;
+            long valMask = (1L << width) - 1;
+            invMask = (~(valMask << offset)) & 0xFFL;
+            if(rhsVal instanceof ConstantInteger ci) {
+               precomputedInsertBits = new ConstantInteger((ci.getInteger() & valMask) << offset);
+            } else {
+               RValue byteRhs = rhsVal;
+               SymbolType rhsType = SymbolTypeInference.inferType(program.getScope(), byteRhs);
+               if(rhsType != null && rhsType.getSizeBytes() > 1) {
+                  byteRhs = addExprUnary(ctx, Operators.getCastUnary(SymbolType.BYTE), byteRhs);
+               }
+               RValue maskedRhs = addExprBinary(ctx, byteRhs, Operators.BOOL_AND, new ConstantInteger(valMask));
+               precomputedInsertBits = (offset > 0)
+                     ? addExprBinary(ctx, maskedRhs, Operators.SHIFT_LEFT, new ConstantInteger((long) offset))
+                     : maskedRhs;
+            }
+         }
+      }
+
+      Label page1Label = getCurrentScope().addLabelIntermediate();
+      Label page0Label = getCurrentScope().addLabelIntermediate();
+      Label endLabel = getCurrentScope().addLabelIntermediate();
+
+      addStatement(new StatementConditionalJump(hiByte, Operators.NEQ, new ConstantInteger(0L, SymbolType.BYTE), page1Label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+      addStatement(new StatementLabel(page0Label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+      PointerDereferenceIndexed deref0 = new PointerDereferenceIndexed(getSoaMemberPtr(soa, 0), loByte);
+      if(isBitfieldRmw) {
+         writeBitfieldRmwWithInsert(ctx, deref0, invMask, precomputedInsertBits);
+      } else {
+         addStatement(new StatementAssignment(deref0, rhsVal, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+      }
+      addStatement(new StatementJump(endLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+
+      addStatement(new StatementLabel(page1Label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+      PointerDereferenceIndexed deref1 = new PointerDereferenceIndexed(getSoaMemberPtr(soa, 256), loByte);
+      if(isBitfieldRmw) {
+         writeBitfieldRmwWithInsert(ctx, deref1, invMask, precomputedInsertBits);
+      } else {
+         addStatement(new StatementAssignment(deref1, rhsVal, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+      }
+      addStatement(new StatementLabel(endLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+      return rhsVal;
+   }
+
+   private void writeBitfieldRmwWithInsert(ParserRuleContext ctx, PointerDereferenceIndexed targetDeref, long invMask, RValue insertBits) {
+      SymbolVariableRef rawVar = addIntermediateVar().getRef();
+      addStatement(new StatementAssignment((LValue) rawVar, copyLValue(targetDeref), true, new StatementSource(ctx), Comment.NO_COMMENTS));
+      RValue cleared = addExprBinary(ctx, rawVar, Operators.BOOL_AND, new ConstantInteger(invMask));
+      RValue newVal = (insertBits instanceof ConstantInteger ci && ci.getInteger() == 0L)
+            ? cleared
+            : addExprBinary(ctx, cleared, Operators.BOOL_OR, insertBits);
+      addStatement(new StatementAssignment(targetDeref, newVal, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+   }
+
+   private RValue compoundAssignPagedSoaMember(ParserRuleContext ctx, SoaAccessInfo soa, RValue indexRVal, Operator operator, RValue rhsVal, boolean needReturnVal) {
+      indexRVal = ensureMaterialized(ctx, indexRVal);
+      rhsVal = ensureMaterialized(ctx, rhsVal);
+      RValue loByte = addExprUnary(ctx, Operators.BYTE0, indexRVal);
+      RValue hiByte = addExprUnary(ctx, Operators.BYTE1, indexRVal);
+
+      Label page1Label = getCurrentScope().addLabelIntermediate();
+      Label page0Label = getCurrentScope().addLabelIntermediate();
+      Label endLabel = getCurrentScope().addLabelIntermediate();
+
+      addStatement(new StatementConditionalJump(hiByte, Operators.NEQ, new ConstantInteger(0L, SymbolType.BYTE), page1Label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+      addStatement(new StatementLabel(page0Label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+      PointerDereferenceIndexed deref0 = new PointerDereferenceIndexed(getSoaMemberPtr(soa, 0), loByte);
+      RValue upd0;
+      if(soa.memberVar.isBitField()) {
+         RValue cur0 = desugarBitfieldRead(ctx, copyLValue(deref0), soa.memberVar);
+         upd0 = addExprBinary(ctx, cur0, operator, rhsVal);
+         writeBitfield(ctx, deref0, soa.memberVar, upd0);
+      } else {
+         SymbolVariableRef cur0 = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) cur0, copyLValue(deref0), true, new StatementSource(ctx), Comment.NO_COMMENTS));
+         upd0 = addExprBinary(ctx, cur0, operator, rhsVal);
+         addStatement(new StatementAssignment(deref0, upd0, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+      }
+      LabelRef page0ExitLabel = getCurrentProcedureCompilation().getStatementSequence().getCurrentBlockLabel();
+      addStatement(new StatementJump(endLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+
+      addStatement(new StatementLabel(page1Label.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+      PointerDereferenceIndexed deref1 = new PointerDereferenceIndexed(getSoaMemberPtr(soa, 256), loByte);
+      RValue upd1;
+      if(soa.memberVar.isBitField()) {
+         RValue cur1 = desugarBitfieldRead(ctx, copyLValue(deref1), soa.memberVar);
+         upd1 = addExprBinary(ctx, cur1, operator, rhsVal);
+         writeBitfield(ctx, deref1, soa.memberVar, upd1);
+      } else {
+         SymbolVariableRef cur1 = addIntermediateVar().getRef();
+         addStatement(new StatementAssignment((LValue) cur1, copyLValue(deref1), true, new StatementSource(ctx), Comment.NO_COMMENTS));
+         upd1 = addExprBinary(ctx, cur1, operator, rhsVal);
+         addStatement(new StatementAssignment(deref1, upd1, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx))));
+      }
+      LabelRef page1ExitLabel = getCurrentProcedureCompilation().getStatementSequence().getCurrentBlockLabel();
+
+      addStatement(new StatementLabel(endLabel.getRef(), new StatementSource(ctx), Comment.NO_COMMENTS));
+      if(!needReturnVal) {
+         return null;
+      }
+      StatementPhiBlock phiBlock = new StatementPhiBlock(Comment.NO_COMMENTS);
+      phiBlock.setSource(new StatementSource(ctx));
+      SymbolVariableRef finalVar = addIntermediateVar().getRef();
+      StatementPhiBlock.PhiVariable phiVariable = phiBlock.addPhiVariable((VariableRef) finalVar);
+      phiVariable.setrValue(page1ExitLabel, upd1);
+      phiVariable.setrValue(page0ExitLabel, upd0);
+      addStatement(phiBlock);
+      return finalVar;
+   }
+
+   public RValue desugarSoaMember(SoaAccessInfo soa) {
+      RValue indexRVal = (RValue) visit(soa.arrayCtx.commaExpr());
+      if(isPagedBytePlaneDispatch(soa, indexRVal)) {
+         return readPagedSoaMember(soa.dotCtx, soa, indexRVal);
+      }
+      PointerDereferenceIndexed containerDeref = buildSoaContainerDeref(soa.dotCtx, soa, indexRVal);
+      addExprToConsume(containerDeref);
+      if(soa.memberVar.isBitField()) {
+         return desugarBitfieldRead(soa.dotCtx, containerDeref, soa.memberVar);
+      }
+      return containerDeref;
+   }
+
+   public RValue assignSoaMember(ParserRuleContext ctx, SoaAccessInfo soa, RValue rhsVal) {
+      RValue indexRVal = (RValue) visit(soa.arrayCtx.commaExpr());
+      if(isPagedBytePlaneDispatch(soa, indexRVal)) {
+         return writePagedSoaMember(ctx, soa, indexRVal, rhsVal);
+      }
+      PointerDereferenceIndexed containerDeref = buildSoaContainerDeref(ctx, soa, indexRVal);
+      if(soa.memberVar.isBitField()) {
+         return writeBitfield(ctx, containerDeref, soa.memberVar, rhsVal);
+      }
+      Statement stmt = new StatementAssignment(containerDeref, rhsVal, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx)));
+      addStatement(stmt);
+      consumeExpr(containerDeref);
+      consumeExpr(rhsVal);
+      return containerDeref;
+   }
+
+   public RValue compoundAssignSoaMember(ParserRuleContext ctx, SoaAccessInfo soa, Operator operator, RValue rhsVal) {
+      RValue indexRVal = (RValue) visit(soa.arrayCtx.commaExpr());
+      if(isPagedBytePlaneDispatch(soa, indexRVal)) {
+         return compoundAssignPagedSoaMember(ctx, soa, indexRVal, operator, rhsVal, true);
+      }
+      PointerDereferenceIndexed containerDeref = buildSoaContainerDeref(ctx, soa, indexRVal);
+      if(soa.memberVar.isBitField()) {
+         RValue currentVal = desugarBitfieldRead(ctx, copyLValue(containerDeref), soa.memberVar);
+         RValue updatedVal = addExprBinary(ctx, currentVal, operator, rhsVal);
+         return writeBitfield(ctx, containerDeref, soa.memberVar, updatedVal);
+      }
+      Statement stmt = new StatementAssignment(containerDeref, copyLValue(containerDeref), operator, rhsVal, false, new StatementSource(ctx), ensureUnusedComments(getCommentsSymbol(ctx)));
+      addStatement(stmt);
+      consumeExpr(containerDeref);
+      consumeExpr(rhsVal);
+      return containerDeref;
+   }
+
+   public void modifySoaMember(ParserRuleContext ctx, SoaAccessInfo soa, Operator operator) {
+      Operator binOp = operator.equals(Operators.INCREMENT) ? Operators.PLUS : Operators.MINUS;
+      RValue indexRVal = (RValue) visit(soa.arrayCtx.commaExpr());
+      if(isPagedBytePlaneDispatch(soa, indexRVal)) {
+         compoundAssignPagedSoaMember(ctx, soa, indexRVal, binOp, new ConstantInteger(1L), false);
+         return;
+      }
+      PointerDereferenceIndexed containerDeref = buildSoaContainerDeref(ctx, soa, indexRVal);
+      if(soa.memberVar.isBitField()) {
+         RValue currentVal = desugarBitfieldRead(ctx, copyLValue(containerDeref), soa.memberVar);
+         RValue updatedVal = addExprBinary(ctx, currentVal, binOp, new ConstantInteger(1L));
+         writeBitfield(ctx, containerDeref, soa.memberVar, updatedVal);
+         return;
+      }
+      Statement stmt = new StatementAssignment(containerDeref, operator, copyLValue(containerDeref), false, new StatementSource(ctx), Comment.NO_COMMENTS);
+      addStatement(stmt);
+      consumeExpr(containerDeref);
    }
 
    public Long getLoHiArrayElementCount(Variable var) {
@@ -4017,7 +4360,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          if(arrNameExpr instanceof KickCParser.ExprIdContext idCtx) {
             Symbol sym = getCurrentScope().findSymbol(idCtx.NAME().getText());
             if(sym == null) sym = program.getScope().findSymbol(idCtx.NAME().getText());
-            if(sym instanceof Variable v && v.isSoa()) {
+            if(sym instanceof Variable v && (v.isSoa() || v.isPagedSoa())) {
                return true;
             }
          }
@@ -4284,6 +4627,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public Object visitExprAssignment(KickCParser.ExprAssignmentContext ctx) {
+      SoaAccessInfo soa = getSoaAccessInfo(ctx.expr(0));
+      if(soa != null) {
+         RValue rhsVal = (RValue) visit(ctx.expr(1));
+         return assignSoaMember(ctx, soa, rhsVal);
+      }
       Variable bitfieldMember = getBitfieldMember(ctx.expr(0));
       if(bitfieldMember != null) {
          LValue containerLVal = getBitfieldContainerLValue(ctx.expr(0), bitfieldMember);
@@ -4351,13 +4699,20 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
    @Override
    public Object visitExprAssignmentCompound(KickCParser.ExprAssignmentCompoundContext ctx) {
+      SoaAccessInfo soa = getSoaAccessInfo(ctx.expr(0));
+      if(soa != null) {
+         RValue rhsVal = (RValue) visit(ctx.expr(1));
+         String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
+         Operator operator = Operators.getBinaryCompound(op);
+         return compoundAssignSoaMember(ctx, soa, operator, rhsVal);
+      }
       Variable bitfieldMember = getBitfieldMember(ctx.expr(0));
       if(bitfieldMember != null) {
          LValue containerLVal = getBitfieldContainerLValue(ctx.expr(0), bitfieldMember);
          RValue rhsVal = (RValue) visit(ctx.expr(1));
          String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
          Operator operator = Operators.getBinaryCompound(op);
-         StructMemberRef containerRef = (StructMemberRef) copyLValue(containerLVal);
+         RValue containerRef = copyLValue(containerLVal);
          RValue currentVal = desugarBitfieldRead(ctx, containerRef, bitfieldMember);
          RValue updatedVal = addExprBinary(ctx, currentVal, operator, rhsVal);
          return writeBitfield(ctx, containerLVal, bitfieldMember, updatedVal);
@@ -5205,8 +5560,11 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
    public RValue visitExprUnary(KickCParser.ExprUnaryContext ctx) {
       String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
       Operator operator = Operators.getUnary(op);
-      if(Operators.ADDRESS_OF.equals(operator) && (getBitfieldMember(ctx.expr()) != null || getNibbleArrayContext(ctx.expr()) != null || getLoHiArrayContext(ctx.expr()) != null || isBareSoaArrayElement(ctx.expr()))) {
-         throw new CompileError("Cannot take address of bitfield member or packed nibble element", new StatementSource(ctx));
+      if(Operators.ADDRESS_OF.equals(operator)) {
+         SoaAccessInfo soa = getSoaAccessInfo(ctx.expr());
+         if((soa != null && (soa.memberVar.isBitField() || soa.isPagedSoa)) || getBitfieldMember(ctx.expr()) != null || getNibbleArrayContext(ctx.expr()) != null || getLoHiArrayContext(ctx.expr()) != null || isBareSoaArrayElement(ctx.expr())) {
+            throw new CompileError("Cannot take address of bitfield member, packed nibble element, or __paged_soa member", new StatementSource(ctx));
+         }
       }
       RValue child = (RValue) this.visit(ctx.expr());
       return addExprUnary(ctx, operator, child);
@@ -5337,13 +5695,14 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
       Symbol symbol = getCurrentScope().findSymbol(ctx.NAME().getText());
       if(symbol instanceof Variable) {
          Variable variable = (Variable) symbol;
-         if(variable.isSoa()) {
+         if(variable.isSoa() || variable.isPagedSoa()) {
             ParserRuleContext parent = ctx.getParent();
             while(parent instanceof KickCParser.ExprParContext || parent instanceof KickCParser.CommaExprContext) {
                parent = parent.getParent();
             }
             if(!(parent instanceof KickCParser.ExprSizeOfContext || parent instanceof KickCParser.ExprCountOfContext || parent instanceof KickCParser.ExprArrayContext)) {
-               throw new CompileError("Split __soa array '" + variable.getLocalName() + "' cannot be used as a raw struct pointer", new StatementSource(ctx));
+               String dirName = variable.isPagedSoa() ? "__paged_soa" : "__soa";
+               throw new CompileError("Split " + dirName + " array '" + variable.getLocalName() + "' cannot be used as a raw struct pointer", new StatementSource(ctx));
             }
          }
          if(variable.isLoHi()) {
@@ -5557,8 +5916,12 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             List<PrePostModifier> modifiers,
             StatementSource source) {
          for(PrePostModifier mod : modifiers) {
+            if(mod.soa != null) {
+               parser.modifySoaMember(mod.ctx, mod.soa, mod.operator);
+               continue;
+            }
             if(mod.bitfieldMember != null) {
-               StructMemberRef containerRef = (StructMemberRef) copyLValue(mod.containerLVal);
+               RValue containerRef = copyLValue(mod.containerLVal);
                RValue currentVal = parser.desugarBitfieldRead(mod.ctx, containerRef, mod.bitfieldMember);
                Operator op = mod.operator.equals(Operators.INCREMENT) ? Operators.PLUS : Operators.MINUS;
                RValue updatedVal = parser.addExprBinary(mod.ctx, currentVal, op, new ConstantInteger(1L));
@@ -5601,6 +5964,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
       @Override
       public Void visitExprPostMod(KickCParser.ExprPostModContext ctx) {
+         SoaAccessInfo soa = mainParser.getSoaAccessInfo(ctx.expr());
+         if(soa != null && (soa.isPagedSoa || soa.memberVar.isBitField())) {
+            String op = ((TerminalNode) ctx.getChild(1)).getSymbol().getText();
+            Operator operator = Operators.getUnary(op);
+            PrePostModifier modifier = new PrePostModifier(ctx, operator, soa);
+            postMods.add(modifier);
+            this.visit(ctx.expr());
+            return null;
+         }
          Variable bitfieldMember = mainParser.getBitfieldMember(ctx.expr());
          if(bitfieldMember != null) {
             LValue containerLVal = mainParser.getBitfieldContainerLValue(ctx.expr(), bitfieldMember);
@@ -5642,6 +6014,15 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
 
       @Override
       public Void visitExprPreMod(KickCParser.ExprPreModContext ctx) {
+         SoaAccessInfo soa = mainParser.getSoaAccessInfo(ctx.expr());
+         if(soa != null && (soa.isPagedSoa || soa.memberVar.isBitField())) {
+            String op = ((TerminalNode) ctx.getChild(0)).getSymbol().getText();
+            Operator operator = Operators.getUnary(op);
+            PrePostModifier modifier = new PrePostModifier(ctx, operator, soa);
+            preMods.add(modifier);
+            this.visit(ctx.expr());
+            return null;
+         }
          Variable bitfieldMember = mainParser.getBitfieldMember(ctx.expr());
          if(bitfieldMember != null) {
             LValue containerLVal = mainParser.getBitfieldContainerLValue(ctx.expr(), bitfieldMember);
@@ -5689,6 +6070,7 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
          LValue containerLVal;
          KickCParser.ExprArrayContext nibbleArrayCtx;
          KickCParser.ExprArrayContext loHiArrayCtx;
+         SoaAccessInfo soa;
 
          PrePostModifier(RValue child, Operator operator) {
             this.child = child;
@@ -5712,6 +6094,12 @@ public class Pass0GenerateStatementSequence extends KickCParserBaseVisitor<Objec
             this.ctx = ctx;
             this.operator = operator;
             this.loHiArrayCtx = loHiArrayCtx;
+         }
+
+         PrePostModifier(ParserRuleContext ctx, Operator operator, SoaAccessInfo soa) {
+            this.ctx = ctx;
+            this.operator = operator;
+            this.soa = soa;
          }
       }
 

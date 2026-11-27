@@ -67,6 +67,8 @@ public class Variable implements Symbol {
    private boolean loHi;
    /** Specifies that an array of structs is flattened to parallel member arrays (__soa). */
    private boolean soa;
+   /** Specifies that an array of structs is flattened to 2-page parallel member arrays (__paged_soa). */
+   private boolean pagedSoa;
    /** True if the variable had an explicit initializer in the C source code. */
    private boolean explicitInitializer;
 
@@ -176,6 +178,7 @@ public class Variable implements Symbol {
       version.setExport(phiMaster.isExport());
       version.setLoHi(phiMaster.isLoHi());
       version.setSoa(phiMaster.isSoa());
+      version.setPagedSoa(phiMaster.isPagedSoa());
       version.setExplicitInitializer(phiMaster.isExplicitInitializer());
       version.setExplicitZp(phiMaster.isExplicitZp());
       version.setComments(phiMaster.getComments());
@@ -223,6 +226,7 @@ public class Variable implements Symbol {
       constVar.setExport(variable.isExport());
       constVar.setLoHi(variable.isLoHi());
       constVar.setSoa(variable.isSoa());
+      constVar.setPagedSoa(variable.isPagedSoa());
       constVar.setExplicitInitializer(variable.isExplicitInitializer());
       constVar.setComments(variable.getComments());
       constVar.setStructUnwind(variable.isStructUnwind());
@@ -245,6 +249,7 @@ public class Variable implements Symbol {
       copy.setExport(original.isExport());
       copy.setLoHi(original.isLoHi());
       copy.setSoa(original.isSoa());
+      copy.setPagedSoa(original.isPagedSoa());
       copy.setExplicitInitializer(original.isExplicitInitializer());
       copy.setExplicitZp(original.isExplicitZp());
       copy.setRegister(original.getRegister());
@@ -522,6 +527,14 @@ public class Variable implements Symbol {
 
    public void setSoa(boolean soa) {
       this.soa = soa;
+   }
+
+   public boolean isPagedSoa() {
+      return pagedSoa;
+   }
+
+   public void setPagedSoa(boolean pagedSoa) {
+      this.pagedSoa = pagedSoa;
    }
 
    public boolean isExplicitInitializer() {

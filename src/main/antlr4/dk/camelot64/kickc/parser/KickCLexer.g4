@@ -73,6 +73,7 @@ CARRY: '__carry' ;
 AX: '__ax' ;
 LOHI: '__lohi' ;
 SOA: '__soa' | 'soa' ;
+PAGED_SOA: '__paged_soa' ;
 VOLATILE: 'volatile' ;
 STATIC: 'static' ;
 INTERRUPT: '__interrupt' ;
